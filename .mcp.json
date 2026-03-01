@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "resume-scorer": {
+      "command": "python",
+      "args": ["mcp_scorer.py"],
+      "cwd": "."
+    }
+  }
+}
