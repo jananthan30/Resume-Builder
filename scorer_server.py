@@ -71,7 +71,7 @@ try:
         create_api_key as create_user_api_key, validate_api_key as validate_user_api_key,
         log_usage, check_usage_allowed, get_usage_stats,
         create_jwt_token, decode_jwt_token, update_user_tier,
-        get_or_create_anonymous_user,
+        get_or_create_anonymous_user, get_user_by_stripe_customer_id,
     )
     from cloud.billing import (
         is_billing_configured, create_checkout_session,
@@ -1190,9 +1190,12 @@ async def billing_webhook(request: Request):
         return {"status": "upgraded", "user_id": result["user_id"]}
 
     elif result["action"] == "downgrade":
-        # Find user by stripe_customer_id and downgrade
-        # (simplified — in production, look up user by stripe_customer_id)
-        return {"status": "downgraded", "reason": result.get("reason")}
+        customer_id = result.get("stripe_customer_id", "")
+        user = get_user_by_stripe_customer_id(customer_id) if customer_id else None
+        if user:
+            update_user_tier(user["id"], "free", customer_id, None)
+            return {"status": "downgraded", "user_id": user["id"], "reason": result.get("reason")}
+        return {"status": "downgrade_failed", "reason": "User not found for customer"}
 
     return {"status": "ignored", "event_type": result.get("event_type")}
 

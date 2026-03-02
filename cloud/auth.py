@@ -9,6 +9,7 @@ Supports:
 """
 
 import hashlib
+import re
 import secrets
 import sqlite3
 import time
@@ -104,8 +105,19 @@ def _verify_password(password: str, stored_hash: str) -> bool:
     return computed.hex() == h
 
 
+def _validate_email(email: str) -> str:
+    """Validate and normalize email. Raises ValueError if invalid."""
+    email = email.lower().strip()
+    if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+        raise ValueError("Invalid email format.")
+    return email
+
+
 def create_user(email: str, password: str) -> Dict[str, Any]:
     """Register a new user. Returns user dict with id."""
+    email = _validate_email(email)
+    if len(password) < 6:
+        raise ValueError("Password must be at least 6 characters.")
     pw_hash = _hash_password(password)
     with get_db() as conn:
         try:
@@ -139,6 +151,20 @@ def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
         row = conn.execute(
             "SELECT id, email, tier, stripe_customer_id, stripe_subscription_id FROM users WHERE id = ?",
             (user_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return dict(row)
+
+
+def get_user_by_stripe_customer_id(stripe_customer_id: str) -> Optional[Dict[str, Any]]:
+    """Look up a user by their Stripe customer ID (for webhook-driven downgrades)."""
+    if not stripe_customer_id:
+        return None
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id, email, tier, stripe_customer_id, stripe_subscription_id FROM users WHERE stripe_customer_id = ?",
+            (stripe_customer_id,),
         ).fetchone()
     if not row:
         return None
