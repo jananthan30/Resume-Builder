@@ -15,23 +15,34 @@ from __future__ import annotations
 import os
 import re
 from typing import Optional
+from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 
-# Realistic browser headers to avoid immediate bot blocks
+# Realistic browser headers — mimic Chrome more completely to reduce bot detection
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate",
+    "Accept-Encoding": "gzip, deflate, br",
     "Connection": "keep-alive",
     "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Cache-Control": "max-age=0",
 }
+
+# Tracking params that identify API/bot traffic — strip before scraping
+_TRACKING_PARAMS = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+                    "se", "v", "ref", "source", "sid", "cid", "clickid"}
 
 # CSS selectors tried in order for common job-board layouts
 _JD_SELECTORS = [
+    # Generic job description containers
     "[class*='job-description']",
     "[class*='jobDescription']",
     "[id*='job-description']",
@@ -39,19 +50,42 @@ _JD_SELECTORS = [
     "[class*='jobDetails']",
     "[class*='posting-description']",
     "[class*='job-details']",
-    "[class*='description__text']",   # LinkedIn
-    "[class*='show-more-less-html']",  # LinkedIn
-    "[data-testid='job-description']",  # various ATS
+    # Adzuna
+    "[class*='adp-body']",
+    "[class*='job__description']",
+    "[class*='jsr_description']",
+    # LinkedIn
+    "[class*='description__text']",
+    "[class*='show-more-less-html']",
+    # Greenhouse / Lever / Workday ATS
+    "[data-testid='job-description']",
+    "[id='job-description']",
     "[class*='job-body']",
     "[class*='posting-body']",
+    "[class*='content-intro']",
+    # Generic fallbacks
     "article",
     "main",
     "[role='main']",
 ]
 
 
+def _strip_tracking_params(url: str) -> str:
+    """Remove UTM and other tracking params that can trigger bot-detection."""
+    try:
+        parsed = urlparse(url)
+        params = {k: v for k, v in parse_qs(parsed.query).items()
+                  if k.lower() not in _TRACKING_PARAMS}
+        clean_query = urlencode(params, doseq=True)
+        return urlunparse(parsed._replace(query=clean_query))
+    except Exception:
+        return url
+
+
 def fetch_jd_from_url(url: str, timeout: int = 15) -> Optional[str]:
     """Return plain-text job description scraped from *url*, or None on failure."""
+    # Strip tracking params — reduces bot-detection likelihood
+    url = _strip_tracking_params(url)
 
     # ── 1. trafilatura (best quality) ──────────────────────────────────────
     try:
