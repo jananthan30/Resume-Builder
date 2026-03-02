@@ -78,22 +78,6 @@ def _is_usage_limit(result: dict) -> bool:
     return isinstance(result, dict) and result.get("_error") == "usage_limit"
 
 
-def _usage_limit_response(result: dict) -> dict:
-    """Format a user-friendly usage limit message."""
-    return {
-        "error": "free_tier_limit_reached",
-        "message": result.get("_message", "You've used all 5 free scores."),
-        "action": (
-            "To connect your Pro/Ultra account to this plugin:\n"
-            "1. Go to https://resume-scorer-web.streamlit.app → Log in → Dashboard\n"
-            "2. Under 'Claude Code Plugin Setup', click 'Generate Plugin API Key'\n"
-            "3. Copy the key and run: /setup\n"
-            "   Claude will ask for the key and save it automatically.\n\n"
-            "Or upgrade at: " + UPGRADE_URL
-        ),
-    }
-
-
 # ─── Lazy-load local scorers (SBERT takes ~5s on first call) ──────────────
 
 _scorers_loaded = False
@@ -108,6 +92,39 @@ def _ensure_scorers():
         ats_scorer = _ats
         hr_scorer = _hr
         _scorers_loaded = True
+
+
+def _local_available() -> bool:
+    """Check if local scoring deps are installed."""
+    try:
+        import ats_scorer  # noqa: F401
+        import hr_scorer   # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _usage_limit_message(result: dict) -> str:
+    """Build user-facing message when free tier is exhausted."""
+    if _local_available():
+        return (
+            "☁️  Free cloud scoring limit reached (5 scores).\n\n"
+            "✅  Local scoring is available on this machine — switching to local mode now.\n\n"
+            "To unlock unlimited cloud scoring:\n"
+            "  • Upgrade to Pro at " + UPGRADE_URL + "\n"
+            "  • Then run /setup — Claude will link your account automatically."
+        )
+    return (
+        "☁️  Free cloud scoring limit reached (5 scores).\n\n"
+        "You have two options:\n\n"
+        "Option A — Upgrade to Pro ($12/mo, unlimited):\n"
+        "  1. Sign up at " + UPGRADE_URL + "\n"
+        "  2. Dashboard → 'Claude Code Plugin Setup' → Generate API Key\n"
+        "  3. Run /setup — Claude will save the key for you\n\n"
+        "Option B — Free local scoring (no internet needed):\n"
+        "  Run /setup — Claude will install the required packages\n"
+        "  (requires Python + ~500MB for the ML models)"
+    )
 
 
 # ─── Tools ────────────────────────────────────────────────────────────────
@@ -133,8 +150,10 @@ def score_resume(resume_text: str, jd_text: str) -> dict:
     """
     cloud_result = _try_cloud("/score/both", resume_text, jd_text)
     if _is_usage_limit(cloud_result):
-        return _usage_limit_response(cloud_result)
-    if cloud_result and "ats" in cloud_result:
+        if not _local_available():
+            return {"error": "free_tier_limit_reached", "message": _usage_limit_message(cloud_result)}
+        # Fall through to local scoring silently
+    elif cloud_result and "ats" in cloud_result:
         return cloud_result
 
     _ensure_scorers()
@@ -185,8 +204,9 @@ def score_ats(resume_text: str, jd_text: str) -> dict:
     """
     cloud_result = _try_cloud("/score/ats", resume_text, jd_text)
     if _is_usage_limit(cloud_result):
-        return _usage_limit_response(cloud_result)
-    if cloud_result and "total_score" in cloud_result:
+        if not _local_available():
+            return {"error": "free_tier_limit_reached", "message": _usage_limit_message(cloud_result)}
+    elif cloud_result and "total_score" in cloud_result:
         return cloud_result
 
     _ensure_scorers()
@@ -216,8 +236,9 @@ def score_hr(resume_text: str, jd_text: str) -> dict:
     """
     cloud_result = _try_cloud("/score/hr", resume_text, jd_text)
     if _is_usage_limit(cloud_result):
-        return _usage_limit_response(cloud_result)
-    if cloud_result and "overall_score" in cloud_result:
+        if not _local_available():
+            return {"error": "free_tier_limit_reached", "message": _usage_limit_message(cloud_result)}
+    elif cloud_result and "overall_score" in cloud_result:
         return cloud_result
 
     _ensure_scorers()
