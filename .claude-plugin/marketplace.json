@@ -9,7 +9,7 @@
       "name": "resume-builder",
       "source": ".",
       "description": "AI-powered resume & cover letter generator with dual ATS + HR scoring. Works for any profession — software engineers, marketers, lawyers, finance, healthcare, and more.",
-      "version": "1.0.0"
+      "version": "1.1.0"
     }
   ]
 }

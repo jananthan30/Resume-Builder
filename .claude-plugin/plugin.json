@@ -1,7 +1,7 @@
 {
   "name": "resume-builder",
   "description": "AI-powered resume and cover letter generator with dual ATS + HR scoring optimization. Tailors applications to job descriptions using parallel agent execution, auto-detects 6+ professional domains, and produces Workday-compatible DOCX output.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": {
     "name": "Jananthan Paramsothy",
     "email": "jananthan30@gmail.com",
