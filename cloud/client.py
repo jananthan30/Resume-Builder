@@ -114,6 +114,44 @@ def cloud_score(
     return None
 
 
+def cloud_get_resume() -> Optional[Dict[str, Any]]:
+    """Fetch the user's saved resume from cloud.
+    Returns dict with resume_text + metadata, or None if not configured / not found."""
+    if not CLOUD_API_KEY:
+        return None
+    url = f"{CLOUD_API_URL.rstrip('/')}/resume"
+    headers = {"X-API-Key": CLOUD_API_KEY, "Accept": "application/json"}
+    try:
+        req = Request(url, headers=headers, method="GET")
+        with urlopen(req, timeout=CLOUD_TIMEOUT) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except HTTPError as e:
+        if e.code == 404:
+            return {"resume_on_file": False}
+        return None
+    except Exception:
+        return None
+
+
+def cloud_save_resume(text: str, filename: str = "resume.txt") -> Optional[Dict[str, Any]]:
+    """Upload or replace the user's saved resume in the cloud.
+    Returns metadata dict or None on failure."""
+    if not CLOUD_API_KEY:
+        return None
+    url = f"{CLOUD_API_URL.rstrip('/')}/resume/upload"
+    payload = {"resume_text": text, "resume_filename": filename}
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-Key": CLOUD_API_KEY,
+    }
+    try:
+        req = Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+        with urlopen(req, timeout=CLOUD_TIMEOUT) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
 def cloud_health() -> Optional[Dict[str, Any]]:
     """Check cloud API health."""
     if not _is_cloud_configured():

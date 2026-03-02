@@ -13,6 +13,8 @@ Tools:
     explain_score     — Actionable improvement suggestions
     generate_cover_letter — AI cover letter from resume + JD
     discover_jobs     — Search jobs and score against your resume
+    save_resume       — Upload resume to cloud storage (one-time setup)
+    get_saved_resume  — Retrieve previously saved resume
     extract_text      — Read PDF/DOCX/MD/TXT files
 
 Cloud-first: tries https://resume-scorer.fly.dev, falls back to local scoring.
@@ -54,7 +56,7 @@ mcp = FastMCP(
 # ─── Cloud client (optional — falls back to local) ────────────────────────
 
 try:
-    from cloud.client import cloud_score, cloud_health
+    from cloud.client import cloud_score, cloud_health, cloud_get_resume, cloud_save_resume
     CLOUD_AVAILABLE = True
 except ImportError:
     CLOUD_AVAILABLE = False
@@ -413,8 +415,8 @@ def generate_cover_letter(
 
 @mcp.tool()
 def discover_jobs(
-    resume_text: str,
     job_title: str,
+    resume_text: str = "",
     location: str = "",
     remote_only: bool = False,
     max_results: int = 10,
@@ -426,8 +428,9 @@ def discover_jobs(
     2. Full ATS + HR scoring of top finalists
 
     Args:
-        resume_text: Full text of your resume.
         job_title: Target job title to search for (e.g., "Data Scientist").
+        resume_text: Full text of your resume. Leave blank to use your saved
+            resume (uploaded via save_resume or the web app).
         location: Geographic location filter (e.g., "New York", "Remote").
         remote_only: If True, also searches Remotive for remote-only jobs.
         max_results: Number of top-scored jobs to return (1-20, default 10).
@@ -476,6 +479,48 @@ def discover_jobs(
         remote_only=remote_only,
         max_results=max_results,
     )
+
+
+@mcp.tool()
+def save_resume(resume_text: str, filename: str = "resume.txt") -> dict:
+    """Upload your resume to cloud storage so you don't need to re-enter it.
+
+    After saving once, all scoring tools (score_resume, score_ats, score_hr,
+    discover_jobs, generate_cover_letter, etc.) will automatically use this
+    resume when no resume_text is provided.
+
+    Args:
+        resume_text: Full text of your resume.
+        filename: Original filename for reference (default: resume.txt).
+
+    Returns:
+        Confirmation dict with saved=True, char_count, and content_hash.
+    """
+    if not CLOUD_AVAILABLE:
+        return {"error": "Cloud not configured. Set SCORER_CLOUD_URL and SCORER_CLOUD_API_KEY in your .env file."}
+    result = cloud_save_resume(resume_text, filename)
+    if result is None:
+        return {"error": "Failed to save resume. Check your API key and connection."}
+    return {"saved": True, **result}
+
+
+@mcp.tool()
+def get_saved_resume() -> dict:
+    """Retrieve your previously saved resume from cloud storage.
+
+    Returns the resume text and metadata if a resume has been saved via
+    save_resume or uploaded through the web app.
+
+    Returns:
+        Dict with resume_text, filename, char_count, uploaded_at if found,
+        or {"resume_on_file": False} if no resume is saved.
+    """
+    if not CLOUD_AVAILABLE:
+        return {"error": "Cloud not configured. Set SCORER_CLOUD_URL and SCORER_CLOUD_API_KEY in your .env file."}
+    result = cloud_get_resume()
+    if result is None:
+        return {"error": "Could not connect to cloud. Check SCORER_CLOUD_URL and SCORER_CLOUD_API_KEY."}
+    return result
 
 
 @mcp.tool()

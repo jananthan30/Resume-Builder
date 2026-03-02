@@ -72,6 +72,9 @@ try:
         log_usage, check_usage_allowed, get_usage_stats,
         create_jwt_token, decode_jwt_token, update_user_tier,
         get_or_create_anonymous_user, get_user_by_stripe_customer_id,
+        save_resume as _save_resume_db,
+        get_resume as _get_resume_db,
+        delete_resume as _delete_resume_db,
     )
     from cloud.billing import (
         is_billing_configured, create_checkout_session,
@@ -156,7 +159,7 @@ class BatchScoreRequest(BaseModel):
 
 class CoverLetterRequest(BaseModel):
     """Generate a cover letter from resume + JD."""
-    resume_text: str = Field(..., description="Full text of the resume")
+    resume_text: str = Field("", description="Full text of the resume (blank = use saved resume)")
     jd_text: str = Field(..., description="Full text of the job description")
     company_name: str = Field("", description="Company name (auto-detected if empty)")
     job_title: str = Field("", description="Job title (auto-detected if empty)")
@@ -164,11 +167,18 @@ class CoverLetterRequest(BaseModel):
 
 class JobDiscoverRequest(BaseModel):
     """Search for jobs and score them against a resume."""
-    resume_text: str = Field(..., description="Full text of the resume")
+    resume_text: str = Field("", description="Full text of the resume (blank = use saved resume)")
     job_title: str = Field(..., description="Target job title to search for")
     location: str = Field("", description="Geographic location filter")
     remote_only: bool = Field(False, description="Also search remote job boards")
     max_results: int = Field(10, ge=1, le=20, description="Number of top-scored jobs to return")
+
+
+class ResumeUploadRequest(BaseModel):
+    """Upload or replace the authenticated user's saved resume."""
+    resume_text: Optional[str] = Field(None, description="Plain text resume content")
+    resume_file: Optional[str] = Field(None, description="Base64-encoded file (PDF/DOCX/TXT)")
+    resume_filename: Optional[str] = Field(None, description="Original filename for format detection")
 
 
 class APIKeyRequest(BaseModel):
@@ -253,18 +263,23 @@ def resolve_inputs(req: ScoreRequest) -> tuple:
 
 def _extract_text(file_path: str) -> str:
     """Extract text from any supported file format."""
-    ext = Path(file_path).suffix.lower()
-    if ext == ".pdf":
-        return ats_scorer.extract_text_from_pdf(file_path)
-    elif ext == ".docx":
-        from docx import Document
-        doc = Document(file_path)
-        return "\n".join(p.text for p in doc.paragraphs)
-    elif ext in (".md", ".txt"):
-        with open(file_path, "r", encoding="utf-8") as f:
-            return f.read()
-    else:
-        raise HTTPException(status_code=400, detail=f"Unsupported file format: {ext}")
+    from text_extractor import extract_text
+    try:
+        return extract_text(file_path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def _maybe_autofill_resume(req: ScoreRequest, api_key) -> ScoreRequest:
+    """Return updated request with resume from DB if no resume was provided."""
+    if req.resume_text or req.resume_file or req.resume_path:
+        return req
+    if not CLOUD_AVAILABLE or not isinstance(api_key, dict):
+        return req
+    record = _get_resume_db(api_key["user_id"])
+    if record:
+        return req.model_copy(update={"resume_text": record["resume_text"]})
+    return req
 
 
 # =============================================================================
@@ -738,6 +753,7 @@ def health():
 @app.post("/score/ats")
 def score_ats(req: ScoreRequest, api_key: str = Depends(verify_api_key_with_usage)):
     """ATS score a resume against a job description. Accepts text, base64 files, or file paths."""
+    req = _maybe_autofill_resume(req, api_key)
     resume_text, jd_text, file_path = resolve_inputs(req)
     _log_score_usage(api_key, "/score/ats")
 
@@ -768,6 +784,7 @@ def score_ats(req: ScoreRequest, api_key: str = Depends(verify_api_key_with_usag
 @app.post("/score/hr")
 def score_hr(req: ScoreRequest, api_key: str = Depends(verify_api_key_with_usage)):
     """HR score a resume against a job description. Accepts text, base64 files, or file paths."""
+    req = _maybe_autofill_resume(req, api_key)
     resume_text, jd_text, file_path = resolve_inputs(req)
     _log_score_usage(api_key, "/score/hr")
 
@@ -926,6 +943,7 @@ def score_hr(req: ScoreRequest, api_key: str = Depends(verify_api_key_with_usage
 @app.post("/score/both")
 def score_both(req: ScoreRequest, api_key: str = Depends(verify_api_key_with_usage)):
     """Combined ATS + HR scoring in a single call. Most efficient for full analysis."""
+    req = _maybe_autofill_resume(req, api_key)
     resume_text, jd_text, file_path = resolve_inputs(req)
     _log_score_usage(api_key, "/score/both")
 
@@ -1055,6 +1073,7 @@ def score_batch(req: BatchScoreRequest, api_key: str = Depends(verify_api_key_wi
 @app.post("/explain")
 def explain_score(req: ScoreRequest, api_key: str = Depends(verify_api_key_with_usage)):
     """Get detailed explanation and improvement suggestions without re-scoring (uses cache)."""
+    req = _maybe_autofill_resume(req, api_key)
     resume_text, jd_text, file_path = resolve_inputs(req)
 
     # Try to get cached ATS result
@@ -1093,9 +1112,21 @@ def _overall_assessment(ats_score: float, hr_score: float) -> str:
 # API KEY MANAGEMENT (admin endpoints)
 # =============================================================================
 
+def _verify_admin_secret(request: Request):
+    """Verify admin secret from header. Blocks all access if not configured."""
+    from cloud.config import settings
+    secret = settings.ADMIN_SECRET
+    if not secret:
+        raise HTTPException(status_code=503, detail="Admin secret not configured.")
+    provided = request.headers.get("X-Admin-Secret", "") or request.query_params.get("admin_secret", "")
+    if not provided or provided != secret:
+        raise HTTPException(status_code=403, detail="Forbidden.")
+
+
 @app.post("/admin/create-key")
-def create_api_key(req: APIKeyRequest):
-    """Create a new API key. In production, protect this endpoint."""
+def create_api_key(req: APIKeyRequest, request: Request):
+    """Create a new API key. Protected by admin secret."""
+    _verify_admin_secret(request)
     import secrets
     key = f"rb_{secrets.token_hex(24)}"
     _api_keys[key] = {
@@ -1109,14 +1140,35 @@ def create_api_key(req: APIKeyRequest):
 
 
 @app.get("/admin/stats")
-def admin_stats():
-    """Server statistics."""
+def admin_stats(request: Request):
+    """Server statistics. Protected by admin secret."""
+    _verify_admin_secret(request)
     return {
         "uptime_seconds": round(time.time() - _server_start_time, 1),
         "cache_entries": len(_score_cache),
         "api_keys_issued": len(_api_keys),
         "active_rate_limits": len(_rate_limits),
     }
+
+
+class SetTierRequest(BaseModel):
+    email: str
+    tier: str = Field(..., pattern="^(free|pro|ultra)$")
+
+
+@app.post("/admin/set-tier")
+def admin_set_tier(req: SetTierRequest, request: Request):
+    """Update a user's tier. Protected by admin secret."""
+    _verify_admin_secret(request)
+    from cloud.auth import get_db
+    db = get_db()
+    row = db.execute("SELECT id, email, tier FROM users WHERE email = ?", (req.email.lower().strip(),)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"User {req.email} not found.")
+    old_tier = row["tier"]
+    db.execute("UPDATE users SET tier = ?, updated_at = datetime('now') WHERE id = ?", (req.tier, row["id"]))
+    db.commit()
+    return {"email": row["email"], "old_tier": old_tier, "new_tier": req.tier}
 
 
 # =============================================================================
@@ -1265,6 +1317,7 @@ async def score_llm(req: ScoreRequest, api_key: str = Depends(verify_api_key_wit
     if not ANTHROPIC_AVAILABLE:
         raise HTTPException(status_code=503, detail="anthropic package not installed")
 
+    req = _maybe_autofill_resume(req, api_key)
     resume_text, jd_text, _ = resolve_inputs(req)
     result = score_with_llm(resume_text, jd_text, domain_hint=req.domain_hint)
     return result
@@ -1273,6 +1326,7 @@ async def score_llm(req: ScoreRequest, api_key: str = Depends(verify_api_key_wit
 @app.post("/score/combined")
 async def score_combined(req: ScoreRequest, api_key: str = Depends(verify_api_key_with_usage)):
     """Score resume using all three scorers (ATS + HR + LLM) and return blended result."""
+    req = _maybe_autofill_resume(req, api_key)
     resume_text, jd_text, resume_file_path = resolve_inputs(req)
 
     # Rules-based scores
@@ -1339,6 +1393,7 @@ async def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key
             except ImportError:
                 pass  # Local mode — no limits
 
+    req = _maybe_autofill_resume(req, auth)
     resume_text, jd_text, resume_file_path = resolve_inputs(req)
     _log_score_usage(auth, "/rewrite")
 
@@ -1412,6 +1467,15 @@ async def cover_letter_endpoint(req: CoverLetterRequest, auth=Depends(verify_api
                 detail="Cover letter generation requires a Pro ($12/month) or Ultra ($29/month) subscription.",
             )
 
+    # Auto-fill saved resume if none provided
+    if not req.resume_text and CLOUD_AVAILABLE and isinstance(auth, dict):
+        record = _get_resume_db(auth["user_id"])
+        if record:
+            req = req.model_copy(update={"resume_text": record["resume_text"]})
+
+    if not req.resume_text:
+        raise HTTPException(status_code=400, detail="Provide resume_text or upload a resume via POST /resume/upload.")
+
     _log_score_usage(auth, "/cover-letter")
 
     try:
@@ -1442,10 +1506,77 @@ async def cover_letter_endpoint(req: CoverLetterRequest, auth=Depends(verify_api
 # =============================================================================
 
 
+@app.post("/resume/upload")
+def upload_resume_endpoint(req: ResumeUploadRequest, auth=Depends(verify_api_key)):
+    """Save or replace the authenticated user's resume. Available to all registered users."""
+    if not CLOUD_AVAILABLE or not isinstance(auth, dict):
+        raise HTTPException(status_code=501, detail="Resume storage requires cloud authentication.")
+
+    # Resolve text from request
+    if req.resume_text and req.resume_text.strip():
+        text = req.resume_text.strip()
+        filename = req.resume_filename or "resume.txt"
+    elif req.resume_file:
+        filename = req.resume_filename or "resume.pdf"
+        try:
+            text = _decode_base64_file(req.resume_file, filename)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not decode file: {e}")
+    else:
+        raise HTTPException(status_code=400, detail="Provide resume_text or resume_file.")
+
+    if len(text.strip()) < 100:
+        raise HTTPException(status_code=400, detail="Resume too short (minimum 100 characters).")
+
+    meta = _save_resume_db(auth["user_id"], text, filename)
+    return {"saved": True, **meta}
+
+
+@app.get("/resume")
+def get_resume_endpoint(auth=Depends(verify_api_key)):
+    """Retrieve the authenticated user's saved resume."""
+    if not CLOUD_AVAILABLE or not isinstance(auth, dict):
+        raise HTTPException(status_code=501, detail="Resume storage requires cloud authentication.")
+
+    record = _get_resume_db(auth["user_id"])
+    if not record:
+        raise HTTPException(status_code=404, detail="No resume on file.")
+    return {
+        "resume_on_file": True,
+        "resume_text": record["resume_text"],
+        "filename": record["filename"],
+        "content_hash": record["content_hash"],
+        "uploaded_at": record["uploaded_at"],
+        "updated_at": record["updated_at"],
+        "char_count": len(record["resume_text"]),
+    }
+
+
+@app.delete("/resume")
+def delete_resume_endpoint(auth=Depends(verify_api_key)):
+    """Delete the authenticated user's saved resume."""
+    if not CLOUD_AVAILABLE or not isinstance(auth, dict):
+        raise HTTPException(status_code=501, detail="Resume storage requires cloud authentication.")
+
+    deleted = _delete_resume_db(auth["user_id"])
+    if not deleted:
+        raise HTTPException(status_code=404, detail="No resume on file to delete.")
+    return {"deleted": True}
+
+
 @app.post("/jobs/discover")
-def discover_jobs_endpoint(req: JobDiscoverRequest, api_key: str = Depends(verify_api_key_with_usage)):
+def discover_jobs_endpoint(req: JobDiscoverRequest, api_key=Depends(verify_api_key_with_usage)):
     """Search for jobs and score them against a resume. Counts as 1 score usage."""
     _log_score_usage(api_key, "/jobs/discover")
+
+    # Auto-fill saved resume if none provided
+    if not req.resume_text and CLOUD_AVAILABLE and isinstance(api_key, dict):
+        record = _get_resume_db(api_key["user_id"])
+        if record:
+            req = req.model_copy(update={"resume_text": record["resume_text"]})
+
+    if not req.resume_text:
+        raise HTTPException(status_code=400, detail="Provide resume_text or upload a resume via POST /resume/upload.")
 
     # Cache check (1-hour TTL for job discovery)
     cache_content = req.resume_text[:500] + req.job_title + req.location + str(req.remote_only)
