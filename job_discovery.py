@@ -750,6 +750,7 @@ def discover_jobs(
             "url": job["url"],
             "posted_date": job.get("posted_date", ""),
             "category": job.get("category", ""),
+            "description": desc,
         }
 
         if not desc:
