@@ -1611,9 +1611,16 @@ def discover_jobs_endpoint(req: JobDiscoverRequest, api_key=Depends(verify_api_k
 @app.post("/jobs/fetch-jd")
 def fetch_jd_endpoint(req: FetchJDRequest, api_key=Depends(verify_api_key)):
     """Scrape full job description from a listing URL. Uses trafilatura + Claude Haiku."""
-    import jd_fetcher
+    try:
+        import jd_fetcher
+    except ImportError:
+        raise HTTPException(status_code=503, detail="JD fetcher module unavailable on this server.")
 
-    raw_text = jd_fetcher.fetch_jd_from_url(req.url)
+    try:
+        raw_text = jd_fetcher.fetch_jd_from_url(req.url)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Scraping failed: {str(e)}")
+
     if not raw_text:
         raise HTTPException(
             status_code=422,
@@ -1624,7 +1631,10 @@ def fetch_jd_endpoint(req: FetchJDRequest, api_key=Depends(verify_api_key)):
     if req.use_ai and len(raw_text) > 400:
         api_key_str = os.getenv("ANTHROPIC_API_KEY", "")
         if api_key_str:
-            jd_text = jd_fetcher.extract_jd_with_ai(raw_text, req.job_title, api_key_str)
+            try:
+                jd_text = jd_fetcher.extract_jd_with_ai(raw_text, req.job_title, api_key_str)
+            except Exception:
+                jd_text = raw_text  # Fall back to raw if AI cleaning fails
 
     return {
         "jd_text": jd_text,
