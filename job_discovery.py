@@ -480,9 +480,10 @@ def _keyword_role_filter(
             continue
         filtered.append(job)
 
-    # Safety: if we'd remove >70% of candidates, the exclusion list is too aggressive
-    if len(filtered) < len(candidates) * 0.3:
-        return candidates
+    # No safety threshold here — AI-generated role exclusions are precise.
+    # A physician getting all nurse results from Adzuna should have them ALL removed.
+    # If filtered is empty, discover_jobs will return 0 results and tell the user
+    # to broaden their search, which is more useful than showing wrong-role jobs.
     return filtered
 
 
@@ -553,8 +554,8 @@ def _ai_role_filter(
         raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
         keep_indices = set(json.loads(raw))
         filtered = [job for i, job in enumerate(candidates) if i in keep_indices]
-        # Safety: if AI removed >70% of candidates it's over-filtering — return all
-        if len(filtered) < len(candidates) * 0.3:
+        # Safety: only override AI if it removed EVERYTHING (true edge case)
+        if len(filtered) == 0 and len(candidates) > 0:
             return candidates
         return filtered
     except Exception:
@@ -715,6 +716,21 @@ def discover_jobs(
 
     candidates.sort(key=lambda j: j["_light_score"], reverse=True)
     finalists = candidates[:max_results]
+
+    # If domain/role filtering removed everything, return a helpful message
+    if not finalists:
+        role_type = ai_analysis.get("role_type", "your role") if ai_analysis else "your role"
+        return {
+            "jobs": [],
+            "query": {"job_title": job_title, "location": location, "remote_only": remote_only},
+            "attribution": "Powered by Adzuna" if _adzuna_configured() else "No source",
+            "message": (
+                f"No matching jobs found for {role_type} in this search. "
+                "The available listings were filtered out because they didn't match "
+                "your role family or career level. Try: a broader location, "
+                "a different job title, or leave the title blank to let AI suggest searches."
+            ),
+        }
 
     # --- Step 4: Full ATS+HR score for finalists ---
     import ats_scorer
