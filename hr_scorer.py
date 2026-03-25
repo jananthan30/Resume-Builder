@@ -486,6 +486,7 @@ class JobEntry:
     duration_months: int = 0
     hierarchy_level: int = 3  # Default mid-level
     is_current: bool = False
+    date_context: str = ""  # Raw date line text (captures "Per Diem", "Part-Time", "Concurrent" etc.)
 
 @dataclass
 class EducationEntry:
@@ -861,24 +862,57 @@ def parse_resume(text: str) -> CandidateProfile:
                     continue
 
             # Check for date line (separate line with just dates)
-            for date_pattern in date_patterns:
-                date_match = re.search(date_pattern, line_stripped, re.IGNORECASE)
-                if date_match:
-                    if current_job and current_job.start_date is None:
-                        current_job.start_date = parse_date(date_match.group(1))
-                        end_str = date_match.group(2)
-                        if 'present' in end_str.lower() or 'current' in end_str.lower():
-                            current_job.end_date = None
-                            current_job.is_current = True
-                        else:
-                            current_job.end_date = parse_date(end_str)
+            # Handle semicolon-separated date ranges (e.g., "Oct 2021 – Jul 2022; Jul 2023 – Jan 2024")
+            if current_job and current_job.start_date is None and ';' in line_stripped:
+                semicolon_parts = [p.strip() for p in line_stripped.split(';')]
+                total_months = 0
+                first_start = None
+                last_end = None
+                for part in semicolon_parts:
+                    for date_pattern in date_patterns:
+                        dm = re.search(date_pattern, part, re.IGNORECASE)
+                        if dm:
+                            s = parse_date(dm.group(1))
+                            end_str = dm.group(2)
+                            if 'present' in end_str.lower() or 'current' in end_str.lower():
+                                e = None
+                                current_job.is_current = True
+                            else:
+                                e = parse_date(end_str)
+                            if first_start is None:
+                                first_start = s
+                            last_end = e
+                            if s:
+                                end_d = e or date.today()
+                                total_months += max(0, (end_d.year - s.year) * 12 + (end_d.month - s.month))
+                            break
+                if first_start:
+                    current_job.start_date = first_start
+                    current_job.end_date = last_end
+                    current_job.duration_months = total_months
+                    current_job.date_context = line_stripped
+            else:
+                for date_pattern in date_patterns:
+                    date_match = re.search(date_pattern, line_stripped, re.IGNORECASE)
+                    if date_match:
+                        if current_job and current_job.start_date is None:
+                            current_job.start_date = parse_date(date_match.group(1))
+                            end_str = date_match.group(2)
+                            if 'present' in end_str.lower() or 'current' in end_str.lower():
+                                current_job.end_date = None
+                                current_job.is_current = True
+                            else:
+                                current_job.end_date = parse_date(end_str)
 
-                        # Calculate duration
-                        if current_job.start_date:
-                            end = current_job.end_date or date.today()
-                            delta = (end.year - current_job.start_date.year) * 12 + (end.month - current_job.start_date.month)
-                            current_job.duration_months = max(0, delta)
-                    break
+                            # Capture full date line text for contract/part-time detection
+                            current_job.date_context = line_stripped
+
+                            # Calculate duration
+                            if current_job.start_date:
+                                end = current_job.end_date or date.today()
+                                delta = (end.year - current_job.start_date.year) * 12 + (end.month - current_job.start_date.month)
+                                current_job.duration_months = max(0, delta)
+                        break
 
             # Check for bullet points (•, -, *, —, numbered lists, or no marker)
             bullet_match = re.match(r'^[•\-*—]\s+(.+)$|^\d+[.)]\s+(.+)$', line_stripped)
@@ -2415,20 +2449,23 @@ def calculate_penalties(
     concerns = []
     total_penalty = 0
 
-    # 1. Job Hopping Check (context-aware: contract/temp roles get 50% penalty reduction)
+    # 1. Job Hopping Check (context-aware: contract/temp/part-time roles get 50% penalty reduction)
     contract_keywords = {'contract', 'temporary', 'interim', 'consultant', 'consulting',
-                         'freelance', 'locum', 'locums', 'per diem', 'prn', 'temp'}
+                         'freelance', 'locum', 'locums', 'per diem', 'prn', 'temp',
+                         'part-time', 'part time', 'concurrent'}
     if len(jobs) >= 3:
         tenures = [j.duration_months for j in jobs if j.duration_months > 0]
         if tenures:
             avg_tenure = sum(tenures) / len(tenures)
 
-            # Check if most short-tenure jobs are contract/temp roles
+            # Check if most short-tenure jobs are contract/temp/part-time roles
+            # Check title AND date_context (date line annotations like "Per Diem, Concurrent")
             contract_count = sum(
                 1 for j in jobs
                 if any(kw in j.title.lower() for kw in contract_keywords)
+                or any(kw in getattr(j, 'date_context', '').lower() for kw in contract_keywords)
             )
-            is_primarily_contract = contract_count >= len(jobs) * 0.4  # 40%+ are contract roles
+            is_primarily_contract = contract_count >= len(jobs) * 0.3  # 30%+ are contract/part-time/per-diem roles
             penalty_multiplier = 0.5 if is_primarily_contract else 1.0
 
             if avg_tenure < 12:

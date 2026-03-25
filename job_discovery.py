@@ -2,8 +2,10 @@
 Job Discovery Module — Search jobs and score them against your resume.
 
 APIs:
-  - Adzuna (primary): REST API, requires ADZUNA_APP_ID + ADZUNA_APP_KEY env vars
-  - Remotive (secondary): Free, no auth, remote jobs only
+  - JSearch (primary): Google for Jobs aggregator via RapidAPI — LinkedIn, Indeed, Glassdoor,
+    ZipRecruiter, company career sites. Requires RAPIDAPI_KEY env var.
+  - Adzuna (secondary): REST API, requires ADZUNA_APP_ID + ADZUNA_APP_KEY env vars
+  - Remotive (tertiary): Free, no auth, remote jobs only
 
 Two-tier scoring:
   1. Lightweight score (keyword + phrase + BM25 + title match) for top 20 candidates
@@ -76,6 +78,10 @@ def strip_html(html: str) -> str:
 
 def _adzuna_configured() -> bool:
     return bool(os.getenv("ADZUNA_APP_ID")) and bool(os.getenv("ADZUNA_APP_KEY"))
+
+
+def _jsearch_configured() -> bool:
+    return bool(os.getenv("RAPIDAPI_KEY"))
 
 
 def adzuna_configured() -> bool:
@@ -229,6 +235,112 @@ def _normalize_remotive_result(raw: dict) -> Dict[str, Any]:
         "url": raw.get("url", ""),
         "category": raw.get("category", ""),
         "posted_date": posted,
+    }
+
+
+# ---------------------------------------------------------------------------
+# JSearch API (Google for Jobs aggregator — LinkedIn, Indeed, Glassdoor, etc.)
+# ---------------------------------------------------------------------------
+
+JSEARCH_BASE = "https://jsearch.p.rapidapi.com/search"
+
+
+def jsearch_configured() -> bool:
+    """Public check for whether JSearch/RapidAPI key is set."""
+    return _jsearch_configured()
+
+
+def search_jsearch(
+    query: str,
+    location: str = "",
+    remote_only: bool = False,
+    date_posted: str = "month",
+    num_pages: int = 1,
+) -> List[Dict[str, Any]]:
+    """Search JSearch (Google for Jobs) for jobs. Returns normalized job dicts."""
+    api_key = os.getenv("RAPIDAPI_KEY", "")
+    if not api_key:
+        return []
+
+    # Build search query — append location to query for Google Jobs format
+    search_query = query
+    if location:
+        search_query = f"{query} in {location}"
+
+    params: Dict[str, str] = {
+        "query": search_query,
+        "page": "1",
+        "num_pages": str(min(num_pages, 3)),
+        "date_posted": date_posted,
+    }
+    if remote_only:
+        params["remote_jobs_only"] = "true"
+
+    url = f"{JSEARCH_BASE}?{urllib.parse.urlencode(params)}"
+
+    try:
+        req = urllib.request.Request(url, headers={
+            "Accept": "application/json",
+            "x-rapidapi-host": "jsearch.p.rapidapi.com",
+            "x-rapidapi-key": api_key,
+        })
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return []
+
+    if data.get("status") != "OK":
+        return []
+
+    results = data.get("data", [])
+    return [_normalize_jsearch_result(r) for r in results]
+
+
+def _normalize_jsearch_result(raw: dict) -> Dict[str, Any]:
+    """Normalize a JSearch API result to common schema."""
+    # Location
+    city = raw.get("job_city", "")
+    state = raw.get("job_state", "")
+    location_parts = [p for p in [city, state] if p]
+    location_str = ", ".join(location_parts) if location_parts else (
+        "Remote" if raw.get("job_is_remote") else "Not specified"
+    )
+
+    # Date
+    posted = raw.get("job_posted_at_datetime_utc", "") or raw.get("job_posted_at", "")
+    if posted:
+        posted = posted[:10]
+
+    # Salary
+    salary_min = raw.get("job_min_salary")
+    salary_max = raw.get("job_max_salary")
+
+    # Apply URL — prefer direct apply link
+    apply_url = raw.get("job_apply_link", "")
+    if not apply_url:
+        apply_options = raw.get("apply_options", [])
+        if apply_options and isinstance(apply_options, list):
+            apply_url = apply_options[0].get("apply_link", "")
+
+    # Publisher (LinkedIn, Indeed, ZipRecruiter, etc.)
+    publisher = raw.get("job_publisher", "")
+
+    return {
+        "source": f"jsearch:{publisher}" if publisher else "jsearch",
+        "id": raw.get("job_id", ""),
+        "title": (raw.get("job_title", "") or "").strip(),
+        "company": raw.get("employer_name", "Unknown"),
+        "location": location_str,
+        "description": strip_html(raw.get("job_description", "")),
+        "salary_min": salary_min,
+        "salary_max": salary_max,
+        "url": apply_url,
+        "listing_url": raw.get("job_google_link", apply_url),
+        "category": raw.get("job_onet_soc", ""),
+        "posted_date": posted,
+        "employment_type": raw.get("job_employment_type", ""),
+        "is_remote": raw.get("job_is_remote", False),
+        "is_direct_apply": raw.get("job_apply_is_direct", False),
     }
 
 
@@ -642,42 +754,60 @@ def discover_jobs(
                 search_queries.append(q)
         search_queries = search_queries[:4]
 
-    # --- Step 1: Search APIs ---
+    # --- Step 1: Search APIs (JSearch primary, Adzuna secondary, Remotive tertiary) ---
+    has_jsearch = _jsearch_configured()
     has_adzuna = _adzuna_configured()
     seen_ids: set = set()
+    sources_used: List[str] = []
 
     for query in search_queries:
+        # JSearch (primary) — aggregates Google for Jobs (LinkedIn, Indeed, Glassdoor, etc.)
+        if has_jsearch:
+            jsearch_results = search_jsearch(
+                query, location=location, remote_only=remote_only
+            )
+            for job in jsearch_results:
+                if job["id"] not in seen_ids:
+                    seen_ids.add(job["id"])
+                    all_jobs.append(job)
+            if jsearch_results and "jsearch" not in sources_used:
+                sources_used.append("jsearch")
+
+        # Adzuna (secondary) — independent source, may find different listings
         if has_adzuna:
             for job in search_adzuna(query, location=location):
                 if job["id"] not in seen_ids:
                     seen_ids.add(job["id"])
                     all_jobs.append(job)
+            if "adzuna" not in sources_used:
+                sources_used.append("adzuna")
 
-        if remote_only or not all_jobs:
+        # Remotive (tertiary) — remote-only jobs
+        if remote_only or (not all_jobs):
             for job in search_remotive(query):
                 if job["id"] not in seen_ids:
                     seen_ids.add(job["id"])
                     all_jobs.append(job)
+            if "remotive" not in sources_used:
+                sources_used.append("remotive")
 
         if len(all_jobs) >= 40:
             break
 
     if not all_jobs:
-        if not has_adzuna:
+        if not has_jsearch and not has_adzuna:
             return {
                 "jobs": [],
                 "query": {"job_title": job_title, "location": location, "remote_only": remote_only},
                 "attribution": "No API keys configured.",
                 "setup_required": True,
                 "message": (
-                    "Job discovery requires API keys. You have two options:\n\n"
-                    "1. **Cloud (recommended):** Use the hosted scorer at "
-                    "https://resume-scorer-web.streamlit.app — no setup needed, "
-                    "Adzuna search is built in.\n\n"
-                    "2. **Local:** Get free Adzuna API keys at https://developer.adzuna.com/ "
-                    "and add to your .env file:\n"
-                    "   ADZUNA_APP_ID=your_app_id\n"
-                    "   ADZUNA_APP_KEY=your_app_key"
+                    "Job discovery requires API keys. Options:\n\n"
+                    "1. **JSearch (recommended):** Get free RapidAPI key at "
+                    "https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch "
+                    "and add RAPIDAPI_KEY to .env\n\n"
+                    "2. **Adzuna:** Get free keys at https://developer.adzuna.com/ "
+                    "and add ADZUNA_APP_ID + ADZUNA_APP_KEY to .env"
                 ),
             }
         return {
@@ -729,7 +859,7 @@ def discover_jobs(
         return {
             "jobs": [],
             "query": {"job_title": job_title, "location": location, "remote_only": remote_only},
-            "attribution": "Powered by Adzuna" if _adzuna_configured() else "No source",
+            "attribution": "Powered by JSearch & Adzuna" if _jsearch_configured() else ("Powered by Adzuna" if _adzuna_configured() else "No source"),
             "message": (
                 f"No matching jobs found for {role_type} in this search. "
                 "The available listings were filtered out because they didn't match "
@@ -738,9 +868,10 @@ def discover_jobs(
             ),
         }
 
-    # --- Step 4: Full ATS+HR score for finalists ---
+    # --- Step 4: Full Job Fit + ATS + HR scoring for finalists ---
     import ats_scorer
     import hr_scorer
+    from job_fit_scorer import calculate_job_fit
 
     ranked_jobs = []
     for rank_idx, job in enumerate(finalists, 1):
@@ -754,19 +885,42 @@ def discover_jobs(
             "salary_min": job.get("salary_min"),
             "salary_max": job.get("salary_max"),
             "url": job["url"],
+            "listing_url": job.get("listing_url", job.get("url", "")),
             "posted_date": job.get("posted_date", ""),
             "category": job.get("category", ""),
+            "employment_type": job.get("employment_type", ""),
+            "is_remote": job.get("is_remote", False),
             "description": desc,
         }
 
         if not desc:
             result_entry["scoring_tier"] = "none"
+            result_entry["job_fit_score"] = 0
             result_entry["ats_score"] = 0
             result_entry["hr_score"] = 0
+            result_entry["job_fit_detail"] = {}
             result_entry["ats_detail"] = {}
             result_entry["hr_detail"] = {}
             ranked_jobs.append(result_entry)
             continue
+
+        # Job Fit scoring (fast — regex + NLTK + SBERT, no API cost)
+        try:
+            fit_result = calculate_job_fit(resume_text, desc)
+            job_fit_score = round(fit_result.overall_score, 1)
+            knockout_flags = []
+            if fit_result.knockouts and not fit_result.knockouts.passed:
+                knockout_flags = [
+                    k.requirement for k in fit_result.knockouts.knockouts
+                ] if fit_result.knockouts.knockouts else []
+            job_fit_detail = {
+                "verdict": fit_result.recommendation,
+                "knockouts": knockout_flags,
+                "dimensions": fit_result.dimensions.to_dict() if fit_result.dimensions else {},
+            }
+        except Exception:
+            job_fit_score = 50.0  # neutral fallback
+            job_fit_detail = {"error": "Job Fit scoring failed"}
 
         # Full ATS scoring
         try:
@@ -792,19 +946,26 @@ def discover_jobs(
                 "skills_match": hr_dict.get("factor_breakdown", {}).get("skills", 0),
             }
         except Exception as e:
-            hr_score = round(job.get("_light_score", 0) * 0.8, 1)  # fallback: 80% of light score
+            hr_score = round(job.get("_light_score", 0) * 0.8, 1)
             hr_detail = {"error": f"HR scoring failed: {type(e).__name__}: {e}"}
 
         result_entry["scoring_tier"] = "full"
+        result_entry["job_fit_score"] = job_fit_score
         result_entry["ats_score"] = ats_score
         result_entry["hr_score"] = hr_score
+        result_entry["job_fit_detail"] = job_fit_detail
         result_entry["ats_detail"] = ats_detail
         result_entry["hr_detail"] = hr_detail
         ranked_jobs.append(result_entry)
 
-    # Sort finalists by combined score (ATS 60% + HR 40%)
+    # Sort finalists by combined score: Job Fit 40% + ATS 30% + HR 30%
+    # Job Fit weighted highest because it catches knockout disqualifiers
     for job in ranked_jobs:
-        job["_combined"] = job.get("ats_score", 0) * 0.6 + job.get("hr_score", 0) * 0.4
+        job["_combined"] = (
+            job.get("job_fit_score", 0) * 0.4
+            + job.get("ats_score", 0) * 0.3
+            + job.get("hr_score", 0) * 0.3
+        )
     ranked_jobs.sort(key=lambda j: j["_combined"], reverse=True)
 
     # Re-rank
@@ -815,6 +976,16 @@ def discover_jobs(
     # Build attribution
     sources = set(j["source"] for j in ranked_jobs)
     attr_parts = []
+    if any(s.startswith("jsearch") for s in sources):
+        # Extract publishers from jsearch results (e.g., "jsearch:LinkedIn", "jsearch:Indeed")
+        publishers = set()
+        for s in sources:
+            if s.startswith("jsearch:") and s != "jsearch":
+                publishers.add(s.split(":", 1)[1])
+        if publishers:
+            attr_parts.append(f"JSearch ({', '.join(sorted(publishers))})")
+        else:
+            attr_parts.append("JSearch (Google for Jobs)")
     if "adzuna" in sources:
         attr_parts.append("Adzuna")
     if "remotive" in sources:

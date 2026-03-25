@@ -36,6 +36,7 @@ python hr_scorer.py --score resume.pdf jd.txt --web
 ```
 Resume Builder/
 ├── {master_resume from config.json}        # Master resume (DOCX, PDF, or Markdown)
+├── SUPPLEMENTAL_EXPERIENCE.md              # Selective-use experience entries (NOT in master resume)
 ├── ats_scorer.py                           # ATS scoring engine (keyword matching)
 ├── hr_scorer.py                            # HR scoring engine (recruiter simulation)
 ├── docx_generator.py                       # ATS-compliant DOCX generator

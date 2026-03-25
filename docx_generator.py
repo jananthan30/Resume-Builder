@@ -5,12 +5,16 @@ Supports multiple resume formats:
 1. ATS-Optimized (Workday/ATS Compliant)
 2. Harvard Style (Harvard OCS Format)
 
-ATS Design Rules:
+ATS Design Rules (2026 Best Practices):
 - NO columns, tables, text boxes, graphics, icons, or headers/footers
 - YES to bold text, all-caps headers, bullet points, horizontal lines
-- Fonts: Times New Roman (11pt body, 14pt name header)
+- Font: Calibri (ATS-friendly sans-serif, corporate standard)
+- Size hierarchy: Name 20pt, Section Headers 11pt bold, Body 10.5pt, Contact 10pt
+- Color accent: Dark navy (#1F3864) for name and section headers only
+- Company names: Title Case (not ALL CAPS) — only job titles are uppercase
+- Line spacing: 1.15 for readability
 - Contact info in main body, not header
-- Linear layout for easy parsing
+- Linear single-column layout for easy parsing
 
 Harvard Style Design Rules (Harvard Office of Career Services):
 - Font: Times New Roman (traditional academic)
@@ -35,8 +39,74 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
 
-def set_font(run, font_name='Times New Roman', size=11, bold=False):
-    """Set font properties for a run."""
+# -- Default font and color constants --
+FONT_BODY = 'Calibri'
+FONT_SIZE_NAME = 20
+FONT_SIZE_HEADER = 11
+FONT_SIZE_BODY = 10.5
+FONT_SIZE_CONTACT = 10
+FONT_SIZE_BULLET = 10.5
+FONT_SIZE_PUB = 9.5
+COLOR_NAVY = RGBColor(0x1F, 0x38, 0x64)   # Dark navy accent (#1F3864)
+COLOR_BLACK = RGBColor(0, 0, 0)
+COLOR_DARK_GRAY = RGBColor(0x33, 0x33, 0x33)
+LINE_SPACING = 1.15
+
+# Acronyms / abbreviations that should stay ALL CAPS in company names
+_KEEP_UPPER = {
+    'LLC', 'INC', 'LLP', 'LP', 'PLC', 'SA', 'AG', 'CO', 'LTD',
+    'USA', 'US', 'UK', 'NY', 'NJ', 'CT', 'CA', 'WI', 'MD', 'DC',
+    'CRO', 'EDC', 'ICU', 'IRB', 'FDA', 'EMA', 'GCP', 'ICH',
+    'IQVIA', 'ICON', 'IBM', 'NIH', 'CDC', 'WHO', 'HCG', 'MPH',
+    'EMR', 'EHR', 'IT', 'AI', 'ML', 'HR', 'QA', 'R&D',
+    'DR', 'DR.', 'K.', 'ESC', 'SME', 'CNS', 'EPM',
+    'HIV', 'OB/GYN', 'OBGYN', 'NYU', 'MIT', 'UCLA',
+}
+
+
+def smart_title_case(text: str) -> str:
+    """
+    Convert ALL-CAPS company names to Title Case, preserving known acronyms.
+
+    Examples:
+        'YALE SCHOOL OF PUBLIC HEALTH' -> 'Yale School of Public Health'
+        'COVANCE/LABCORP DRUG DEVELOPMENT' -> 'Covance/LabCorp Drug Development'
+        'SAINT MICHAEL MEDICAL CENTER' -> 'Saint Michael Medical Center'
+        'DR. K. ISWARA GASTROENTEROLOGY OFFICE' -> 'Dr. K. Iswara Gastroenterology Office'
+    """
+    if not text or not text.isupper():
+        return text  # only transform ALL-CAPS strings
+
+    # Small words that stay lowercase in title case (unless first word)
+    small_words = {'of', 'the', 'and', 'in', 'for', 'at', 'by', 'to', 'a', 'an', 'on'}
+
+    # Handle slash-separated parts (e.g., COVANCE/LABCORP)
+    if '/' in text:
+        return '/'.join(smart_title_case(part) for part in text.split('/'))
+
+    # Handle hyphenated parts
+    if ' - ' in text:
+        return ' - '.join(smart_title_case(part) for part in text.split(' - '))
+
+    words = text.split()
+    result = []
+    for i, word in enumerate(words):
+        # Strip trailing punctuation for lookup
+        core = word.rstrip('.,;:')
+        if core.upper() in _KEEP_UPPER or word.upper() in _KEEP_UPPER:
+            result.append(word.upper() if word.isupper() else word)
+        elif i > 0 and core.lower() in small_words:
+            result.append(word.lower())
+        else:
+            result.append(word.capitalize())
+
+    return ' '.join(result)
+
+
+def set_font(run, font_name=None, size=None, bold=False):
+    """Set font properties for a run. Defaults to Calibri 10.5pt."""
+    font_name = font_name or FONT_BODY
+    size = size or FONT_SIZE_BODY
     run.font.name = font_name
     run.font.size = Pt(size)
     run.font.bold = bold
@@ -44,8 +114,10 @@ def set_font(run, font_name='Times New Roman', size=11, bold=False):
     run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
 
 
-def _set_line_spacing(p, multiple=1.08):
+def _set_line_spacing(p, multiple=None):
     """Set paragraph line spacing as a multiple of single (240-unit) spacing."""
+    if multiple is None:
+        multiple = LINE_SPACING
     pPr = p._p.get_or_add_pPr()
     spacing = pPr.find(qn('w:spacing'))
     if spacing is None:
@@ -66,7 +138,7 @@ def add_horizontal_line(doc, thick=False):
     bottom.set(qn('w:val'), 'single')
     bottom.set(qn('w:sz'), '8' if thick else '6')   # 1pt thick or 0.75pt hairline
     bottom.set(qn('w:space'), '1')
-    bottom.set(qn('w:color'), '000000')
+    bottom.set(qn('w:color'), '1F3864')
     pBdr.append(bottom)
     pPr.append(pBdr)
 
@@ -87,12 +159,12 @@ def _setup_heading_style(doc):
             from docx.enum.style import WD_STYLE_TYPE
             sh = styles.add_style('SectionHeader', WD_STYLE_TYPE.PARAGRAPH)
             sh.base_style = styles['Normal']
-            sh.font.name = 'Times New Roman'
-            sh.font.size = Pt(11)
+            sh.font.name = FONT_BODY
+            sh.font.size = Pt(FONT_SIZE_HEADER)
             sh.font.bold = True
-            sh.font.color.rgb = RGBColor(0, 0, 0)
+            sh.font.color.rgb = COLOR_NAVY
             sh.font.italic = False
-            sh.paragraph_format.space_before = Pt(12)
+            sh.paragraph_format.space_before = Pt(14)
             sh.paragraph_format.space_after = Pt(6)
             sh.paragraph_format.keep_with_next = True
             sh.paragraph_format.left_indent = Pt(0)
@@ -112,20 +184,19 @@ def add_section_header(doc, text):
         p = doc.add_paragraph(style='SectionHeader')
     except KeyError:
         p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(12)
+    p.paragraph_format.space_before = Pt(14)
     p.paragraph_format.space_after = Pt(6)
     p.paragraph_format.keep_with_next = True
     p.paragraph_format.left_indent = Pt(0)
 
     run = p.add_run(text.upper())
-    set_font(run, font_name='Times New Roman', size=11, bold=True)
-    # Override Heading 1 default color (usually blue/accent) to solid black
-    run.font.color.rgb = RGBColor(0, 0, 0)
+    set_font(run, font_name=FONT_BODY, size=FONT_SIZE_HEADER, bold=True)
+    run.font.color.rgb = COLOR_NAVY
     run.font.italic = False
-    # Add 0.75pt letter-spacing — hallmark of professional academic headers in TNR
+    # Add 1pt letter-spacing for all-caps headers
     rPr = run._element.get_or_add_rPr()
     spacing_el = OxmlElement('w:spacing')
-    spacing_el.set(qn('w:val'), '15')   # 15 twentieths-of-pt = 0.75pt
+    spacing_el.set(qn('w:val'), '20')   # 20 twentieths-of-pt = 1pt
     rPr.append(spacing_el)
 
 
@@ -134,7 +205,7 @@ def add_bullet_point(doc, text, bold_parts=None):
     p = doc.add_paragraph(style='List Bullet')
     p.paragraph_format.space_after = Pt(2)
     p.paragraph_format.left_indent = Inches(0.25)
-    _set_line_spacing(p, 1.08)
+    _set_line_spacing(p)
 
     if bold_parts:
         # Split text and bold specific parts
@@ -144,16 +215,16 @@ def add_bullet_point(doc, text, bold_parts=None):
                 parts = remaining.split(bold_text, 1)
                 if parts[0]:
                     run = p.add_run(parts[0])
-                    set_font(run, font_name='Times New Roman', size=11)
+                    set_font(run, size=FONT_SIZE_BULLET)
                 run = p.add_run(bold_text)
-                set_font(run, font_name='Times New Roman', size=11, bold=True)
+                set_font(run, size=FONT_SIZE_BULLET, bold=True)
                 remaining = parts[1] if len(parts) > 1 else ''
         if remaining:
             run = p.add_run(remaining)
-            set_font(run, font_name='Times New Roman', size=11)
+            set_font(run, size=FONT_SIZE_BULLET)
     else:
         run = p.add_run(text)
-        set_font(run, font_name='Times New Roman', size=11)
+        set_font(run, size=FONT_SIZE_BULLET)
 
     return p
 
@@ -167,8 +238,8 @@ def _render_citation_runs(p, text, prefix=""):
     Falls back to plain+bold-year for non-standard formats.
     """
     full = prefix + text
-    FN = 'Times New Roman'
-    SZ = 10
+    FN = FONT_BODY
+    SZ = FONT_SIZE_PUB
 
     year_m = re.search(r'\b((?:19|20)\d{2})\b', full)
     if not year_m:
@@ -291,7 +362,9 @@ def create_ats_resume(
     education,  # list of dicts with degree, school, location
     certifications,  # list of strings
     professional_memberships=None,  # optional list of strings
-    publications=None  # optional list of strings or dict with categories
+    publications=None,  # optional list of strings or dict with categories
+    publications_footer=None,  # optional footer line (e.g., Google Scholar link)
+    projects=None,  # optional list of dicts with title, dates, bullets
 ):
     """
     Create an ATS-optimized resume DOCX.
@@ -314,23 +387,24 @@ def create_ats_resume(
     # Configure Heading 1 style for Workday-compatible section header parsing
     _setup_heading_style(doc)
 
-    # Set margins (0.5" to 0.75")
+    # Set margins (0.7" for clean readability)
     for section in doc.sections:
         section.top_margin = Inches(0.5)
         section.bottom_margin = Inches(0.5)
-        section.left_margin = Inches(0.6)
-        section.right_margin = Inches(0.6)
+        section.left_margin = Inches(0.7)
+        section.right_margin = Inches(0.7)
 
-    # ===== NAME (Bold, Centered, 15pt) =====
+    # ===== NAME (Bold, Centered, 20pt, Navy) =====
     name_para = doc.add_paragraph()
     name_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    name_para.paragraph_format.space_after = Pt(2)
+    name_para.paragraph_format.space_after = Pt(3)
     name_run = name_para.add_run(name.upper())
-    set_font(name_run, font_name='Times New Roman', size=15, bold=True)
+    set_font(name_run, size=FONT_SIZE_NAME, bold=True)
+    name_run.font.color.rgb = COLOR_NAVY
 
     # ===== CONTACT INFO (In main body, not header) =====
-    # Use middle-dot separator and filter out empty fields
-    SEP = '  \u00B7  '   # middle dot with en-spaces
+    # Use pipe separator and filter out empty fields
+    SEP = '  |  '
     contact_parts = []
     city_state = f"{contact_info.get('city', '')}, {contact_info.get('state', '')} {contact_info.get('zip', '')}".strip(' ,')
     if city_state.strip():
@@ -345,7 +419,8 @@ def create_ats_resume(
     contact_para.paragraph_format.space_before = Pt(0)
     contact_para.paragraph_format.space_after = Pt(0)
     contact_run = contact_para.add_run(SEP.join(contact_parts))
-    set_font(contact_run, font_name='Times New Roman', size=10.5)
+    set_font(contact_run, size=FONT_SIZE_CONTACT)
+    contact_run.font.color.rgb = COLOR_DARK_GRAY
 
     # LinkedIn/Portfolio on second line
     if contact_info.get('linkedin'):
@@ -354,7 +429,8 @@ def create_ats_resume(
         link_para.paragraph_format.space_before = Pt(1)
         link_para.paragraph_format.space_after = Pt(0)
         link_run = link_para.add_run(contact_info['linkedin'])
-        set_font(link_run, font_name='Times New Roman', size=10.5)
+        set_font(link_run, size=FONT_SIZE_CONTACT)
+        link_run.font.color.rgb = COLOR_DARK_GRAY
 
     # Thicker rule closes the header block
     add_horizontal_line(doc, thick=True)
@@ -366,56 +442,63 @@ def create_ats_resume(
     summary_para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
     summary_para.paragraph_format.space_before = Pt(2)
     summary_para.paragraph_format.space_after = Pt(6)
-    _set_line_spacing(summary_para, 1.08)
+    _set_line_spacing(summary_para)
     summary_run = summary_para.add_run(summary)
-    set_font(summary_run, font_name='Times New Roman', size=11)
+    set_font(summary_run, size=FONT_SIZE_BODY)
 
     # ===== CORE COMPETENCIES =====
     add_horizontal_line(doc)
     add_section_header(doc, 'CORE COMPETENCIES')
 
-    # Display 3 competencies per row separated by middle-dot — compact and ATS-safe
+    # Display 3 competencies per row separated by pipe — compact and ATS-safe
     ROW = 3
     for i in range(0, len(core_competencies), ROW):
         row_items = core_competencies[i:i + ROW]
-        row_text = '  \u00B7  '.join(row_items)
         comp_para = doc.add_paragraph(style='List Bullet')
         comp_para.paragraph_format.space_after = Pt(2)
         comp_para.paragraph_format.left_indent = Inches(0.25)
-        comp_run = comp_para.add_run(row_text)
-        set_font(comp_run, font_name='Times New Roman', size=11)
+        for j, item in enumerate(row_items):
+            if j > 0:
+                sep_run = comp_para.add_run('  |  ')
+                set_font(sep_run, size=FONT_SIZE_BODY)
+                sep_run.font.color.rgb = COLOR_DARK_GRAY
+            comp_run = comp_para.add_run(item)
+            set_font(comp_run, size=FONT_SIZE_BODY)
 
     # ===== PROFESSIONAL EXPERIENCE =====
     add_horizontal_line(doc)
     add_section_header(doc, 'PROFESSIONAL EXPERIENCE')
 
     for job in experience:
-        # Line 1: JOB TITLE (bold, ALL-CAPS, left) .......... Dates (italic, right-aligned)
+        # Line 1: JOB TITLE (bold, ALL-CAPS, left) .......... Dates (right-aligned)
         title_para = doc.add_paragraph()
         title_para.paragraph_format.space_before = Pt(10)
         title_para.paragraph_format.space_after = Pt(1)
         if job.get('dates'):
             title_para.paragraph_format.tab_stops.add_tab_stop(
-                Inches(6.5), WD_TAB_ALIGNMENT.RIGHT
+                Inches(6.3), WD_TAB_ALIGNMENT.RIGHT
             )
         title_run = title_para.add_run(job['title'].upper())
-        set_font(title_run, font_name='Times New Roman', size=11, bold=True)
+        set_font(title_run, size=FONT_SIZE_BODY, bold=True)
         if job.get('dates'):
             title_para.add_run('\t')
             dates_run = title_para.add_run(job['dates'])
-            set_font(dates_run, font_name='Times New Roman', size=11)
-            dates_run.font.italic = True
+            set_font(dates_run, size=FONT_SIZE_BODY)
+            dates_run.font.color.rgb = COLOR_DARK_GRAY
 
-        # Line 2: Company Name, Location (italic)
+        # Line 2: Company Name (Title Case, bold), Location (regular)
         company_para = doc.add_paragraph()
         company_para.paragraph_format.space_before = Pt(0)
         company_para.paragraph_format.space_after = Pt(3)
-        company_text = job['company']
+        company_name = smart_title_case(job['company'])
+        company_run = company_para.add_run(company_name)
+        set_font(company_run, size=FONT_SIZE_BODY, bold=True)
+        company_run.font.color.rgb = COLOR_DARK_GRAY
         if job.get('location'):
-            company_text += f", {job['location']}"
-        company_run = company_para.add_run(company_text)
-        set_font(company_run, font_name='Times New Roman', size=11)
-        company_run.font.italic = True
+            loc_text = smart_title_case(job['location']) if job['location'].isupper() else job['location']
+            loc_run = company_para.add_run(f", {loc_text}")
+            set_font(loc_run, size=FONT_SIZE_BODY)
+            loc_run.font.color.rgb = COLOR_DARK_GRAY
 
         # Bullet points with metrics bolded
         for bullet in job.get('bullets', []):
@@ -427,23 +510,23 @@ def create_ats_resume(
     add_section_header(doc, 'EDUCATION')
 
     for edu in education:
-        # Line 1: Degree name (bold, left) — Dates (italic, right-aligned)
+        # Line 1: Degree name (bold, left) — Dates (right-aligned)
         edu_para = doc.add_paragraph()
         edu_para.paragraph_format.space_before = Pt(8)
         edu_para.paragraph_format.space_after = Pt(1)
         if edu.get('dates'):
             edu_para.paragraph_format.tab_stops.add_tab_stop(
-                Inches(6.5), WD_TAB_ALIGNMENT.RIGHT
+                Inches(6.3), WD_TAB_ALIGNMENT.RIGHT
             )
         degree_run = edu_para.add_run(edu['degree'])
-        set_font(degree_run, font_name='Times New Roman', size=11, bold=True)
+        set_font(degree_run, size=FONT_SIZE_BODY, bold=True)
         if edu.get('dates'):
             edu_para.add_run('\t')
             dates_run = edu_para.add_run(edu['dates'])
-            set_font(dates_run, font_name='Times New Roman', size=11)
-            dates_run.font.italic = True
+            set_font(dates_run, size=FONT_SIZE_BODY)
+            dates_run.font.color.rgb = COLOR_DARK_GRAY
 
-        # Line 2: School, Location (italic)
+        # Line 2: School, Location
         school_para = doc.add_paragraph()
         school_para.paragraph_format.space_before = Pt(0)
         school_para.paragraph_format.space_after = Pt(4)
@@ -451,16 +534,17 @@ def create_ats_resume(
         if edu.get('location'):
             school_text += f", {edu['location']}"
         school_run = school_para.add_run(school_text)
-        set_font(school_run, font_name='Times New Roman', size=11)
-        school_run.font.italic = True
+        set_font(school_run, size=FONT_SIZE_BODY)
+        school_run.font.color.rgb = COLOR_DARK_GRAY
 
     # ===== CERTIFICATIONS & LICENSURE =====
     if certifications:
         add_horizontal_line(doc)
         add_section_header(doc, 'CERTIFICATIONS & LICENSURE')
 
-        for cert in certifications:
-            add_bullet_point(doc, cert)
+        # Render all certifications as a single comma-separated line
+        cert_line = ', '.join(certifications)
+        add_bullet_point(doc, cert_line)
 
     # ===== PUBLICATIONS (Optional) =====
     if publications:
@@ -474,7 +558,7 @@ def create_ats_resume(
                 cat_para.paragraph_format.space_before = Pt(8)
                 cat_para.paragraph_format.space_after = Pt(3)
                 cat_run = cat_para.add_run(category)
-                set_font(cat_run, font_name='Times New Roman', size=11, bold=True)
+                set_font(cat_run, size=FONT_SIZE_BODY, bold=True)
                 cat_run.font.italic = True
                 for i, pub in enumerate(pubs, 1):
                     add_publication_entry(doc, pub, number=i)
@@ -482,6 +566,37 @@ def create_ats_resume(
             # List format: ['pub1', 'pub2', ...]
             for i, pub in enumerate(publications, 1):
                 add_publication_entry(doc, pub, number=i)
+
+        # Add publications footer (e.g., Google Scholar link) if provided
+        if publications_footer:
+            footer_para = doc.add_paragraph()
+            footer_para.paragraph_format.space_before = Pt(6)
+            footer_para.paragraph_format.space_after = Pt(2)
+            footer_run = footer_para.add_run(publications_footer)
+            set_font(footer_run, size=Pt(9))
+            footer_run.font.color.rgb = COLOR_DARK_GRAY
+
+    # ===== PROJECTS (Optional) =====
+    if projects:
+        add_horizontal_line(doc)
+        add_section_header(doc, 'PROJECTS')
+
+        for proj in projects:
+            # Project title line with dates
+            proj_para = doc.add_paragraph()
+            proj_para.paragraph_format.space_before = Pt(8)
+            proj_para.paragraph_format.space_after = Pt(2)
+            title_run = proj_para.add_run(proj.get('title', ''))
+            set_font(title_run, size=FONT_SIZE_BODY, bold=True)
+            if proj.get('dates'):
+                sep_run = proj_para.add_run('  |  ')
+                set_font(sep_run, size=FONT_SIZE_BODY)
+                date_run = proj_para.add_run(proj['dates'])
+                set_font(date_run, size=FONT_SIZE_BODY)
+
+            # Project bullets
+            for bullet in proj.get('bullets', []):
+                add_bullet_point(doc, bullet)
 
     # ===== PROFESSIONAL MEMBERSHIPS (Optional) =====
     if professional_memberships:
@@ -532,27 +647,29 @@ def create_ats_cover_letter(
     header_para = doc.add_paragraph()
     header_para.paragraph_format.space_after = Pt(0)
     header_run = header_para.add_run(name)
-    set_font(header_run, font_name='Times New Roman', size=11, bold=True)
+    set_font(header_run, size=14, bold=True)
+    header_run.font.color.rgb = COLOR_NAVY
 
     contact_para = doc.add_paragraph()
     contact_para.paragraph_format.space_before = Pt(0)
     contact_para.paragraph_format.space_after = Pt(0)
     contact_text = f"{contact_info.get('city', '')}, {contact_info.get('state', '')} | {contact_info.get('email', '')} | {contact_info.get('phone', '')}"
     contact_run = contact_para.add_run(contact_text)
-    set_font(contact_run, font_name='Times New Roman', size=11)
+    set_font(contact_run, size=FONT_SIZE_CONTACT)
+    contact_run.font.color.rgb = COLOR_DARK_GRAY
 
     # ===== DATE =====
     date_para = doc.add_paragraph()
     date_para.paragraph_format.space_before = Pt(12)
     date_para.paragraph_format.space_after = Pt(6)
     date_run = date_para.add_run(date)
-    set_font(date_run, font_name='Times New Roman', size=11)
+    set_font(date_run, size=FONT_SIZE_BODY)
 
     # ===== RECIPIENT INFO =====
     if recipient_info.get('name'):
         recip_name = doc.add_paragraph()
         recip_name_run = recip_name.add_run(recipient_info['name'])
-        set_font(recip_name_run, font_name='Times New Roman', size=11)
+        set_font(recip_name_run, size=FONT_SIZE_BODY)
         recip_name.paragraph_format.space_after = Pt(0)
 
     if recipient_info.get('title'):
@@ -560,27 +677,28 @@ def create_ats_cover_letter(
         recip_title.paragraph_format.space_before = Pt(0)
         recip_title.paragraph_format.space_after = Pt(0)
         recip_title_run = recip_title.add_run(recipient_info['title'])
-        set_font(recip_title_run, font_name='Times New Roman', size=11)
+        set_font(recip_title_run, size=FONT_SIZE_BODY)
 
     recip_company = doc.add_paragraph()
     recip_company.paragraph_format.space_before = Pt(0)
     recip_company.paragraph_format.space_after = Pt(0)
     recip_company_run = recip_company.add_run(recipient_info['company'])
-    set_font(recip_company_run, font_name='Times New Roman', size=11)
+    set_font(recip_company_run, size=FONT_SIZE_BODY)
 
     if recipient_info.get('address'):
         recip_addr = doc.add_paragraph()
         recip_addr.paragraph_format.space_before = Pt(0)
         recip_addr.paragraph_format.space_after = Pt(0)
         recip_addr_run = recip_addr.add_run(recipient_info['address'])
-        set_font(recip_addr_run, font_name='Times New Roman', size=11)
+        set_font(recip_addr_run, size=FONT_SIZE_BODY)
 
     # ===== SUBJECT LINE =====
     subject_para = doc.add_paragraph()
     subject_para.paragraph_format.space_before = Pt(12)
     subject_para.paragraph_format.space_after = Pt(6)
     subject_run = subject_para.add_run(f"Re: {job_title}")
-    set_font(subject_run, font_name='Times New Roman', size=11, bold=True)
+    set_font(subject_run, size=FONT_SIZE_BODY, bold=True)
+    subject_run.font.color.rgb = COLOR_NAVY
 
     # ===== SALUTATION =====
     salutation = doc.add_paragraph()
@@ -590,7 +708,7 @@ def create_ats_cover_letter(
     else:
         sal_text = "Dear Hiring Manager,"
     sal_run = salutation.add_run(sal_text)
-    set_font(sal_run, font_name='Times New Roman', size=11)
+    set_font(sal_run, size=FONT_SIZE_BODY)
 
     # ===== BODY PARAGRAPHS =====
     for para_text in paragraphs:
@@ -599,6 +717,7 @@ def create_ats_cover_letter(
 
         # Bold metrics within paragraphs
         clean_text, bold_parts = extract_metrics(para_text)
+        _set_line_spacing(para)
 
         if bold_parts:
             remaining = clean_text
@@ -607,29 +726,30 @@ def create_ats_cover_letter(
                     parts = remaining.split(bold_text, 1)
                     if parts[0]:
                         run = para.add_run(parts[0])
-                        set_font(run, font_name='Times New Roman', size=11)
+                        set_font(run, size=FONT_SIZE_BODY)
                     run = para.add_run(bold_text)
-                    set_font(run, font_name='Times New Roman', size=11, bold=True)
+                    set_font(run, size=FONT_SIZE_BODY, bold=True)
                     remaining = parts[1] if len(parts) > 1 else ''
             if remaining:
                 run = para.add_run(remaining)
-                set_font(run, font_name='Times New Roman', size=11)
+                set_font(run, size=FONT_SIZE_BODY)
         else:
             run = para.add_run(clean_text)
-            set_font(run, font_name='Times New Roman', size=11)
+            set_font(run, size=FONT_SIZE_BODY)
 
     # ===== CLOSING =====
     closing_para = doc.add_paragraph()
     closing_para.paragraph_format.space_before = Pt(6)
     closing_para.paragraph_format.space_after = Pt(0)
     closing_run = closing_para.add_run(closing)
-    set_font(closing_run, font_name='Times New Roman', size=11)
+    set_font(closing_run, size=FONT_SIZE_BODY)
 
     # ===== SIGNATURE =====
     sig_para = doc.add_paragraph()
     sig_para.paragraph_format.space_before = Pt(24)
     sig_run = sig_para.add_run(name)
-    set_font(sig_run, font_name='Times New Roman', size=11, bold=True)
+    set_font(sig_run, size=FONT_SIZE_BODY, bold=True)
+    sig_run.font.color.rgb = COLOR_NAVY
 
     # Save
     doc.save(output_path)
@@ -1234,7 +1354,7 @@ _KNOWN_SECTION_HEADERS = [
     'PROFESSIONAL SUMMARY', 'SUMMARY', 'CORE COMPETENCIES', 'COMPETENCIES',
     'PROFESSIONAL EXPERIENCE', 'WORK EXPERIENCE', 'EXPERIENCE',
     'EDUCATION', 'CERTIFICATIONS', 'LICENSURE', 'PUBLICATIONS',
-    'PROFESSIONAL MEMBERSHIPS', 'MEMBERSHIPS', 'AWARDS', 'HONORS',
+    'PROJECTS', 'PROFESSIONAL MEMBERSHIPS', 'MEMBERSHIPS', 'AWARDS', 'HONORS',
     'SKILLS', 'LANGUAGES', 'VOLUNTEER',
 ]
 
@@ -1289,6 +1409,7 @@ def parse_resume_markdown(md_text: str) -> dict:
         'certifications': [],
         'professional_memberships': [],
         'publications': None,
+        'projects': None,
     }
 
     # Remove intra-section separators (between jobs) before splitting
@@ -1477,9 +1598,14 @@ def parse_resume_markdown(md_text: str) -> dict:
         elif 'PUBLICATIONS' in header:
             pubs = {}
             current_category = None
+            pub_footer = None
             for line in body_lines:
                 stripped = line.strip()
                 if not stripped:
+                    continue
+                # Detect "Full publication list:" or similar footer with URL
+                if stripped.lower().startswith('full publication') or stripped.lower().startswith('full list'):
+                    pub_footer = stripped
                     continue
                 if stripped.startswith('\u2022') or stripped.startswith('-'):
                     pub = re.sub(r'^[\u2022\-]\s*', '', stripped)
@@ -1495,19 +1621,55 @@ def parse_resume_markdown(md_text: str) -> dict:
                     # Non-bullet line = subcategory header
                     if not stripped.isupper():
                         current_category = stripped
+            # Extract footer before post-processing categories
+            footer = pub_footer
+            # Count real categories (not _default, not _footer)
+            real_cats = {k: v for k, v in pubs.items() if k not in ('_default', '_footer')}
 
-            if '_default' in pubs and len(pubs) == 1:
+            if '_default' in pubs and not real_cats:
+                # All pubs are flat (no sub-headers) — return as list
                 result['publications'] = pubs['_default']
             elif pubs:
                 if '_default' in pubs:
-                    # Move default items to first category or keep as flat list
-                    first_cat = next((k for k in pubs if k != '_default'), None)
+                    first_cat = next((k for k in pubs if k not in ('_default', '_footer')), None)
                     if first_cat:
                         pubs[first_cat] = pubs.pop('_default') + pubs[first_cat]
                     else:
                         result['publications'] = pubs.pop('_default')
+                # Remove internal keys before passing as dict
+                pubs.pop('_footer', None)
                 if pubs:
                     result['publications'] = pubs
+            if footer:
+                result['publications_footer'] = footer
+
+        elif 'PROJECTS' in header and 'EXPERIENCE' not in header:
+            projects = []
+            current_project = None
+            for line in body_lines:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                is_bullet = stripped.startswith('\u2022') or stripped.startswith('-')
+                if not is_bullet and '|' in stripped:
+                    # Project title line: "Title | Dates"
+                    if current_project:
+                        projects.append(current_project)
+                    parts = [p.strip() for p in stripped.split('|')]
+                    current_project = {
+                        'title': parts[0],
+                        'dates': parts[1] if len(parts) > 1 else '',
+                        'bullets': [],
+                    }
+                elif is_bullet and current_project:
+                    bullet = re.sub(r'^[\u2022\-]\s*', '', stripped)
+                    current_project['bullets'].append(bullet)
+                elif not is_bullet and current_project:
+                    # Continuation line
+                    current_project['bullets'].append(stripped)
+            if current_project:
+                projects.append(current_project)
+            result['projects'] = projects
 
         elif 'PROFESSIONAL MEMBERSHIPS' in header or 'MEMBERSHIPS' in header:
             members = []
@@ -1549,6 +1711,8 @@ def create_resume_from_md(md_path: str, output_path: str) -> str:
         certifications=data['certifications'],
         professional_memberships=data.get('professional_memberships'),
         publications=data.get('publications'),
+        publications_footer=data.get('publications_footer'),
+        projects=data.get('projects'),
     )
 
 

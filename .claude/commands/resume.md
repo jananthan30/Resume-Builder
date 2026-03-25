@@ -95,6 +95,12 @@ Action B — Read master resume:
 - Read the master resume (path from `config.json` → `master_resume_path`) for canonical job titles, dates, company names, education, certifications, publications, and memberships (these NEVER change)
 - **Format-aware reading:** `.md`/`.txt` → use `Read` tool directly. `.pdf` → use `Read` tool directly (Claude handles PDFs natively). `.docx` → call `extract_text` MCP tool with the file path (Claude cannot read binary DOCX files directly).
 
+Action B2 — Check Supplemental Experience:
+- Read `SUPPLEMENTAL_EXPERIENCE.md` in the project root. This file contains experience entries (e.g., independent drug development research) that are NOT in the master resume.
+- During JD Deconstruction, evaluate whether ANY supplemental entries match the JD (check the USE WHEN / DO NOT USE WHEN guidance in the file).
+- If a supplemental entry matches: include it in the tailored resume at the appropriate chronological position. If it does not match: omit it entirely.
+- NEVER add supplemental entries to the master resume itself — they are selective-use only.
+
 Action C — Setup output + initialize orchestration state:
 - Extract company name and job title from JD
 - Create output folder: `applications/{CompanyName} - {JobTitle}/`
@@ -593,7 +599,7 @@ Targets: Semantic Similarity (22%), Job Fit (25%), BM25 (13%)
 
 | Sentence | Purpose | Rule |
 |----------|---------|------|
-| 1 | Identity + seniority + domain | "[Title descriptor] with [X] years in [domain/specialty]" |
+| 1 | Identity + seniority + domain | "Physician and [target profession from JD] with 10+ years of combined clinical and [target domain] experience" — ALWAYS lead with "Physician and" to establish MD differentiator, then the target role descriptor (e.g., "medical information professional", "clinical researcher", "medical writer", "clinical trial manager"). Use "combined clinical and [domain]" to bridge clinical background to target field. |
 | 2 | JD phrase injection | Use 2-3 exact JD noun phrases naturally in one sentence |
 | 3 | Top differentiator | Include highest-magnitude metric available |
 | 4 | Forward-looking alignment | Match JD mission or company therapeutic focus |
@@ -752,7 +758,7 @@ Rule 12 (Grammatical Variety): Min 2 bullets per job block must NOT start with a
 
 Rule 13 (Texture): One real-world specific detail per job block: named tool, regulation, or real constraint. e.g. "using Medidata Rave", "per ICH E6(R2)", "despite COVID-19 closures".
 
-Rule 14 (Summary Anti-Cliché): NEVER write: "proven track record", "passionate about", "dynamic professional", "results-driven". First sentence: specific number + years. Max 4 sentences. Sound like a senior practitioner, not a LinkedIn template.
+Rule 14 (Summary Anti-Cliché): NEVER write: "proven track record", "passionate about", "dynamic professional", "results-driven". First sentence MUST follow this format: "Physician and [target profession] with 10+ years of combined clinical and [target domain] experience..." — always lead with "Physician and" to establish MD differentiator, followed by the target role descriptor derived from the JD (e.g., "medical information professional", "clinical researcher", "clinical trial operations professional"). Max 4 sentences. Sound like a senior practitioner, not a LinkedIn template.
 
 Tone: Senior professional — authoritative and evidence-based, NOT junior coordinator.
 

@@ -69,6 +69,12 @@ Execute these **3 actions in a single parallel tool call** (no agents — use Re
 - Read the master resume (path from `config.json` → `master_resume_path`) for canonical job titles, dates, company names, education, certifications, publications, memberships (NEVER change these)
 - **Format-aware reading:** `.md`/`.txt` → use `Read` tool directly. `.pdf` → use `Read` tool directly (Claude handles PDFs natively). `.docx` → call `extract_text` MCP tool with the file path (Claude cannot read binary DOCX files directly).
 
+**Action B2 — Check Supplemental Experience:**
+- Read `SUPPLEMENTAL_EXPERIENCE.md` in the project root. This file contains experience entries (e.g., independent drug development research) that are NOT in the master resume.
+- During JD Deconstruction, evaluate whether ANY supplemental entries match the JD (check the USE WHEN / DO NOT USE WHEN guidance in the file).
+- If a supplemental entry matches: include it in the tailored resume at the appropriate chronological position. If it does not match: omit it entirely.
+- NEVER add supplemental entries to the master resume itself — they are selective-use only.
+
 **Action C — Setup output:**
 - Extract company name and job title from JD
 - Create output folder: `applications/{CompanyName} - {JobTitle}/`
@@ -255,7 +261,7 @@ python hr_scorer.py --score "applications/{folder}/{Name}_Resume_{Company}.docx"
 **Rule 6 (Architecture):** Impact Lead, Challenge-Action-Result, or Scope-Authority
 **Rule 7 (Burstiness):** Vary bullet lengths: SHORT (6-10 words), MEDIUM (11-18 words), LONG (19-28 words). Never 3+ bullets in a row at same approximate length. Target per job block: 1-2 short, 3-4 medium, 1-2 long.
 **Rule 8 (Parallel):** Consistent grammar patterns per role
-**Rule 9 (Summary Hook):** Identity + authority → differentiator
+**Rule 9 (Summary Hook):** ALWAYS open with "Physician and [target profession from JD]" to establish MD differentiator + target role alignment → close with differentiator
 **Rule 10 (Authenticity):** Interview Test on every bullet
 
 **Rule 11 (Anti-Cliché):** FORBIDDEN verbs: Spearheaded, Leveraged, Utilized, Facilitated, Ensured, Demonstrated, Collaborated, Streamlined, Championed, Fostered, Harnessed, Liaised. USE: Led, Directed, Built, Drove, Cut, Grew, Won, Launched, Transformed, Redesigned, Managed.
@@ -264,7 +270,7 @@ python hr_scorer.py --score "applications/{folder}/{Name}_Resume_{Company}.docx"
 
 **Rule 13 (Texture):** One real-world specific detail per job block: named tool, regulation, or real constraint. e.g. "using Medidata Rave", "per ICH E6(R2)", "despite COVID-19 closures".
 
-**Rule 14 (Summary Anti-Cliché):** NEVER write: "proven track record", "passionate about", "dynamic professional", "results-driven". First sentence: specific number + years. Max 4 sentences. Sound like a senior practitioner, not a LinkedIn template.
+**Rule 14 (Summary Anti-Cliché):** NEVER write: "proven track record", "passionate about", "dynamic professional", "results-driven". First sentence MUST follow this format: "Physician and [target profession] with 10+ years of combined clinical and [target domain] experience..." — always lead with "Physician and" to establish MD differentiator, followed by the target role descriptor derived from the JD (e.g., "medical information professional", "clinical researcher", "clinical trial operations professional"). Max 4 sentences. Sound like a senior practitioner, not a LinkedIn template.
 
 ### RESUME STRUCTURE (ATS/Workday)
 
