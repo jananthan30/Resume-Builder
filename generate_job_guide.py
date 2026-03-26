@@ -14,14 +14,14 @@ style.paragraph_format.space_after = Pt(6)
 # Title
 title = doc.add_paragraph()
 title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-run = title.add_run('BEST-FIT JOB POSITIONS FOR JANANTHAN PARAMSOTHY, MD')
+run = title.add_run('BEST-FIT JOB POSITIONS GUIDE')
 run.font.size = Pt(16)
 run.font.bold = True
 run.font.color.rgb = RGBColor(31, 78, 121)
 
 subtitle = doc.add_paragraph()
 subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
-run = subtitle.add_run('MD | Yale Executive MPH (Health Informatics, 4.0 GPA) | 10+ Years Clinical & Research Experience')
+run = subtitle.add_run('Generated from your master resume and scoring profile')
 run.font.size = Pt(11)
 run.font.italic = True
 run.font.color.rgb = RGBColor(89, 89, 89)
@@ -32,19 +32,17 @@ intro = doc.add_paragraph()
 run = intro.add_run('Profile Summary: ')
 run.font.bold = True
 intro.add_run(
-    'International Medical Graduate with MD, Yale Executive MPH (Health Informatics), '
-    '8 concurrent Phase III HIV trials (Pfizer, J&J, AbbVie, Merck), CRO experience at '
-    'Covance/Labcorp, 6 peer-reviewed publications (cardiovascular focus), deep learning/AI '
-    'project at Yale, and critical care leadership in Sri Lanka. '
-    'Therapeutic areas: HIV, cardiovascular, critical care, gastroenterology.'
+    'This guide identifies the best-fit job positions based on your resume profile, '
+    'therapeutic area expertise, credentials, and experience level. Each role is scored '
+    'for fit and ranked by priority tier.'
 )
 
 intro2 = doc.add_paragraph()
 run = intro2.add_run('Key Differentiators: ')
 run.font.bold = True
 intro2.add_run(
-    'MD degree (rare in non-physician pharma roles), Yale prestige, published researcher, '
-    'hands-on clinical trial operations, AI/ML capabilities, global clinical experience.'
+    'Customize the role list below based on your own credentials, therapeutic areas, '
+    'and career goals. This template covers common pharma/biotech physician roles.'
 )
 
 doc.add_paragraph()
@@ -114,11 +112,10 @@ add_role(
     1, 'MEDICAL MONITOR / MEDICAL MONITOR PHYSICIAN',
     '$150,000 - $250,000',
     'STRONG FIT (85+)', GREEN,
-    'MD REQUIRED for this role \u2014 your strongest differentiator. Clinical training '
-    '(internal medicine, critical care, cardiology), combined with Phase III trial '
-    'experience at Saint Michael (AE/SAE documentation, safety monitoring, PI '
-    'point-of-contact), maps directly. Yale MPH adds data-analysis capabilities. '
-    'Publications demonstrate the scientific rigor expected of medical monitors.',
+    'MD REQUIRED for this role \u2014 strongest differentiator for physician candidates. '
+    'Clinical training combined with Phase III trial experience (AE/SAE documentation, '
+    'safety monitoring, PI point-of-contact) maps directly. MPH adds data-analysis '
+    'capabilities. Publications demonstrate scientific rigor expected of medical monitors.',
     'Medical Monitors provide medical and scientific oversight for clinical trials. '
     'They review safety data (adverse events, SAEs, SUSARs), make causality '
     'assessments, advise on eligibility criteria, participate in Data Safety '
@@ -147,10 +144,10 @@ add_role(
     '$150,000 - $220,000',
     'STRONG FIT (80+)', GREEN,
     'MD REQUIRED. Clinical training provides medical judgment for causality '
-    'assessments and benefit-risk evaluations. At Saint Michael you reviewed 200+ '
-    'AE/SAE reports across 8 Phase III trials. Your publication on '
-    'hydroxychloroquine-associated arrhythmias demonstrates pharmacovigilance '
-    'thinking. Critical care experience translates to safety signal detection.',
+    'assessments and benefit-risk evaluations. Phase III trial AE/SAE review '
+    'experience maps directly. Publications on drug safety topics demonstrate '
+    'pharmacovigilance thinking. Critical care experience translates to safety '
+    'signal detection.',
     'Drug Safety Physicians evaluate Individual Case Safety Reports (ICSRs), perform '
     'causality assessments, contribute to aggregate reports (PSURs/PBRERs, DSURs), '
     'participate in signal detection and risk management planning, review REMS, and '
@@ -175,12 +172,11 @@ add_role(
     3, 'ASSOCIATE MEDICAL DIRECTOR / MEDICAL DIRECTOR (CLINICAL DEVELOPMENT)',
     '$180,000 - $300,000',
     'STRONG FIT (75+)', GREEN,
-    'MD REQUIRED. This is the top-tier pharma role for physicians. Your clinical '
-    'trial experience (8 Phase III programs), publications (6 peer-reviewed), and '
-    'Yale MPH create a compelling profile. You provide the clinical-scientific '
-    'leadership that non-MD candidates cannot. The gap: most Medical Directors '
-    'have 3-5+ years in pharma or completed a residency/fellowship. Frame your '
-    'breadth of clinical + operations experience as the differentiator.',
+    'MD REQUIRED. This is the top-tier pharma role for physicians. Clinical '
+    'trial experience, peer-reviewed publications, and an MPH create a compelling '
+    'profile. Physicians provide the clinical-scientific leadership that non-MD '
+    'candidates cannot. Gap: most Medical Directors have 3-5+ years in pharma or '
+    'completed a residency/fellowship.',
     'Medical Directors lead clinical development programs from a medical-scientific '
     'perspective. They design protocols, interpret clinical data, chair safety '
     'committees, engage with KOLs and regulatory agencies, author clinical sections '
@@ -208,10 +204,10 @@ add_role(
     '$130,000 - $200,000',
     'STRONG FIT (75+)', GREEN,
     'MD provides clinical judgment for protocol design and data interpretation. '
-    '6 publications demonstrate scientific rigor and writing capability. Phase III '
-    'trial experience at Saint Michael (medical data review, safety trend analysis) '
-    'maps directly. Yale MPH (data pipelines, predictive modeling) adds depth. '
-    'MD + publications + trial operations is a rare and valuable combination.',
+    'Publications demonstrate scientific rigor and writing capability. Phase III '
+    'trial experience (medical data review, safety trend analysis) maps directly. '
+    'MPH with data/informatics focus adds depth. MD + publications + trial '
+    'operations is a rare and valuable combination.',
     'Clinical Scientists contribute to clinical development strategy, protocol '
     'design, and medical data review. They author/review clinical documents '
     '(protocols, IBs, CSRs, regulatory submissions), perform ongoing medical data '
@@ -237,9 +233,9 @@ add_role(
     5, 'CLINICAL OPERATIONS MANAGER / ASSOCIATE DIRECTOR',
     '$130,000 - $180,000',
     'MODERATE-STRONG FIT (70+)', AMBER,
-    'Saint Michael experience is the proof point: 8 concurrent Phase III trials, '
+    'Clinical site experience is the proof point: concurrent Phase III trials, '
     'CRO oversight, vendor management, TMF completeness, study start-up, '
-    'cross-functional coordination. Covance/Labcorp adds CRO-side perspective. '
+    'cross-functional coordination. CRO-side experience adds perspective. '
     'MD provides clinical credibility most Ops professionals lack. Gap: most '
     'Directors have 8-10+ years specifically in operations.',
     'Clinical Operations leaders oversee planning, execution, and delivery of '
@@ -267,9 +263,9 @@ add_role(
     '$140,000 - $200,000 + bonus',
     'MODERATE-STRONG FIT (70+)', AMBER,
     'MD is the gold standard for MSL roles (most MSLs have PharmD/PhD \u2014 an MD '
-    'stands out). 6 publications demonstrate scientific credibility for KOL '
+    'stands out). Publications demonstrate scientific credibility for KOL '
     'engagement. Clinical experience provides real-world perspective KOLs respect. '
-    'CV and HIV therapeutic expertise opens disease-specific MSL roles. '
+    'Therapeutic area expertise opens disease-specific MSL roles. '
     'Gap: no prior MSL/medical affairs experience, and travel is 60-80%.',
     'MSLs are field-based scientific experts who build KOL relationships, present '
     'clinical data at conferences, respond to unsolicited medical inquiries, train '
@@ -295,7 +291,7 @@ add_role(
     7, 'SENIOR MEDICAL WRITER / ASSOCIATE DIRECTOR MEDICAL WRITING',
     '$110,000 - $170,000',
     'MODERATE FIT (65+)', AMBER,
-    '6 peer-reviewed publications and 3 book chapters prove scientific writing '
+    'Peer-reviewed publications and book chapters prove scientific writing '
     'ability. MD provides clinical interpretation skills. Phase III experience '
     'gives understanding of CSRs, protocols, and regulatory documents. '
     'Gap: no formal medical writing in pharma/CRO. Publications are your portfolio.',
@@ -322,10 +318,10 @@ add_role(
     8, 'REAL WORLD EVIDENCE (RWE) SCIENTIST / OUTCOMES RESEARCHER',
     '$120,000 - $170,000',
     'MODERATE FIT (65+)', AMBER,
-    'Yale MPH (Health Informatics) + Python/SQL/BigQuery + deep learning project '
+    'MPH (Health Informatics) + Python/SQL/BigQuery + data science projects '
     '= strong analytical foundation. Clinical experience provides real-world '
-    'patient context. BiLSTM sepsis model using MIMIC-IV (11,300+ ICU encounters) '
-    'is directly RWE-relevant. Gap: no formal HEOR/outcomes research in pharma.',
+    'patient context. Predictive modeling with real-world datasets is directly '
+    'RWE-relevant. Gap: no formal HEOR/outcomes research in pharma.',
     'RWE Scientists design and execute real-world evidence studies using EHRs, '
     'claims databases, and registries. They support market access with evidence of '
     'real-world effectiveness, contribute to FDA RWE submissions, perform '
@@ -413,7 +409,7 @@ run.font.bold = True
 run.font.color.rgb = GRAY
 for item in [
     'Senior Medical Writer \u2014 $110-170K \u2014 publications as portfolio',
-    'RWE Scientist / Outcomes Researcher \u2014 $120-170K \u2014 Yale MPH + data skills',
+    'RWE Scientist / Outcomes Researcher \u2014 $120-170K \u2014 MPH + data skills',
     'Medical Information \u2014 $100-160K \u2014 MD + clinical breadth',
 ]:
     doc.add_paragraph(item, style='List Bullet')
@@ -428,7 +424,7 @@ run.font.color.rgb = RGBColor(200, 0, 0)
 for item in [
     'CRA / Senior CRA \u2014 Requires 5+ years of specific site monitoring visit experience you lack',
     'Clinical Research Coordinator \u2014 Below your qualification level; you will leave quickly',
-    'Medical Assistant / Clinical Assistant \u2014 Far below MD + Yale MPH level',
+    'Medical Assistant / Clinical Assistant \u2014 Far below MD + MPH level',
     'Entry-level anything \u2014 Wastes your credentials and worsens job-hopping pattern',
     '5+ roles at a single company \u2014 Signals desperation, not targeted interest',
 ]:
@@ -447,11 +443,11 @@ advice_items = [
     'Focus 70% of applications on Tier 1 roles where MD is REQUIRED \u2014 '
     'least competition from non-physicians, highest salary ceilings.',
     'Apply to 1-2 roles max per company. Applying to 5+ signals desperation.',
-    'Your cover letter should lead with: "As a physician with clinical trial '
-    'experience across 8 Phase III programs..." \u2014 the MD is the headline.',
-    'Yale MPH (4.0 GPA) is a strong prestige signal. Always mention first paragraph.',
-    'Cardiovascular publications are assets for cardiology, cardiac safety, and PV roles. '
-    'HIV trial experience opens doors at Gilead, ViiV, J&J Infectious Disease.',
+    'Your cover letter should lead with your MD and clinical trial experience '
+    '\u2014 the physician credential is the headline.',
+    'Prestige academic credentials (top MPH, strong GPA) should appear in paragraph 1.',
+    'Publications aligned to therapeutic areas are assets for disease-specific roles. '
+    'Trial experience in specific TAs opens doors at companies in those spaces.',
     'Target companies with active Phase II-III programs in your TAs: '
     'HIV (Gilead, ViiV/GSK, Merck), CV (Novartis, Bayer, BMS), CNS (Biogen, Sage, Anavex).',
     'Contract/consulting roles (Medical Monitor contractor at $100-150/hr) can bridge '
@@ -470,5 +466,5 @@ run.font.size = Pt(9)
 run.font.italic = True
 run.font.color.rgb = RGBColor(150, 150, 150)
 
-doc.save('Best_Fit_Job_Positions_Paramsothy.docx')
+doc.save('Best_Fit_Job_Positions_Guide.docx')
 print('DOCX created successfully')

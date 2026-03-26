@@ -3,7 +3,9 @@ import os, sys
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
-with open('JANANTHAN_PARAMSOTHY_MASTER_RESUME.md', encoding='utf-8') as f:
+import json
+_cfg = json.load(open('config.json'))
+with open(_cfg.get('master_resume_path', 'master_resume.md'), encoding='utf-8') as f:
     resume_text = f.read()
 
 from job_discovery import discover_jobs, _detect_text_domain

@@ -371,7 +371,7 @@ def create_ats_resume(
 
     Args:
         output_path: Path to save the DOCX file
-        name: Full name with credentials (e.g., "JANANTHAN PARAMSOTHY, M.D.")
+        name: Full name with credentials (e.g., "JANE DOE, M.D.")
         contact_info: dict with keys: city, state, zip, phone, email, linkedin
         summary: Professional summary text (3-4 lines)
         core_competencies: List of keyword strings

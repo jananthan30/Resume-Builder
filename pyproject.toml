@@ -4,7 +4,7 @@ version = "1.1.0"
 description = "Score, analyze, and optimize resumes against job descriptions using dual ATS + HR scoring with optional LLM-augmented analysis."
 requires-python = ">=3.10"
 license = {text = "MIT"}
-authors = [{name = "Jananthan Paramsothy"}]
+authors = [{name = "Resume Builder Contributors"}]
 keywords = ["resume", "ats", "hr", "scoring", "mcp", "claude", "job-search", "career"]
 classifiers = [
     "Development Status :: 4 - Beta",

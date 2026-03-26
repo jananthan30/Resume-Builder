@@ -3,8 +3,8 @@
   "description": "AI-powered resume builder with job discovery, dual ATS + HR scoring, and cover letter generation. Finds and ranks live job listings by fit, tailors your resume to any JD, auto-detects 6+ professional domains, and produces Workday-compatible DOCX output.",
   "version": "1.2.0",
   "author": {
-    "name": "Jananthan Paramsothy",
-    "email": "jananthan30@gmail.com",
+    "name": "Resume Builder Contributors",
+    "email": "",
     "url": "https://github.com/jananthan30"
   },
   "license": "MIT",

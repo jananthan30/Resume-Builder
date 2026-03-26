@@ -3122,7 +3122,7 @@ def main():
 
     elif args.web:
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        base_resume = args.base or os.path.join(base_dir, "JANANTHAN PARAMSOTHY_RESUME 2025.pdf")
+        base_resume = args.base or os.path.join(base_dir, "master_resume.pdf")
         tailored_resume = args.tailored or os.path.join(base_dir, "applications", "Sanofi", "resume.md")
         jd = args.jd or os.path.join(base_dir, "applications", "Sanofi", "job_description.txt")
 
@@ -3131,7 +3131,7 @@ def main():
     else:
         # Default: run web with default paths
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        base_resume = os.path.join(base_dir, "JANANTHAN PARAMSOTHY_RESUME 2025.pdf")
+        base_resume = os.path.join(base_dir, "master_resume.pdf")
         tailored_resume = os.path.join(base_dir, "applications", "Sanofi", "resume.md")
         jd = os.path.join(base_dir, "applications", "Sanofi", "job_description.txt")
 

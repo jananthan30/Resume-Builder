@@ -352,7 +352,7 @@ def main():
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
     with open(config_path, 'r') as f:
         config = json.load(f)
-    resume_path = config.get("master_resume_path", "JANANTHAN_PARAMSOTHY_MASTER_RESUME.md")
+    resume_path = config.get("master_resume_path", "master_resume.md")
     with open(resume_path, 'r', encoding='utf-8') as f:
         resume_text = f.read()
 

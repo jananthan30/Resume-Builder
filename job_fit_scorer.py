@@ -591,7 +591,7 @@ def build_candidate_profile(resume_text: str) -> EnrichedProfile:
 
     # --- Publications Count ---
     pub_count = len(re.findall(
-        r'(?:Paramsothy|et\s+al\.?|Cureus|Journal|Book\s+Chapter)',
+        r'(?:et\s+al\.?|Cureus|Journal|Book\s+Chapter)',
         resume_text, re.IGNORECASE
     ))
     profile.publications_count = max(pub_count, len(re.findall(r'^•\s+.+?(?:Cureus|Journal|Vol\b)', resume_text, re.MULTILINE | re.IGNORECASE)))

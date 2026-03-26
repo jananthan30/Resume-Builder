@@ -3,11 +3,16 @@
 # ========================
 .env
 config.json
-JANANTHAN_PARAMSOTHY_MASTER_RESUME.md
-JANANTHAN_PARAMSOTHY_MASTER_RESUME.docx
-JANANTHAN PARAMSOTHY_RESUME 2025.pdf
+*MASTER*RESUME*
+*_RESUME_*
+*_Resume_*
 yale_transcript.txt
 Job_Application_Tracker.xlsx
+tailored_resume.txt
+_iter*.json
+Best_Fit_Job_Positions*.docx
+*.xlsx
+!config.example.json
 ~$*.docx
 
 # ========================
@@ -60,6 +65,8 @@ test_resume.docx
 # ========================
 Biweekly Survey Questions*.docx
 HeallyConnect_Survey*.docx
+Resume*.docx
+*.settings.local.json
 
 # ========================
 # Client-specific batch scripts (contain personal data)
