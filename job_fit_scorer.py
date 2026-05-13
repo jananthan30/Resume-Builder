@@ -410,10 +410,20 @@ def extract_requirements(jd_text: str) -> ExtractedRequirements:
                 break
 
     # --- Certifications ---
+    # Search the REQUIRED section only so "preferred" / "desired" certs (e.g.,
+    # Takeda's "Board Certification in therapeutic area of interest" listed
+    # under Desired) don't get treated as hard requirements.
+    cert_search_text = req_section if req_section else jd_text
+    pref_lower = pref_section.lower() if pref_section else ''
     for cert_pattern in CERTIFICATION_PATTERNS:
-        if re.search(cert_pattern, jd_text, re.IGNORECASE):
-            match = re.search(cert_pattern, jd_text, re.IGNORECASE)
-            req.required_certifications.append(match.group(0).strip())
+        match = re.search(cert_pattern, cert_search_text, re.IGNORECASE)
+        if match:
+            cert_str = match.group(0).strip()
+            # Sanity check: skip if this exact phrase also appears in the
+            # preferred/desired section — likely a duplicate hit.
+            if pref_lower and cert_str.lower() in pref_lower:
+                continue
+            req.required_certifications.append(cert_str)
     req.required_certifications = list(set(req.required_certifications))
 
     # --- Travel ---
@@ -459,10 +469,16 @@ def extract_requirements(jd_text: str) -> ExtractedRequirements:
     req.therapeutic_areas = list(set(req.therapeutic_areas))
 
     # --- Tools & Platforms ---
+    # Search the REQUIRED section only so tools listed under "preferred" /
+    # "nice to have" / "desired" don't become hard knockouts.
+    tool_search_text = (req_section if req_section else jd_text).lower()
     for tool_pattern in TOOLS_PATTERNS:
-        match = re.search(tool_pattern, jd_lower)
+        match = re.search(tool_pattern, tool_search_text)
         if match:
-            req.tools_platforms.append(match.group(1).strip())
+            tool_str = match.group(1).strip()
+            if pref_lower and tool_str in pref_lower:
+                continue
+            req.tools_platforms.append(tool_str)
     req.tools_platforms = list(set(req.tools_platforms))
 
     # --- Seniority ---
@@ -778,6 +794,80 @@ def check_knockouts(profile: EnrichedProfile, req: ExtractedRequirements) -> Kno
             suggestion=f'This role requires {req.travel_requirement}% travel. '
                        f'Ensure you can commit before applying.',
         ))
+
+    # --- Required Tools / Platforms Knockout ---
+    # Tools that the JD lists as required (e.g., Veeva Vault, Argus, Medidata
+    # Rave, EDC, MedDRA) are real screen-outs in pharma. If the candidate has
+    # no demonstrated experience, this is a hard knockout — not a soft "missing
+    # skill". The candidate can claim "trainable" but the recruiter usually
+    # filters before that conversation happens.
+    if req.tools_platforms:
+        tools_have_norm = {t.lower().strip() for t in (profile.tools_known or [])}
+        # Also accept tool name appearing anywhere in the candidate's bullets
+        bullets_blob = ''
+        if profile.base and profile.base.all_bullets:
+            bullets_blob = ' '.join(profile.base.all_bullets).lower()
+        missing_required = []
+        for tool in req.tools_platforms:
+            tool_lower = tool.lower().strip()
+            if not tool_lower:
+                continue
+            has_tool = tool_lower in tools_have_norm
+            if not has_tool and bullets_blob:
+                pat = r'\b' + re.escape(tool_lower) + r'\b'
+                if re.search(pat, bullets_blob):
+                    has_tool = True
+            if not has_tool:
+                missing_required.append(tool)
+        if missing_required:
+            shown = ', '.join(missing_required[:4]) + ('…' if len(missing_required) > 4 else '')
+            knockouts.append(KnockoutFlag(
+                category='tools',
+                requirement=f'Proficiency in {shown}',
+                candidate_has='Not demonstrated in resume',
+                severity='hard',
+                fixable=False,
+                suggestion=(
+                    f'JD requires hands-on use of {shown}. Either acquire training '
+                    f'(Veeva Vault Foundations, Oracle Argus tutorials, Medidata U), '
+                    f'add a contract gig that uses the platform, or target roles '
+                    f'that do not require this specific tool.'
+                ),
+            ))
+
+    # --- Required Certifications Knockout ---
+    # JDs that explicitly require a certification (board cert, GCP cert,
+    # specific licensure) screen out candidates lacking it. Soft "preferred"
+    # certs are NOT knockouts — only items the JD frames as required.
+    if req.required_certifications:
+        certs_have_norm = ' '.join((profile.certifications or [])).lower()
+        # Also look in the raw resume text for terms like "Board Certified"
+        resume_blob = (profile.base.raw_text if profile.base else '').lower()
+        missing_certs = []
+        for cert in req.required_certifications:
+            cert_lower = cert.lower().strip()
+            if not cert_lower:
+                continue
+            # Word-boundary match
+            pat = r'\b' + re.escape(cert_lower).replace(r'\ ', r'\s+') + r'\b'
+            if re.search(pat, certs_have_norm) or re.search(pat, resume_blob):
+                continue
+            missing_certs.append(cert)
+        if missing_certs:
+            shown = ', '.join(missing_certs[:3]) + ('…' if len(missing_certs) > 3 else '')
+            knockouts.append(KnockoutFlag(
+                category='certification',
+                requirement=f'Required certification: {shown}',
+                candidate_has='Not present in resume',
+                severity='hard',
+                fixable=False,
+                suggestion=(
+                    f'Required certification ({shown}) is not on the resume. '
+                    f'Either pursue the credential, target roles that do not '
+                    f'require it, or confirm with the recruiter whether '
+                    f'equivalent experience is accepted before applying.'
+                ),
+            ))
 
     passed = not any(k.severity == 'hard' for k in knockouts)
     return KnockoutResult(passed=passed, knockouts=knockouts)
