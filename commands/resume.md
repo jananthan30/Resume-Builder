@@ -1,18 +1,22 @@
-# Resume Builder — Precision Edition v5.1 (Triple-Scorer Swarm)
+---
+description: Generate a tailored resume and cover letter from a job description, score both, create DOCX files, and update the tracker.
+---
 
-Generate a tailored resume AND cover letter using parallel agent execution with scoring-aware optimization. Every editorial decision maps to ATS (7 components) and HR (6 factors) scoring weights.
+# Resume Builder — Precision Edition v5.1 (Triple-Scorer Codex Parallel)
+
+Generate a tailored resume AND cover letter using Codex parallel tool execution with scoring-aware optimization. Every editorial decision maps to ATS (7 components) and HR (6 factors) scoring weights.
 
 ## Job Description
 $ARGUMENTS
 
 ## Instructions
 
-You are an expert resume editor AND a parallel-agent orchestrator. The user has provided a job description above. You will:
+You are an expert resume editor AND a Codex workflow orchestrator. The user has provided a job description above. You will:
 1. Internalize both scoring engines before writing a single word
 2. Deconstruct the JD into a scoring blueprint
 3. Draft with every section mapped to specific scoring components
 4. Diagnose gaps by component weight, not guesswork
-5. Execute via parallel agents for speed
+5. Execute independent shell, file-search, and writing tasks concurrently where possible
 
 ---
 
@@ -38,7 +42,7 @@ curl -s http://localhost:8100/health
 - If server responds with `{"status":"ok",...}`: Proceed immediately (scoring calls will take <2s each).
 - If server NOT running: Start it in background:
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "scorer-server"):
+Start this as a background shell session from the repo root:
 cd "." && python scorer_server.py --port 8100
 ```
 Then retry `/health` up to 15 seconds (models now lazy-load on first request, server starts in ~5s). Once healthy, proceed.
@@ -56,10 +60,10 @@ NOTE: v2.1 Performance Improvements Applied:
 
 ## PHASE 1: PARALLEL RESEARCH + JD DECONSTRUCTION (launch all simultaneously)
 
-Execute these 3 actions in a single parallel tool call (no agents needed — use Read, Glob, and Write tools simultaneously):
+Execute these 3 actions concurrently where the environment allows it:
 
 Action A — Find best matching resume:
-- Use `Glob` to find all `applications/**/*Resume*.docx` files
+- Use file search (`rg --files applications` or `find`) to find all `applications/**/*Resume*.docx` files
 - From the folder names (format: `{Company} - {JobTitle}`), identify the most semantically similar role to the new JD (same domain, similar responsibilities, overlapping keywords)
 - If a match is found (PREFERRED): Read the `.docx` using Python via Bash: `python -c "from docx import Document; [print(p.text) for p in Document('path').paragraphs]"`
 - If no match found: Fall back to the master resume (read `config.json` for `master_resume_path`, or glob for `*MASTER*RESUME*.md`)
@@ -86,13 +90,13 @@ THEN — Before writing anything, complete the JD Deconstruction (see STEP 1 in 
 
 ## PHASE 2: BACKGROUND BASE SCORING + IMMEDIATE RESUME WRITING
 
-Launch background Bash agents AND start writing immediately — do NOT wait for base scores.
+Start background shell scoring AND start writing immediately — do NOT wait for base scores.
 
 Base scores are only needed for the final comparison report, NOT for writing the resume.
 
-Background Agent A — Combined Base Score (ATS + HR) → writes to state.json:
+Background Task A — Combined Base Score (ATS + HR) -> writes to state.json:
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "base-scorer"):
+Run in a background shell session named `base-scorer` if available:
 cd "." && python -c "
 from orchestration_state import write_score_results, set_phase, log_error
 import subprocess, json
@@ -111,7 +115,7 @@ except Exception as e:
     print(f'Error: {e}')
 "
 ```
-Fallback (if server not running): Use 2 separate Bash agents with `python ats_scorer.py --score ... --json` and `python hr_scorer.py --score ... --json`, piping output through `write_score_results('applications/{folder}', 'base_ats'|'base_hr', result)`.
+Fallback (if server not running): Run `python ats_scorer.py --score ... --json` and `python hr_scorer.py --score ... --json` as separate shell scoring commands, piping output through `write_score_results('applications/{folder}', 'base_ats'|'base_hr', result)`.
 
 MAIN AGENT — Generate the tailored resume using the Scoring-Aware Writing Rules (Steps 0-2 below).
 
@@ -131,11 +135,11 @@ CRITICAL .md FORMATTING RULE: Do NOT use `**` (markdown bold asterisks) anywhere
 
 ## PHASE 3: PARALLEL SCORING + COVER LETTER (launch all simultaneously)
 
-Once `resume.md` is saved, launch 3 agents in a single parallel tool call:
+Once `resume.md` is saved, run tailored scoring and cover-letter writing concurrently where possible:
 
-Background Agent C — Combined Tailored Score (ATS + HR + LLM) → writes to state.json:
+Background Task C — Combined Tailored Score (ATS + HR + LLM) -> writes to state.json:
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "tailored-scorer"):
+Run in a background shell session named `tailored-scorer` if available:
 cd "." && python -c "
 from orchestration_state import write_score_results, set_phase, log_error
 import subprocess, json
@@ -154,12 +158,12 @@ except Exception as e:
     print(f'Error: {e}')
 "
 ```
-NOTE: `/score/combined` runs all 3 scorers (ATS rules + HR rules + LLM Claude) and returns blended scores (70% rules + 30% LLM). If LLM fails (no API key, timeout), it gracefully falls back to rules-only.
+NOTE: `/score/combined` runs all 3 scorers (ATS rules + HR rules + LLM rubric scorer) and returns blended scores (70% rules + 30% LLM). If LLM fails (no API key, timeout), it gracefully falls back to rules-only.
 Fallback (if server not running): Use CLI scorers + llm_scorer.py directly.
 
-Background Agent E — Cover Letter:
+Background Task E — Cover Letter:
 ```
-Use Task tool (subagent_type: "general-purpose", run_in_background: true, name: "cover-letter-writer"):
+Draft the cover letter in parallel with scoring if possible:
 Prompt: "Generate a one-page cover letter (350-400 words) for {Name} applying to {Job Title} at {Company}.
 
 JD: [paste full JD text]
@@ -191,7 +195,7 @@ Email: {user_email from config.json}"
 
 ## PHASE 4: PRECISION DIAGNOSIS + ITERATION (max 3 rounds)
 
-1. Collect all three scores from state.json (single read replaces polling multiple agent outputs):
+1. Collect all three scores from state.json (single read replaces polling multiple task outputs):
 ```
 cd "." && python -c "
 from orchestration_state import read_state
@@ -211,7 +215,7 @@ llm = ts.get('llm', {})
 print(f'--- Rules-based ---')
 print(f'ATS (rules): {rules_ats.get(\"total_score\", \"?\")}%')
 print(f'HR  (rules): {rules_hr.get(\"overall_score\", \"?\")}%')
-print(f'--- LLM (Claude) ---')
+print(f'--- LLM rubric scorer ---')
 print(f'ATS (LLM): {llm.get(\"ats_score\", \"?\")}%')
 print(f'HR  (LLM): {llm.get(\"hr_score\", \"?\")}%')
 if llm.get('explanation'):
@@ -305,14 +309,14 @@ Anti-patterns to avoid during iteration:
 
 ## PHASE 5: PARALLEL FINALIZATION (launch all 3 simultaneously)
 
-Once scores pass AND cover letter is ready, set phase to finalizing and launch 3 agents in a single parallel tool call:
+Once scores pass AND cover letter is ready, set phase to finalizing and run the 3 finalization tasks concurrently where possible:
 ```
 cd "." && python -c "from orchestration_state import set_phase; set_phase('applications/{folder}', 'finalizing')"
 ```
 
-Background Agent F — Resume DOCX (from markdown) → updates state.json:
+Background Task F — Resume DOCX (from markdown) -> updates state.json:
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "resume-docx-creator"):
+Run in a background shell session named `resume-docx-creator` if available:
 cd "." && python -c "
 from docx_generator import create_resume_from_md
 from orchestration_state import update_state, log_error
@@ -326,9 +330,9 @@ except Exception as e:
 "
 ```
 
-Background Agent G — Cover Letter DOCX (ALWAYS use create_ats_cover_letter directly) → updates state.json:
+Background Task G — Cover Letter DOCX (ALWAYS use create_ats_cover_letter directly) -> updates state.json:
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "cover-letter-docx-creator"):
+Run in a background shell session named `cover-letter-docx-creator` if available:
 cd "." && python -c "
 from docx_generator import create_ats_cover_letter
 from orchestration_state import update_state, log_error
@@ -359,9 +363,9 @@ except Exception as e:
 "
 ```
 
-Background Agent H — Update Tracker → updates state.json:
+Background Task H — Update Tracker -> updates state.json:
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "tracker-updater"):
+Run in a background shell session named `tracker-updater` if available:
 cd "." && python -c "
 from tracker_utils import add_application
 from orchestration_state import update_state, log_error
@@ -481,8 +485,8 @@ SCORES              |    {X}%       |    {Y}%      |    {X}%     |    {Y}%
 FOLDER: applications/{Company} - {JobTitle}/
 
 ================================================================================
-SCORERS: 3 (ATS Rules + HR Rules + LLM Claude)
-SWARM AGENTS USED: {count} | ITERATIONS: {count}
+SCORERS: 3 (ATS Rules + HR Rules + LLM rubric scorer)
+CONCURRENT TASKS USED: {count} | ITERATIONS: {count}
 ================================================================================
 ```
 

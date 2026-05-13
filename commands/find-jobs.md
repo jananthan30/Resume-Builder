@@ -1,3 +1,7 @@
+---
+description: Search live job boards for roles that match the master resume, then rank them by fit.
+---
+
 # Find Jobs — Discover & Score
 
 Search live job boards for roles that match your resume, scored and ranked by fit.
@@ -121,7 +125,7 @@ What would you like to do next?
 
 If the user picks A or B, remind them to paste the full job description from the apply link since the search results only contain summaries.
 
-### Notes for Claude
+### Notes for Codex
 
 - Never make up job listings. Only show results returned by the tool.
 - If a job has `scoring_tier: "none"` (no description available), show ATS/HR as "N/A".

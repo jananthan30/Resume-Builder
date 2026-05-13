@@ -1,6 +1,10 @@
-# Batch Resume Builder — Team Swarm (Parallel Processing)
+---
+description: Process multiple job descriptions from batch_jds into tailored application packages.
+---
 
-Process multiple job descriptions simultaneously using a team of parallel agents. Each agent independently generates a full application package (resume + cover letter + DOCX + tracker update).
+# Batch Resume Builder — Codex Parallel Processing
+
+Process multiple job descriptions with concurrent package generation. Each package task independently generates a full application package (resume + cover letter + DOCX + tracker update).
 
 ## Arguments
 $ARGUMENTS
@@ -21,7 +25,7 @@ curl -s http://localhost:8100/health
 - **If server responds**: Proceed immediately.
 - **If NOT running**: Start it:
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "scorer-server"):
+Start this as a background shell session from the repo root:
 cd "." && python scorer_server.py --port 8100
 ```
 Wait up to 45 seconds for `/health` to respond. If it fails, warn the user.
@@ -32,7 +36,7 @@ Wait up to 45 seconds for `/health` to respond. If it fails, warn the user.
 
 Scan the `batch_jds/` folder for `.txt` files:
 ```
-Use Glob: batch_jds/*.txt
+Use file search (`rg --files batch_jds` or `find`) for `batch_jds/*.txt`
 ```
 
 Each file should be named: `{Company} - {Job Title}.txt`
@@ -56,7 +60,7 @@ Read the master resume file (check config.json for master_resume_path, or glob f
 
 Also find existing application resumes to use as best-match templates:
 ```
-Glob: applications/**/*Resume*.docx
+Use file search (`rg --files applications` or `find`) for `applications/**/*Resume*.docx`
 ```
 
 For each JD, identify the best matching existing resume based on domain/role similarity.
@@ -65,12 +69,12 @@ For each JD, identify the best matching existing resume based on domain/role sim
 
 ## STEP 4: LAUNCH PARALLEL AGENTS (one per JD)
 
-For **each JD file**, launch a background `general-purpose` agent using the Task tool. Launch ALL agents in a **single parallel tool call** to maximize concurrency.
+For **each JD file**, process independent application packages concurrently where Codex tooling allows it. Run package generation steps per JD with concurrent shell/file operations and report progress as each completes.
 
-Each agent gets this prompt (fill in the specifics per JD):
+Each package task uses this prompt (fill in the specifics per JD):
 
 ```
-You are a resume writer agent. Generate a COMPLETE application package for one job.
+You are a resume writer for one job. Generate a COMPLETE application package.
 
 ## YOUR ASSIGNMENT
 - Company: {Company}
@@ -228,7 +232,7 @@ When done, report:
 
 ## STEP 5: MONITOR & COLLECT RESULTS
 
-Wait for all agents to complete. As each agent finishes, collect their results.
+Wait for all package tasks to complete. As each task finishes, collect its results.
 
 ---
 
@@ -256,7 +260,7 @@ GENERATED FILES:
 {list all output folders and their contents}
 
 ================================================================================
-AGENTS USED: {count} | TOTAL TIME: ~{X} min
+CONCURRENT TASKS USED: {count} | TOTAL TIME: ~{X} min
 ================================================================================
 ```
 
@@ -268,8 +272,8 @@ After the report, offer to:
 
 ## NOTES
 
-- All agents share the scorer server on port 8100 (no model reloading)
-- Each agent is fully independent — if one fails, others continue
+- All package tasks share the scorer server on port 8100 (no model reloading)
+- Each package task is fully independent — if one fails, others continue
 - DOCX creation uses markdown-to-DOCX pipeline (no bash quoting issues)
-- Master resume is passed directly to each agent (no file read race conditions)
+- Master resume is passed directly to each package task (no file read race conditions)
 - The batch_jds/ folder is NOT cleared after processing — user manages it manually

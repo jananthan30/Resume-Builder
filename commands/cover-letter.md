@@ -1,3 +1,7 @@
+---
+description: Create a one-page cover letter for a job description and generate the final DOCX.
+---
+
 # Generate Cover Letter Only
 
 Create a compelling one-page cover letter for a job application.

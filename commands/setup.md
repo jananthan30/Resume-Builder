@@ -1,3 +1,7 @@
+---
+description: One-time setup for Resume Builder dependencies, config, cloud scoring, and optional LLM features.
+---
+
 # Resume Builder — One-Time Setup
 
 Run this command once after installing the plugin to get started.
@@ -51,7 +55,7 @@ Ask the user which setup they prefer:
 pip install -r requirements-plugin.txt
 ```
 
-If `pip` is not found, try `pip3` or `python -m pip`. Use `${CLAUDE_PLUGIN_ROOT}/requirements-plugin.txt` if needed.
+If `pip` is not found, try `pip3` or `python -m pip`. If needed, use the `requirements-plugin.txt` file from the installed plugin root.
 
 This installs `fastmcp` (MCP protocol) and `anthropic` (for LLM features). All ATS/HR scoring goes through the cloud API automatically.
 
@@ -61,7 +65,7 @@ This installs `fastmcp` (MCP protocol) and `anthropic` (for LLM features). All A
 pip install -r requirements.txt
 ```
 
-Use `${CLAUDE_PLUGIN_ROOT}/requirements.txt` if needed. This takes 1-3 minutes (downloads sentence-transformers model ~80MB).
+Use the `requirements.txt` file from the installed plugin root if needed. This takes 1-3 minutes (downloads sentence-transformers model ~80MB).
 
 Then download NLTK data:
 

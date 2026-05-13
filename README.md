@@ -1,10 +1,11 @@
 # ResumeHQ — AI-Powered Resume Builder with ATS & HR Scoring
 
-The only resume tool that **finds jobs, scores your fit, and tailors your resume** — all in one workflow. Works as a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) plugin or standalone web app.
+The only resume tool that **finds jobs, scores your fit, and tailors your resume** — all in one workflow. Works as a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) plugin, Codex plugin, or standalone web app.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-blueviolet)](https://docs.anthropic.com/en/docs/claude-code)
+[![Codex](https://img.shields.io/badge/Codex-Plugin-111111)](https://developers.openai.com/codex/plugins/build)
 
 ---
 
@@ -21,7 +22,7 @@ Most resume tools only score the resume you bring to them. ResumeHQ goes further
 | Auto-tailor resume to JD | ✅ | ✅ | ❌ | ✅ |
 | ATS-compliant DOCX output | ❌ | ✅ | ❌ | ✅ |
 | Application tracker | ❌ | ❌ | ✅ | ✅ |
-| Works in Claude Code / claude.ai | ❌ | ❌ | ❌ | ✅ |
+| Works in Claude Code / claude.ai / Codex | ❌ | ❌ | ❌ | ✅ |
 | Open source | ❌ | ❌ | ❌ | ✅ |
 
 ---
@@ -44,14 +45,24 @@ All of this runs in **parallel** — scoring happens in the background while the
 
 ## Quick Start — 3 Steps
 
-Works with **Claude Code** (CLI/IDE) and **claude.ai** (web/Projects).
+Works with **Claude Code** (CLI/IDE), **Codex** (CLI/app/IDE), and **claude.ai** (web/Projects).
 
 **Step 1: Install the plugin**
+
+Claude Code:
 
 ```bash
 /plugin marketplace add jananthan30/Resume-Builder
 /plugin install resume-builder
 ```
+
+Codex from a local checkout:
+
+```bash
+codex plugin marketplace add .
+```
+
+Then restart Codex and install **Resume Builder** from the **Resume Builder Local** marketplace.
 
 **Step 2: Run the setup wizard**
 
@@ -80,11 +91,12 @@ Or find jobs first:
 
 ---
 
-## Slash Commands (7)
+## Slash Commands (8)
 
 | Command | What It Does |
 |---------|-------------|
 | `/resume-builder:setup` | One-time setup wizard (installs Python deps, creates config, links Pro account) |
+| `/resume-builder:job-fit [JD]` | Quick GO/NO-GO job fit score before tailoring |
 | `/resume-builder:resume [JD]` | Full application: tailored resume + cover letter + scoring + DOCX + tracking |
 | `/resume-builder:tailor-resume [JD]` | Resume only (no cover letter) |
 | `/resume-builder:cover-letter [JD]` | Cover letter only |
@@ -96,12 +108,13 @@ If running locally (cloned repo), use short names: `/resume`, `/tailor-resume`, 
 
 ### What Works Without Setup
 
-Even before running `/resume-builder:setup`, these commands work immediately (they're just Claude prompts — no Python needed):
+Even before running `/resume-builder:setup`, these commands work immediately (they're prompt-driven workflows — no Python needed):
 
 | Command | Works immediately? | With setup? |
 |---------|-------------------|-------------|
-| `/resume-builder:resume` | Yes — Claude writes the resume | + automated ATS/HR scoring and DOCX output |
-| `/resume-builder:cover-letter` | Yes — Claude writes the letter | + DOCX output |
+| `/resume-builder:job-fit` | Yes — heuristic fit analysis | + scorer-backed knockout detection |
+| `/resume-builder:resume` | Yes — the assistant writes the resume | + automated ATS/HR scoring and DOCX output |
+| `/resume-builder:cover-letter` | Yes — the assistant writes the letter | + DOCX output |
 | `/resume-builder:writing-coach` | Yes — full writing audit | Same |
 | `/resume-builder:find-jobs` | Yes — shows results (no score) | + ATS/HR fit scoring per job |
 | `/resume-builder:setup` | Yes — runs the setup wizard | N/A |
@@ -111,14 +124,14 @@ Even before running `/resume-builder:setup`, these commands work immediately (th
 
 ## MCP Tools (8)
 
-After running `/resume-builder:setup`, the MCP scorer auto-starts and provides these tools that Claude can call natively:
+After running `/resume-builder:setup`, the MCP scorer auto-starts and provides these tools that Claude Code or Codex can call natively:
 
 | Tool | What It Does |
 |------|-------------|
 | `score_resume` | Full ATS + HR analysis in one call (recommended) |
 | `score_ats` | ATS keyword + semantic scoring (8 components) |
 | `score_hr` | HR recruiter simulation (6 factors + F-pattern) |
-| `score_with_llm` | Claude-augmented rubric scoring (requires ANTHROPIC_API_KEY) |
+| `score_with_llm` | LLM-augmented rubric scoring (requires ANTHROPIC_API_KEY) |
 | `rewrite_resume` | AI-powered resume tailoring to match a JD (requires ANTHROPIC_API_KEY) |
 | `explain_score` | Actionable improvement suggestions with missing keywords |
 | `extract_text` | Extract text from DOCX/PDF/MD/TXT files |
@@ -524,8 +537,13 @@ The DOCX generator produces files optimized for Applicant Tracking Systems (Work
 Resume-Builder/
 ├── .claude-plugin/             # Plugin manifest
 │   └── plugin.json             # Plugin metadata (name, version, author)
+├── .codex-plugin/              # Codex plugin manifest
+│   └── plugin.json             # Codex metadata and install-surface copy
+├── .agents/plugins/
+│   └── marketplace.json        # Local Codex marketplace entry
 ├── commands/                   # Slash commands (plugin format)
 │   ├── setup.md                # One-time setup wizard
+│   ├── job-fit.md              # Quick GO/NO-GO job fit pre-screen
 │   ├── resume.md               # Full application (Swarm v3.0)
 │   ├── tailor-resume.md        # Resume only
 │   ├── cover-letter.md         # Cover letter only
@@ -535,6 +553,7 @@ Resume-Builder/
 ├── hooks/                      # Plugin hooks
 │   └── hooks.json              # SessionStart: checks if scoring is ready
 ├── .mcp.json                   # MCP server config (auto-starts scorer)
+├── .codex.mcp.json             # Codex MCP server config
 ├── mcp_scorer.py               # MCP scoring server (8 tools, cloud-first thin client)
 ├── job_discovery.py            # Job search + two-tier scoring (Adzuna + Remotive)
 ├── data/                       # Reference databases for scoring
@@ -546,7 +565,7 @@ Resume-Builder/
 │   └── action_verbs.json       # Verb power classifications
 ├── ats_scorer.py               # ATS scoring engine (2,800+ lines)
 ├── hr_scorer.py                # HR scoring engine (2,900+ lines)
-├── llm_scorer.py               # Claude-powered rubric scorer
+├── llm_scorer.py               # LLM-powered rubric scorer
 ├── scorer_server.py            # FastAPI REST API (v3.0 — auth, usage, billing)
 ├── pii_redactor.py             # PII redaction via Presidio (pre-LLM API calls)
 ├── docx_generator.py           # ATS/Workday-compliant DOCX generator
@@ -556,6 +575,7 @@ Resume-Builder/
 ├── requirements.txt            # Python dependencies
 ├── config.example.json         # Config template
 ├── .env.example                # Environment variable template
+├── AGENTS.md                   # Project context for Codex
 ├── CLAUDE.md                   # Project context for Claude Code
 ├── LICENSE                     # MIT License
 └── README.md                   # You are here

@@ -1,13 +1,17 @@
-# Tailor Resume Only (ATS + HR Optimized) — Swarm v3.0
+---
+description: Tailor a resume to a job description, score it against ATS and HR rubrics, create a DOCX, and update the tracker.
+---
 
-Optimize and tailor the resume using **parallel agent execution** for maximum speed. Target: 75-85% ATS + 70%+ HR with AUTHENTIC content.
+# Tailor Resume Only (ATS + HR Optimized) — Codex Parallel v3.0
+
+Optimize and tailor the resume using concurrent Codex shell and file operations for speed. Target: 75-85% ATS + 70%+ HR with AUTHENTIC content.
 
 ## Job Description
 $ARGUMENTS
 
 ## Instructions
 
-You are an expert ATS optimization specialist with access to **parallel agents** (Task tool). The user has provided a job description above. Execute the following phases, launching background agents wherever possible.
+You are an expert ATS optimization specialist using Codex shell, file-search, and parallel tool execution. The user has provided a job description above. Execute the following phases, keeping independent shell work concurrent where possible.
 
 ---
 
@@ -21,7 +25,7 @@ curl -s http://localhost:8100/health
 - **If server responds** with `{"status":"ok",...}`: Proceed immediately (scoring calls will take <2s each).
 - **If server NOT running**: Start it in background:
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "scorer-server"):
+Start this as a background shell session from the repo root:
 cd "." && python scorer_server.py --port 8100
 ```
 Then retry `/health` up to 45 seconds (models take ~30s to load). Once healthy, proceed.
@@ -31,10 +35,10 @@ Then retry `/health` up to 45 seconds (models take ~30s to load). Once healthy, 
 
 ## PHASE 1: PARALLEL RESEARCH (launch all simultaneously)
 
-Execute these **3 actions in a single parallel tool call** (no agents — use Read, Glob, Write tools simultaneously):
+Execute these **3 actions concurrently** where the environment allows it:
 
 **Action A — Find best matching resume:**
-- Use `Glob` to find all `applications/**/*Resume*.docx` files
+- Use file search (`rg --files applications` or `find`) to find all `applications/**/*Resume*.docx` files
 - From folder names (`{Company} - {JobTitle}`), identify the most semantically similar role
 - **If match found (PREFERRED)**: Read `.docx` via Bash: `python -c "from docx import Document; [print(p.text) for p in Document('path').paragraphs]"`
 - **If no match**: Fall back to the master resume (read `config.json` for `master_resume_path`, or glob for `*MASTER*RESUME*.md`)
@@ -51,16 +55,16 @@ Execute these **3 actions in a single parallel tool call** (no agents — use Re
 
 ## PHASE 2: BACKGROUND BASE SCORING + IMMEDIATE RESUME WRITING
 
-**Launch 2 background Bash agents AND start writing immediately — do NOT wait for base scores.**
+**Start background shell scoring AND start writing immediately — do NOT wait for base scores.**
 
 Base scores are only needed for the final comparison report.
 
-**Background Agent A — Combined Base Score (ATS + HR):**
+**Background Task A — Combined Base Score (ATS + HR):**
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "base-scorer"):
+Run in a background shell session named `base-scorer` if available:
 curl -s -X POST http://localhost:8100/score/both -H "Content-Type: application/json" -d "{\"resume_path\": \"{base_template_path}\", \"jd_path\": \"applications/{folder}/job_description.txt\"}"
 ```
-**Fallback** (if server not running): Use 2 separate Bash agents with `python ats_scorer.py --score ... --json` and `python hr_scorer.py --score ... --json`.
+**Fallback** (if server not running): Run `python ats_scorer.py --score ... --json` and `python hr_scorer.py --score ... --json` as separate shell scoring commands.
 
 **MAIN AGENT — Generate the tailored resume immediately (see RESUME WRITING RULES below).**
 
@@ -72,20 +76,20 @@ Save as `resume.md` in the output folder.
 
 ## PHASE 3: PARALLEL TAILORED SCORING (launch both simultaneously)
 
-Once `resume.md` is saved, launch **2 agents in a single parallel tool call**:
+Once `resume.md` is saved, run tailored scoring in a background shell session:
 
-**Background Agent C — Combined Tailored Score (ATS + HR):**
+**Background Task C — Combined Tailored Score (ATS + HR):**
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "tailored-scorer"):
+Run in a background shell session named `tailored-scorer` if available:
 curl -s -X POST http://localhost:8100/score/both -H "Content-Type: application/json" -d "{\"resume_path\": \"applications/{folder}/resume.md\", \"jd_path\": \"applications/{folder}/job_description.txt\"}"
 ```
-**Fallback** (if server not running): Use 2 separate Bash agents with CLI scorers.
+**Fallback** (if server not running): Run the CLI scorers as shell commands.
 
 ---
 
 ## PHASE 4: SCORE CHECK + ITERATION (max 2 rounds)
 
-1. **Collect scores** from agents C and D
+1. **Collect scores** from the tailored scoring task
 2. **Evaluate:**
 
 ```
@@ -97,29 +101,29 @@ IF ATS < 75%:
 IF ATS ≥ 75% AND HR < 70%:
     → Improve bullet impact (metrics, action verbs)
     → Remove awkward keyword insertions
-    → Re-score via curl to /score/both (1 background Bash agent)
+    → Re-score via curl to /score/both (background shell session if available)
 
 IF ATS ≥ 75% AND HR ≥ 70%:
     → PASS — proceed to finalization
 ```
 
-3. **Max 2 iteration rounds.** Each round = 2 parallel scoring agents.
+3. **Max 2 iteration rounds.** Each round = a scoring pass plus focused edits.
 
 ---
 
 ## PHASE 5: PARALLEL FINALIZATION (launch both simultaneously)
 
-Once scores pass, launch **2 agents in a single parallel tool call**:
+Once scores pass, run finalization tasks concurrently where possible:
 
-**Background Agent E — Resume DOCX (from markdown):**
+**Background Task E — Resume DOCX (from markdown):**
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "resume-docx-creator"):
+Run in a background shell session named `resume-docx-creator` if available:
 cd "." && python -c "from docx_generator import create_resume_from_md; create_resume_from_md('applications/{folder}/resume.md', 'applications/{folder}/{Name}_Resume_{Company}.docx'); print('Resume DOCX created successfully')"
 ```
 
-**Background Agent F — Update Tracker:**
+**Background Task F — Update Tracker:**
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "tracker-updater"):
+Run in a background shell session named `tracker-updater` if available:
 cd "." && python -c "
 from tracker_utils import add_application
 add_application(
@@ -142,8 +146,8 @@ print('Tracker updated successfully')
 ## PHASE 6: CLEANUP + REPORT
 
 1. **Collect all results** (verify DOCX + tracker)
-2. **Collect base scores** from Phase 2 agent (for comparison)
-3. **Delete `resume.md`** (AFTER DOCX agent confirms success — .md file is needed as input for DOCX creation)
+2. **Collect base scores** from the Phase 2 scoring task (for comparison)
+3. **Delete `resume.md`** (AFTER DOCX creation confirms success — .md file is needed as input for DOCX creation)
 4. **Display final report:**
 
 ```
@@ -182,7 +186,7 @@ GENERATED: {Name}_Resume_{Company}.docx
 FOLDER: applications/{Company} - {JobTitle}/
 
 ================================================================================
-SWARM AGENTS USED: {count} | ITERATIONS: {count}
+CONCURRENT TASKS USED: {count} | ITERATIONS: {count}
 ================================================================================
 ```
 

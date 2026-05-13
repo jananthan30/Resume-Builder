@@ -1,0 +1,20 @@
+{
+  "name": "resume-builder-local",
+  "interface": {
+    "displayName": "Resume Builder Local"
+  },
+  "plugins": [
+    {
+      "name": "resume-builder",
+      "source": {
+        "source": "local",
+        "path": "./plugins/resume-builder"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

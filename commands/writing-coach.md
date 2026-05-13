@@ -1,3 +1,7 @@
+---
+description: Audit and rewrite resume bullets using executive writing, ATS, and HR quality rules.
+---
+
 # Resume Writing Coach - Advanced Writing Enhancement Skill
 
 Analyze and enhance the writing quality of a resume. Can be used standalone to improve an existing resume, or is automatically integrated into `/resume` and `/tailor-resume` commands.

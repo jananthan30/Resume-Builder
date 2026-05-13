@@ -1,0 +1,50 @@
+{
+  "name": "resume-builder",
+  "version": "1.2.0",
+  "description": "AI-powered resume builder with job discovery, dual ATS + HR scoring, cover letter generation, and Workday-compatible DOCX output.",
+  "author": {
+    "name": "Resume Builder Contributors",
+    "email": "",
+    "url": "https://github.com/jananthan30"
+  },
+  "homepage": "https://github.com/jananthan30/Resume-Builder",
+  "repository": "https://github.com/jananthan30/Resume-Builder.git",
+  "license": "MIT",
+  "keywords": [
+    "resume",
+    "cover-letter",
+    "ats",
+    "job-application",
+    "job-discovery",
+    "career",
+    "hiring",
+    "scoring",
+    "hr-scoring",
+    "docx",
+    "workday",
+    "mcp"
+  ],
+  "mcpServers": "./.codex.mcp.json",
+  "interface": {
+    "displayName": "Resume Builder",
+    "shortDescription": "Tailor resumes, write cover letters, score job fit, and generate DOCX applications",
+    "longDescription": "Resume Builder helps Codex discover matching jobs, score fit against a master resume, tailor resumes to job descriptions, write cover letters, generate ATS-friendly DOCX files, and update an application tracker.",
+    "developerName": "Resume Builder Contributors",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/jananthan30/Resume-Builder",
+    "privacyPolicyURL": "https://github.com/jananthan30/Resume-Builder",
+    "termsOfServiceURL": "https://github.com/jananthan30/Resume-Builder",
+    "defaultPrompt": [
+      "Use Resume Builder to tailor my resume to this job description.",
+      "Use Resume Builder to score this job description against my master resume.",
+      "Use Resume Builder to find jobs that fit my resume."
+    ],
+    "brandColor": "#2563EB",
+    "screenshots": []
+  }
+}

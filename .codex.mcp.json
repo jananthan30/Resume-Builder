@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "ai-resume-tuner": {
+      "command": "python",
+      "args": ["mcp_scorer.py"],
+      "cwd": ".",
+      "env": {
+        "SCORER_CLOUD_URL": "https://resume-scorer.fly.dev"
+      },
+      "startup_timeout_sec": 20,
+      "tool_timeout_sec": 120
+    }
+  }
+}
