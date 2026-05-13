@@ -1167,6 +1167,20 @@ def score_experience_trapezoidal(candidate_years: float, required_years: float) 
         return score, f"Overqualified: {C:.1f} years > {1.5*R:.1f} years (flight risk)"
 
 
+def _skill_in_text(skill: str, text: str) -> bool:
+    """
+    Word-boundary match of a skill phrase in lowercased text.
+
+    Multi-word skills require all tokens adjacent (whitespace-flexible).
+    Single-word skills require a full token match, not a substring (so
+    "ml" doesn't match "html", "ensure" doesn't match "enclosure").
+    """
+    if not skill or not text:
+        return False
+    pat = r'\b' + re.escape(skill.lower()).replace(r'\ ', r'\s+') + r'\b'
+    return bool(re.search(pat, text))
+
+
 def score_skills_contextual(
     candidate_skills: List[str],
     candidate_bullets: List[str],
@@ -1177,50 +1191,51 @@ def score_skills_contextual(
     Context-weighted skills scoring:
     - List mention: 1.0x
     - Sentence context (used in action): 2.0x
-    - Main skill (appears in multiple roles): 3.0x
+    - Main skill (appears in 3+ bullets): 3.0x
+
+    Matching uses word-boundary regex on the full skill phrase, not
+    substring-of-any-word. Junk extracted from JD section headers is
+    filtered before scoring so things like "Firm", "EDUCATION", "Remote"
+    can't pollute Skills Match.
     """
     if not required_skills:
-        # Extract skills from JD if not parsed
+        # Extract skills from JD if not parsed (fallback path)
         required_skills = extract_skills_from_text(jd_text)
+
+    # Filter junk that may have slipped through parse_job_description
+    required_skills = [s for s in required_skills if _filter_skill_candidate(s)]
 
     if not required_skills:
         return 80, [], []  # No skills to match, give benefit of doubt
 
-    matched_skills = []
-    missing_skills = []
-    total_weighted_score = 0
+    matched_skills: list[str] = []
+    missing_skills: list[str] = []
+    total_weighted_score = 0.0
     max_possible_score = len(required_skills) * 3.0  # Max weight per skill
 
-    # Combine all candidate text for matching
-    candidate_text = ' '.join(candidate_skills + candidate_bullets).lower()
     skills_text = ' '.join(candidate_skills).lower()
     bullets_text = ' '.join(candidate_bullets).lower()
+    candidate_text = skills_text + ' ' + bullets_text
 
     for skill in required_skills:
-        skill_lower = skill.lower()
-        skill_words = skill_lower.split()
-
-        # Check for match
+        weight = 0.0
         skill_found = False
-        weight = 0
 
-        # Check in bullets (action context) - highest weight
-        if any(word in bullets_text for word in skill_words):
+        # Action context (in bullets) — highest weight
+        if _skill_in_text(skill, bullets_text):
             weight = 2.0
             skill_found = True
-
-            # Check if it appears in multiple job entries (main skill)
-            appearances = sum(1 for b in candidate_bullets if any(w in b.lower() for w in skill_words))
+            appearances = sum(
+                1 for b in candidate_bullets if _skill_in_text(skill, b.lower())
+            )
             if appearances >= 3:
                 weight = 3.0
-
-        # Check in skills list
-        elif any(word in skills_text for word in skill_words):
+        # Listed (Core Comp / Skills section)
+        elif _skill_in_text(skill, skills_text):
             weight = 1.0
             skill_found = True
-
-        # General text check
-        elif any(word in candidate_text for word in skill_words):
+        # General mention anywhere in candidate text
+        elif _skill_in_text(skill, candidate_text):
             weight = 0.5
             skill_found = True
 
@@ -1230,33 +1245,182 @@ def score_skills_contextual(
         else:
             missing_skills.append(skill)
 
-    # Calculate percentage
-    if max_possible_score > 0:
-        score = (total_weighted_score / max_possible_score) * 100
-    else:
-        score = 50
-
+    score = (
+        (total_weighted_score / max_possible_score) * 100
+        if max_possible_score > 0 else 50
+    )
     return min(100, score), matched_skills, missing_skills
 
 
+# Known skill keywords — clinical, pharma, medical affairs, regulatory, data.
+# Multi-word phrases are matched first so "medical review" beats "medical".
+_KNOWN_SKILL_KEYWORDS = {
+    # Pharma platforms / tools
+    'veeva vault', 'veeva', 'argus', 'meddra', 'cdash', 'sdtm', 'adam',
+    'medidata rave', 'medidata', 'rave', 'inform', 'oracle inform', 'edc',
+    'cdms', 'mlr', 'mlr workflows', 'promotional review',
+    # Medical affairs / review
+    'medical monitoring', 'medical review', 'medical writing',
+    'medical affairs', 'medical information', 'medical science liaison',
+    'scientific exchange', 'scientific writing', 'scientific accuracy',
+    'scientific review', 'scientific communications',
+    # Clinical operations / research
+    'clinical operations', 'clinical research', 'clinical development',
+    'clinical trial', 'clinical trials', 'clinical scientist', 'clinical data',
+    'protocol development', 'protocol deviation', 'protocol amendment',
+    'patient profiles', 'patient listings', 'patient data', 'safety data',
+    'safety signals', 'safety monitoring', 'safety reporting',
+    'query management', 'query resolution', 'source data verification',
+    'study conduct', 'study start-up', 'study close-out',
+    'investigator', 'investigator brochure', 'site management',
+    # Pharmacovigilance / safety
+    'pharmacovigilance', 'adverse event', 'serious adverse event', 'sae',
+    'aggregate reporting', 'signal detection', 'benefit-risk',
+    # Regulatory / standards
+    'regulatory affairs', 'regulatory submissions', 'regulatory writing',
+    'good clinical practice', 'gcp', 'ich-gcp', 'ich e6', 'ich e6(r2)',
+    'ich', 'fda', 'ema', 'opdp', 'pdufa',
+    'ind', 'nda', 'bla', 'cta', 'csr', 'clinical study report',
+    'investigational new drug', 'new drug application',
+    # Drug development phases
+    'drug development', 'drug development process',
+    'preclinical', 'phase i', 'phase ii', 'phase iii', 'phase iv',
+    'phase 1', 'phase 2', 'phase 3', 'phase 4',
+    'first in human', 'fih', 'pre-marketing', 'post-marketing',
+    # Therapeutic areas
+    'oncology', 'cardiology', 'neurology', 'immunology', 'inflammation',
+    'gastroenterology', 'hepatology', 'nephrology', 'pulmonology',
+    'rare disease', 'orphan drug', 'cell therapy', 'gene therapy',
+    'vaccines', 'infectious disease', 'cns', 'metabolic',
+    # Statistics / analytics
+    'biostatistics', 'epidemiology', 'public health', 'real-world evidence',
+    'real-world data', 'rwd', 'rwe',
+    'statistical analysis plan', 'sap', 'data management',
+    # Programming / tools
+    'sas', 'python', 'sql', 'bigquery', 'streamlit', 'tableau', 'power bi',
+    # Stakeholder language
+    'cross-functional', 'cross functional', 'multidisciplinary',
+    'hcp', 'healthcare provider', 'kol', 'key opinion leader',
+    'payer', 'patient', 'brand team',
+    # Credentials
+    'pharmd', 'md', 'phd', 'mph', 'rph', 'rn', 'mbbs',
+    'board certified', 'board certification', 'residency', 'fellowship',
+    'ecfmg',
+    # Communication / leadership
+    'scientific writing', 'medical writing', 'peer-reviewed', 'publication',
+    'project management', 'team leadership', 'people management',
+    # Microsoft / generic tooling
+    'microsoft office', 'word', 'excel', 'powerpoint', 'outlook',
+}
+
+# Words that look like skills (capitalized, isolated) but aren't.
+# These are common false positives: section headers, locations, JD prose,
+# generic adjectives, sentence-leading verbs. Filtered out of all skill lists.
+_NON_SKILL_WORDS = {
+    # Section / structural headers
+    'qualifications', 'requirements', 'responsibilities', 'description',
+    'education', 'experience', 'skills', 'preferred', 'desired', 'required',
+    'objectives', 'accountabilities', 'overview', 'about', 'summary',
+    'note', 'additional', 'information', 'travel', 'compensation', 'benefits',
+    'location', 'duration', 'salary', 'apply', 'submit',
+    # Work-mode words
+    'remote', 'hybrid', 'onsite', 'virtual', 'office', 'home',
+    # Sentence-leading / modal verbs
+    'firm', 'strong', 'excellent', 'proven', 'effective', 'thorough',
+    'demonstrated', 'demonstrates', 'must', 'shall', 'will', 'should',
+    'have', 'has', 'had', 'are', 'is', 'was', 'were', 'been',
+    'maintain', 'maintains', 'support', 'supports', 'provide', 'provides',
+    'serve', 'serves', 'participate', 'participates', 'ensure', 'ensures',
+    # Common JD adjectives
+    'advanced', 'minimum', 'maximum', 'desired', 'preferred', 'optional',
+    'global', 'national', 'local', 'regional',
+    # Time / dates
+    'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+    'january', 'february', 'march', 'april', 'may', 'june',
+    'july', 'august', 'september', 'october', 'november', 'december',
+    # US locations that show up in JDs (cities/states often capitalized)
+    'basking', 'ridge', 'boston', 'newark', 'cambridge', 'mountain', 'view',
+    'massachusetts', 'jersey', 'york', 'california', 'connecticut', 'maine',
+    'states', 'united', 'america', 'usa', 'u.s', 'u.s.',
+    # Pronouns / determiners
+    'the', 'this', 'that', 'these', 'those', 'you', 'your', 'our', 'their',
+    'we', 'us', 'they', 'them', 'who', 'whom', 'whose', 'which',
+    # Articles / fluff
+    'job', 'role', 'position', 'opportunity', 'candidate', 'applicant',
+    'company', 'organization', 'employer', 'team', 'department', 'group',
+}
+
+
+def _filter_skill_candidate(skill: str) -> bool:
+    """Return True if the candidate string is a plausible skill, not noise."""
+    if not skill:
+        return False
+    cleaned = skill.strip().rstrip('.,;:').strip()
+    if len(cleaned) < 3 or len(cleaned) > 60:
+        return False
+    words = cleaned.lower().split()
+    if not words:
+        return False
+    # All-noise check: every word is in the non-skill set
+    if all(w in _NON_SKILL_WORDS for w in words):
+        return False
+    # First-word-noise check: starts with a sentence-leading verb / section word
+    if words[0] in _NON_SKILL_WORDS:
+        return False
+    # Numeric noise (e.g., "3-5", "2024")
+    if re.match(r'^\d', cleaned):
+        return False
+    return True
+
+
 def extract_skills_from_text(text: str) -> List[str]:
-    """Extract skill-like phrases from job description"""
-    # Common skill patterns
-    skill_patterns = [
-        r'\b(?:experience\s+(?:with|in)|knowledge\s+of|proficiency\s+in|expertise\s+in)\s+([A-Za-z\s,]+)',
-        r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:experience|skills?|knowledge)',
+    """
+    Extract skill-like phrases from a job description.
+
+    Strategy (in order):
+      1. Known skill keywords — multi-word phrases first, word-boundary match.
+      2. Structured "experience with X" / "knowledge of Y" patterns.
+      3. Filtered noun-phrase fallback (no over-broad capitalized-word match).
+
+    Filters out section headers, locations, sentence-leading verbs, and other
+    common JD noise so downstream Skills Match doesn't get polluted by words
+    like "Basking", "Qualifications", "Remote", "Firm".
+    """
+    text_norm = text or ''
+    text_lower = text_norm.lower()
+    found: list[str] = []
+
+    # 1. Known skill keywords — longest first so "medical review" beats "medical"
+    for kw in sorted(_KNOWN_SKILL_KEYWORDS, key=len, reverse=True):
+        # word-boundary match (allows internal whitespace flexibility)
+        pat = r'\b' + re.escape(kw).replace(r'\ ', r'\s+') + r'\b'
+        if re.search(pat, text_lower):
+            found.append(kw)
+
+    # 2. Structured patterns — "experience with/in X", "knowledge of Y"
+    structured_patterns = [
+        r'\b(?:experience\s+(?:with|in|conducting|leading|performing))\s+'
+        r'([A-Za-z][A-Za-z\s&/\-]{2,40}?)(?=\.|,|\sand\s|\sor\s|;|\n|$)',
+        r'\b(?:knowledge\s+of|understanding\s+of|grasp\s+of|familiarity\s+with)\s+'
+        r'([A-Za-z][A-Za-z\s&/\-]{2,40}?)(?=\.|,|\sand\s|\sor\s|;|\n|$)',
+        r'\b(?:proficiency\s+in|expertise\s+in|skilled\s+in|fluent\s+in)\s+'
+        r'([A-Za-z][A-Za-z\s&/\-]{2,40}?)(?=\.|,|\sand\s|\sor\s|;|\n|$)',
     ]
+    for pattern in structured_patterns:
+        for m in re.findall(pattern, text_norm, re.IGNORECASE):
+            cleaned = m.strip().rstrip('.,;:')
+            if _filter_skill_candidate(cleaned):
+                found.append(cleaned.lower())
 
-    skills = []
-    for pattern in skill_patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        skills.extend([m.strip() for m in matches if len(m.strip()) > 2])
-
-    # Also extract capitalized terms that look like technologies/tools
-    tech_terms = re.findall(r'\b([A-Z][A-Za-z]+(?:\.[A-Za-z]+)?)\b', text)
-    skills.extend([t for t in tech_terms if len(t) > 2 and t not in ['The', 'This', 'You', 'Our', 'Your']])
-
-    return list(set(skills))[:20]  # Limit to top 20
+    # Dedupe (case-insensitive) preserving order, cap at 30
+    seen: set[str] = set()
+    out: list[str] = []
+    for s in found:
+        k = s.lower().strip()
+        if k and k not in seen:
+            seen.add(k)
+            out.append(s)
+    return out[:30]
 
 
 def calculate_career_slope(jobs: List[JobEntry]) -> Tuple[float, str]:
