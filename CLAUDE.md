@@ -276,6 +276,25 @@ create_ats_resume(
 - Prioritize strong action verbs and metrics over keyword stuffing
 - **A 75% ATS score with authentic content beats 90% with obvious stuffing**
 
+### Core Competencies Must-Trace Rule (enforced by `evidence_audit.py`):
+**Every Core Competency item must be backed by evidence elsewhere in the resume.**
+
+For each item, ONE of the following must be true:
+1. The item (or one of its key phrases) appears in a Professional Experience bullet
+2. The item appears in the Summary
+3. The item is backed by Publications / Education / Certifications / Memberships / Projects (e.g., "Peer-Reviewed Publications" backed by the Publications section)
+4. The item carries an honest exposure qualifier: `(exposure)`, `(coursework)`, `(trainable)`, `(familiar)`, `(rapid trainability)`, `(in progress)`, `(learning)`
+
+If none of the above, REMOVE the item from Core Competencies. Listing a skill without evidence creates an interview liability — recruiters ask "tell me about a time you did X" and the candidate has no answer.
+
+**Validated tools whitelist:** When listing software / platforms (Veeva Vault, Argus, Medidata Rave, EDC, MedDRA, etc.), only include them if the candidate has hands-on experience documented in a bullet. If they only have indirect or "trainable" exposure, mark with `(trainable)` — e.g., `Veeva Vault (trainable)`.
+
+**Audit command (run before DOCX creation):**
+```bash
+python evidence_audit.py applications/{Company - JobTitle}/resume.md
+```
+Exit code 0 = passed. Exit code 1 = unsupported items present; fix or qualify before generating DOCX.
+
 ## Notes for Claude
 - Master resume: Read from `config.json` → `master_resume_path` (or glob for `*MASTER*RESUME*.md`, `*MASTER*RESUME*.docx`, `*MASTER*RESUME*.pdf`). For `.docx` files, use the `extract_text` MCP tool (Claude cannot read binary DOCX directly).
 - Output folder format: `applications/{Company} - {JobTitle}/`

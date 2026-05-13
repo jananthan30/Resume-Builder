@@ -259,7 +259,30 @@ IF ATS >= 75% AND HR < 70%:
 ```
 
 IF ATS >= 75% AND HR >= 70%:
-   PASS — proceed to finalization
+   PASS — proceed to evidence audit (Phase 4.5) then finalization
+
+---
+
+## PHASE 4.5: EVIDENCE AUDIT (mandatory before DOCX)
+
+Every Core Competencies item must trace to bullet/summary/section evidence,
+OR carry an honest exposure qualifier. This catches the
+"Veeva Vault in Core Comp but never used" pattern that creates interview
+liability even with a strong scorer result.
+
+Run the audit:
+```bash
+python evidence_audit.py "applications/{folder}/resume.md"
+```
+
+- Exit 0: all items backed, proceed to Phase 5.
+- Exit 1: unsupported items listed. For EACH unsupported item, do ONE of:
+  - Add a bullet to Professional Experience demonstrating it (preferred)
+  - Append an exposure qualifier in Core Competencies, e.g.,
+    `Veeva Vault (trainable)`, `Pharmaceutical Industry Operations (exposure)`
+  - Remove the item from Core Competencies
+- Re-run audit until exit 0. Do NOT generate the DOCX with unresolved items —
+  high tool scores plus unsupported claims is the highest-risk failure mode.
 
 Re-score after each iteration using all 3 scorers and write to state.json:
 ```

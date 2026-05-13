@@ -5,5 +5,12 @@
   "user_credentials": "",
   "user_email": "your.email@example.com",
   "user_phone": "555-123-4567",
-  "user_linkedin": "linkedin.com/in/your-profile"
+  "user_linkedin": "linkedin.com/in/your-profile",
+
+  "_validated_tools_comment": "List ONLY tools you've actually used hands-on. The tailoring workflow uses this whitelist to refuse adding tools you don't have. Mark partial exposure inline: 'Veeva Vault (trainable)', 'Argus (coursework)'. Examples below — replace with yours.",
+  "validated_tools": [
+    "Microsoft Office Suite",
+    "Python",
+    "SQL"
+  ]
 }
