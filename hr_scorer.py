@@ -686,8 +686,70 @@ def get_title_hierarchy_level(title: str) -> int:
     return 3
 
 
+_DATE_INLINE_RE = re.compile(
+    r'\d{4}|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{4}',
+    re.IGNORECASE,
+)
+
+
+def _normalize_docx_job_headers(text: str) -> str:
+    """
+    Convert DOCX-export job headers ("TITLE\tDATE" followed by COMPANY on the
+    next line) into the pipe-separated format parse_resume expects
+    ("TITLE | COMPANY\nDATE").
+
+    Why: docx_generator.create_ats_resume emits role rows with a tab between
+    title and dates and the company on the following line. parse_resume's
+    job_pattern requires a PIPE separator, so without this normalization the
+    DOCX path silently undercounts roles (e.g., 8 jobs → 1 detected, 15.8 yrs
+    → 1.9 yrs). That undercount used to flatter over-qualified candidates as
+    a "Goldilocks" fit. Normalizing here brings .docx parity with .md and
+    makes Experience Fit reflect reality.
+    """
+    if '\t' not in text:
+        return text
+
+    lines = text.split('\n')
+    out: list[str] = []
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        if '\t' in line:
+            parts = line.split('\t', 1)
+            if len(parts) == 2:
+                title_part = parts[0].strip()
+                date_part = parts[1].strip()
+                if title_part and date_part and _DATE_INLINE_RE.search(date_part):
+                    # Look ahead for the company line
+                    j = i + 1
+                    while j < n and not lines[j].strip():
+                        j += 1
+                    if j < n:
+                        company_line = lines[j].strip()
+                        # Company line should not be a section header, bullet,
+                        # date-only, or another TITLE\tDATE row.
+                        if (
+                            not company_line.isupper()
+                            and not company_line.startswith(('•', '-', '*', '─', '═', '_'))
+                            and '\t' not in company_line
+                            and len(company_line) < 300
+                            and not _DATE_INLINE_RE.match(company_line.strip())
+                        ):
+                            out.append(f'{title_part} | {company_line}')
+                            out.append(date_part)
+                            i = j + 1
+                            continue
+        out.append(line)
+        i += 1
+    return '\n'.join(out)
+
+
 def parse_resume(text: str) -> CandidateProfile:
     """Parse resume text into structured CandidateProfile"""
+    # Normalize DOCX-style tab-separated job headers so the pipe-based job
+    # pattern below can find them. Idempotent on already-piped text.
+    text = _normalize_docx_job_headers(text)
     profile = CandidateProfile(raw_text=text)
 
     lines = text.split('\n')

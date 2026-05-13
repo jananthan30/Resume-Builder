@@ -240,6 +240,83 @@ JD_BOILERPLATE_WORDS = {
 # Merge boilerplate words into STOP_WORDS for unified filtering
 STOP_WORDS = STOP_WORDS | JD_BOILERPLATE_WORDS
 
+
+# Boilerplate paragraph patterns — strip these whole sections before scoring
+# so semantic similarity and BM25 focus on responsibilities/qualifications.
+_BOILERPLATE_PARAGRAPH_PATTERNS = [
+    # EEO / affirmative-action statements
+    r'\bequal\s+(opportunity|employment)\s+(employ|workplace)',
+    r'\baffirmative\s+action\b',
+    r'\bregardless\s+of\s+(race|color|religion|sex|national\s+origin)',
+    r'\bdiversity\s+(and|,)\s+inclusion\b',
+    # Compensation / salary boilerplate
+    r'\bbase\s+salary\s+range\b',
+    r'\bcompensation\s+(and\s+benefits|summary|range)\b',
+    r'\$\s?\d{2,3}[\.,]?\d{3}\b[^\n]*?\$\s?\d{2,3}[\.,]?\d{3}',
+    r'\bU\.?S\.?\s+based\s+employees?\b',
+    r'\bU\.?S\.?\s+base\s+salary\b',
+    r'\bestimated\s+salary\s+range\b',
+    r'\bactual\s+base\s+salary\s+offered\b',
+    # Benefits boilerplate
+    r'\b401\(k\)\b',
+    r'\bmedical,\s*dental,?\s*(and\s+)?vision\b',
+    r'\bpaid\s+(volunteer\s+)?time\s+off\b',
+    r'\b(short|long)[-\s]term\s+disability\b',
+    r'\btuition\s+reimbursement\b',
+    r'\bsick\s+time\b.*\b(80|120)\s+hours\b',
+    r'\bbasic\s+life\s+insurance\b',
+    r'\bwell[-\s]being\s+benefits\b',
+    # Application / privacy boilerplate
+    r'\bby\s+clicking\s+(the\s+)?["“]?apply["”]?\s+button',
+    r'\bprivacy\s+notice\s+and\s+terms\s+of\s+use\b',
+    r'\bI\s+(further\s+)?attest\s+that\b',
+    r'\bemployment\s+application\s+(process|will\s+commence)',
+    # Generic recruiting fluff
+    r'\bcertified\s+as\s+a\s+global\s+top\s+employer\b',
+    r'\binnovation[-\s]driven\s+company\b',
+    r'\bfast[-\s]paced\s+(and\s+)?(dynamic|innovative|collaborative)',
+    r'\bare\s+you\s+looking\s+for\b',
+]
+
+_BOILERPLATE_REGEX = re.compile(
+    '|'.join(_BOILERPLATE_PARAGRAPH_PATTERNS),
+    re.IGNORECASE,
+)
+
+
+def strip_jd_boilerplate(text: str) -> str:
+    """
+    Remove benefits / EEO / salary / application boilerplate paragraphs from a JD
+    so downstream scoring (semantic, BM25) focuses on responsibilities and
+    qualifications.
+
+    Drops any paragraph matching a known boilerplate pattern. Preserves all
+    other content (role description, responsibilities, qualifications, skills).
+
+    Idempotent: safe to call multiple times.
+    """
+    if not text:
+        return text
+
+    # Prefer paragraph splits, fall back to line splits if no blank lines
+    if '\n\n' in text:
+        parts = text.split('\n\n')
+        joiner = '\n\n'
+    else:
+        parts = text.split('\n')
+        joiner = '\n'
+
+    kept = []
+    for part in parts:
+        if not part.strip():
+            continue
+        if _BOILERPLATE_REGEX.search(part):
+            continue
+        kept.append(part)
+
+    cleaned = joiner.join(kept)
+    return cleaned if cleaned.strip() else text  # never return empty
+
 # =============================================================================
 # DOMAIN KEYWORD LOADING — Dynamic from data/keywords_{domain}.json files
 # Replaces hardcoded PV_KEYWORDS with domain-aware keyword sets
@@ -438,9 +515,13 @@ def calculate_semantic_similarity(resume_text: str, jd_text: str) -> Tuple[float
     if not SBERT_AVAILABLE:
         return 0, {'available': False, 'message': _sbert_load_error or 'sentence-transformers not installed'}
 
+    # Strip benefits/EEO/salary/application boilerplate from JD before embedding
+    # so cosine similarity reflects fit to the role, not boilerplate overlap.
+    jd_text_clean = strip_jd_boilerplate(jd_text)
+
     try:
         resume_embedding = embed_with_cache(resume_text)
-        jd_embedding = embed_with_cache(jd_text)
+        jd_embedding = embed_with_cache(jd_text_clean)
         if resume_embedding is None or jd_embedding is None:
             return 0, {'available': False, 'message': _sbert_load_error or 'Model not loaded'}
 
@@ -498,8 +579,10 @@ def calculate_bm25_score(resume_text: str, jd_text: str, k1: float = 1.5, b: flo
     # Build BM25Plus index
     bm25 = BM25Plus(tokenized_corpus)
 
-    # Query with JD tokens
-    query_tokens = tokenize(jd_text)
+    # Strip benefits/EEO/salary/application boilerplate from JD before tokenizing
+    # so BM25 query terms reflect the role, not boilerplate noise.
+    jd_text_clean = strip_jd_boilerplate(jd_text)
+    query_tokens = tokenize(jd_text_clean)
     if not query_tokens:
         return 0, {'error': 'No valid tokens in JD'}
 

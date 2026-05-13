@@ -242,12 +242,12 @@ def _decode_base64_file(b64_content: str, filename: str) -> str:
         tmp_path = tmp.name
 
     try:
-        if ext == ".pdf":
-            text = ats_scorer.extract_text_from_pdf(tmp_path)
-        elif ext == ".docx":
-            from docx import Document
-            doc = Document(tmp_path)
-            text = "\n".join(p.text for p in doc.paragraphs)
+        if ext in (".pdf", ".docx"):
+            # Use centralized extractor so PDF, DOCX (tables/text boxes/headers/
+            # footers) parse identically to the local-file path. Previously
+            # uploads used doc.paragraphs only and silently lost content.
+            from text_extractor import extract_text
+            text = extract_text(tmp_path)
         else:
             text = file_bytes.decode("utf-8", errors="replace")
         return text
