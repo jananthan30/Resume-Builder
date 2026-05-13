@@ -328,24 +328,53 @@ The `Job_Application_Tracker.xlsx` is automatically updated whenever a resume is
 | Notes | Additional notes |
 | Interview Date | Scheduled interview date |
 | Follow Up Date | When to follow up |
-| Response | Company response |
+| Response | Date company responded (filled by `mark_response`) |
+| **Target Tier** | IC / Sr / Manager / AD / Director — used to spot pipeline-mix issues (too many AD/Director applications) |
+| **Fit Label** | MEETS / STRETCH / MISS — taken from `job_fit_scorer` recommendation |
+| **Hard Reqs Missed** | Count of knockout flags at apply time |
+| **Referral Source** | cold / alumni / recruiter / network / referral |
+| **Rejection Reason** | no_response / auto_reject / screen_reject / interview_reject / offer_declined / withdrawn |
+| **Days To Response** | Auto-computed (Response date − Application Date) |
+| **Interview Stages Reached** | 0=applied, 1=phone screen, 2=hiring mgr, 3=panel, 4=onsite, 5=offer |
+
+Strategic columns let the system *learn* which categories of role actually convert. Without these, the tracker is bookkeeping; with these, you can answer "what's my response rate on AD-tier vs Sr Specialist?"
 
 ### Tracker Utilities
 
 ```python
-from tracker_utils import add_application, update_application_status, rebuild_tracker_from_folders
+from tracker_utils import (
+    add_application, mark_response, pipeline_summary,
+    update_application_status, rebuild_tracker_from_folders,
+)
 
-# Add new application (called automatically by /resume and /tailor-resume)
+# Add a new application — strategic columns are optional but recommended
 add_application(
     company="Company Name",
     job_title="Job Title",
     resume_file="resume.docx",
     cover_letter_file="cover_letter.docx",
     ats_score=83.0,
-    hr_score=71.6
+    hr_score=71.6,
+    target_tier="Sr Specialist",     # IC / Sr / Manager / AD / Director
+    fit_label="MEETS",                # from job_fit_scorer
+    hard_reqs_missed=0,
+    referral_source="alumni",         # cold / alumni / recruiter / network / referral
 )
 
-# Update status manually
+# Record an outcome — auto-computes Days To Response
+mark_response(
+    company="Company Name",
+    job_title="Job Title",
+    response_date="2026-06-01",
+    rejection_reason="screen_reject",
+    interview_stages_reached=1,
+    status="Rejected after phone screen",
+)
+
+# See pipeline conversion by tier / fit / referral source
+pipeline_summary()
+
+# Manual status update (legacy)
 update_application_status("Company Name", "Job Title", "Interview Scheduled")
 
 # Rebuild tracker from applications folder
