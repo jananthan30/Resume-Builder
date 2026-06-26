@@ -9,10 +9,7 @@
   },
   "license": "MIT",
   "homepage": "https://github.com/jananthan30/Resume-Builder",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/jananthan30/Resume-Builder.git"
-  },
+  "repository": "https://github.com/jananthan30/Resume-Builder.git",
   "keywords": [
     "resume",
     "cover-letter",
