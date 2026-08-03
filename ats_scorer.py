@@ -80,7 +80,6 @@ import hashlib
 import numpy as np
 
 _EMBED_CACHE_DIR = Path(__file__).parent / "embed_cache"
-_EMBED_CACHE_DIR.mkdir(exist_ok=True)
 
 # In-memory LRU cache for current session
 _embed_mem_cache = {}
@@ -114,6 +113,9 @@ def embed_with_cache(text: str) -> 'np.ndarray':
     emb = model.encode(text, convert_to_numpy=True)
 
     # Save to both caches
+    # Importing the scorer must be side-effect free.  Create the optional disk
+    # cache only after an embedding was actually requested and produced.
+    _EMBED_CACHE_DIR.mkdir(exist_ok=True)
     np.save(str(cache_path), emb)
     _embed_mem_cache[h] = emb
 
@@ -1093,7 +1095,11 @@ def _get_domain_proto_embeddings():
     return _domain_proto_embeddings
 
 
-def detect_domain(text: str) -> Tuple[str, float, Dict[str, float]]:
+def detect_domain(
+    text: str,
+    *,
+    semantic_enabled: bool = True,
+) -> Tuple[str, float, Dict[str, float]]:
     """
     Auto-detect the industry domain from text (§4).
 
@@ -1106,7 +1112,7 @@ def detect_domain(text: str) -> Tuple[str, float, Dict[str, float]]:
         domain_scores: Dictionary of all domain scores
     """
     # Try embedding-based classification first
-    if SBERT_AVAILABLE:
+    if semantic_enabled and SBERT_AVAILABLE:
         proto_embeds = _get_domain_proto_embeddings()
         if proto_embeds is not None:
             try:

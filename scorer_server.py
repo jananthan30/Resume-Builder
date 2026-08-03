@@ -50,6 +50,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from legacy_rewrite_guard import native_resume_team_required_response
+
 # Ensure project root is on sys.path
 PROJECT_ROOT = str(Path(__file__).parent)
 if PROJECT_ROOT not in sys.path:
@@ -143,7 +145,7 @@ class ScoreRequest(BaseModel):
     include_explanation: bool = Field(False, description="Include score explanation with improvement suggestions")
     domain_hint: Optional[str] = Field(None, description="Force domain: technology, finance, consulting, clinical_research, healthcare, pharma_biotech")
     format_style: Optional[str] = Field(None, description="Resume format: ats (default), harvard, modern, executive")
-    include_llm_score: bool = Field(False, description="Run LLM evaluation after rewrite (adds ~20-30s)")
+    include_llm_score: bool = Field(False, description="Legacy rewrite option (direct rewriting is disabled)")
 
 
 class BatchScoreRequest(BaseModel):
@@ -1534,243 +1536,29 @@ async def score_job_fit(req: ScoreRequest, request: Request, api_key: str = Depe
 
 
 @app.post("/coach/redflags")
-async def coach_redflags(req: RedFlagCoachRequest, auth=Depends(verify_api_key_with_usage)):
-    """LLM coach that diagnoses red flags, asks follow-up questions, and fixes the resume."""
-    if CLOUD_AVAILABLE and isinstance(auth, dict):
-        tier = auth.get("tier", "free")
-        if tier not in ("pro", "ultra"):
-            raise HTTPException(
-                status_code=403,
-                detail="Red-flag coaching requires a Pro ($12/month) or Ultra ($29/month) subscription.",
-            )
+async def coach_redflags(req: RedFlagCoachRequest):
+    """Reject the legacy coaching path that could emit an unaudited draft.
 
-    if not req.resume_text and CLOUD_AVAILABLE and isinstance(auth, dict):
-        record = _get_resume_db(auth["user_id"])
-        if record:
-            req = req.model_copy(update={"resume_text": record["resume_text"]})
-
-    if not req.resume_text:
-        raise HTTPException(status_code=400, detail="Provide resume_text or upload a resume via POST /resume/upload.")
-
-    _log_score_usage(auth, "/coach/redflags")
-
-    try:
-        from llm_scorer import coach_red_flags, ANTHROPIC_AVAILABLE
-    except ImportError:
-        raise HTTPException(status_code=500, detail="llm_scorer module not found")
-
-    if not ANTHROPIC_AVAILABLE:
-        raise HTTPException(status_code=503, detail="LLM coaching unavailable — anthropic package not installed.")
-
-    result = coach_red_flags(
-        resume_text=req.resume_text,
-        jd_text=req.jd_text,
-        score_context=req.score_context,
-        chat_history=req.chat_history,
-        domain_hint=req.domain_hint,
-    )
-
-    if result.get("error"):
-        raise HTTPException(status_code=500, detail=result["error"])
-
-    return JSONResponse(content=result)
+    Authentication and usage dependencies are intentionally absent: this
+    migration guard must execute without charging usage or mutating rate-limit
+    state, and it never reads request content or invokes a model.
+    """
+    del req
+    return JSONResponse(status_code=409, content=native_resume_team_required_response())
 
 
 # =============================================================================
-# ULTRA — RESUME REWRITING
+# LEGACY RESUME REWRITING — DISABLED
 # =============================================================================
 
 @app.post("/rewrite")
-async def rewrite_resume_endpoint(req: ScoreRequest, request: Request, auth=Depends(verify_api_key_with_usage)):
+async def rewrite_resume_endpoint(req: ScoreRequest, request: Request):
     """
-    Rewrite resume to match JD.
-
-    Default response is JSON for existing web clients.
-    Set `Accept: text/event-stream` or `?stream=true` to receive SSE progress
-    events for long-running requests.
-    Pro tier: 10 rewrites/month. Ultra tier: unlimited.
+    Reject the legacy REST rewrite path before auth usage, input resolution,
+    scoring, model access, streaming, or output construction.
     """
-    import json as _json
-
-    if CLOUD_AVAILABLE and isinstance(auth, dict):
-        tier = auth.get("tier", "free")
-        user_id = auth.get("user_id")
-        if tier not in ("pro", "ultra"):
-            raise HTTPException(
-                status_code=403,
-                detail="Resume rewriting requires a Pro ($12/month) or Ultra ($29/month) subscription.",
-            )
-        if tier == "pro" and user_id:
-            try:
-                from cloud.auth import check_rewrite_allowed
-                rewrite_status = check_rewrite_allowed(user_id, tier)
-                if not rewrite_status["allowed"]:
-                    raise HTTPException(
-                        status_code=429,
-                        detail=f"Monthly rewrite limit reached ({rewrite_status['limit']}/month for Pro). Upgrade to Ultra for unlimited rewrites.",
-                    )
-            except ImportError:
-                pass
-
-    req = _maybe_autofill_resume(req, auth)
-    resume_text, jd_text, resume_file_path = resolve_inputs(req)
-    _log_score_usage(auth, "/rewrite")
-
-    domain_hint = req.domain_hint
-    format_style = req.format_style or "ats"
-    stream_response = _wants_event_stream(request)
-
-    from llm_scorer import rewrite_resume as _rewrite_fn, ANTHROPIC_AVAILABLE
-
-    def _sse(obj: dict) -> str:
-        return f"data: {_json.dumps(obj)}\n\n"
-
-    def _score_original():
-        o_ats = ats_scorer.calculate_ats_score(resume_text, jd_text, resume_file_path)
-        try:
-            o_hr_obj = hr_scorer.calculate_hr_score_from_text(resume_text, jd_text)
-            o_hr = hr_scorer.result_to_dict(o_hr_obj)
-        except Exception:
-            o_hr = {"overall_score": 0}
-        return o_ats, o_hr
-
-    def _do_rewrite():
-        return _rewrite_fn(resume_text, jd_text, domain_hint=domain_hint, format_style=format_style)
-
-    def _score_rewritten(rewritten_text: str):
-        r_ats = ats_scorer.calculate_ats_score(rewritten_text, jd_text)
-        try:
-            r_hr_obj = hr_scorer.calculate_hr_score_from_text(rewritten_text, jd_text)
-            r_hr = hr_scorer.result_to_dict(r_hr_obj)
-        except Exception:
-            r_hr = {"overall_score": 0}
-        return r_ats, r_hr
-
-    def _score_llm(rewritten_text: str) -> dict:
-        try:
-            from llm_scorer import score_with_llm as _llm_score_fn, ANTHROPIC_AVAILABLE as _AA
-            if _AA:
-                return _llm_score_fn(rewritten_text, jd_text, domain_hint=domain_hint)
-        except Exception:
-            pass
-        return {"error": "skipped"}
-
-    def _build_final_result(original_ats: dict, original_hr: dict, rewrite_result: dict, rewritten_ats: dict, rewritten_hr: dict, rewritten_llm: dict) -> dict:
-        rewritten_text = rewrite_result.get("rewritten_resume", "")
-        import re as _re
-        _rewritten_bullets = _re.findall(r'[•\-]\s*(.+)', rewritten_text)
-        try:
-            _bst_score, _bst_stats = hr_scorer.score_burstiness(_rewritten_bullets)
-            writing_quality = {
-                **_bst_stats,
-                'burstiness_score': _bst_score,
-                'quantification_rate': rewritten_hr.get("writing_quality", {}).get("quantification_rate", 0),
-            }
-        except Exception:
-            writing_quality = {}
-
-        return {
-            "rewritten_resume": rewritten_text,
-            "changes_made": rewrite_result.get("changes_made", []),
-            "explanation": rewrite_result.get("explanation", ""),
-            "format_style": format_style,
-            "original_scores": {
-                "ats": original_ats.get("total_score", 0),
-                "hr": original_hr.get("overall_score", 0),
-            },
-            "rewritten_scores": {
-                "ats": rewritten_ats.get("total_score", 0),
-                "hr": rewritten_hr.get("overall_score", 0),
-                "llm_ats": rewritten_llm.get("ats_score") or 0,
-                "llm_hr": rewritten_llm.get("hr_score") or 0,
-            },
-            "writing_quality": writing_quality,
-            "model_used": rewrite_result.get("model_used", "claude-sonnet-4-6"),
-        }
-
-    if not ANTHROPIC_AVAILABLE:
-        if not stream_response:
-            raise HTTPException(status_code=503, detail="LLM rewriting unavailable — anthropic package not installed.")
-
-        async def _error_stream():
-            yield _sse({"stage": "error", "detail": "LLM rewriting unavailable — anthropic package not installed."})
-
-        return StreamingResponse(_error_stream(), media_type="text/event-stream")
-
-    if not stream_response:
-        loop = asyncio.get_running_loop()
-        original_ats, original_hr = await loop.run_in_executor(None, _score_original)
-        rewrite_result = await loop.run_in_executor(None, _do_rewrite)
-        if rewrite_result.get("error") or not rewrite_result.get("rewritten_resume"):
-            raise HTTPException(status_code=500, detail=rewrite_result.get("error", "Rewrite failed — no output returned."))
-        rewritten_text = rewrite_result["rewritten_resume"]
-        rewritten_ats, rewritten_hr = await loop.run_in_executor(None, lambda: _score_rewritten(rewritten_text))
-        rewritten_llm = {"error": "skipped"}
-        if req.include_llm_score:
-            rewritten_llm = await loop.run_in_executor(None, lambda: _score_llm(rewritten_text))
-        final_result = _build_final_result(original_ats, original_hr, rewrite_result, rewritten_ats, rewritten_hr, rewritten_llm)
-        return JSONResponse(content=final_result)
-
-    async def event_stream():
-        loop = asyncio.get_running_loop()
-
-        yield _sse({"stage": "scoring_original", "pct": 8})
-        orig_future = loop.run_in_executor(None, _score_original)
-        while not orig_future.done():
-            await asyncio.sleep(1)
-
-        try:
-            original_ats, original_hr = orig_future.result()
-        except Exception as exc:
-            yield _sse({"stage": "error", "detail": f"Scoring original failed: {exc}"})
-            return
-
-        yield _sse({"stage": "rewriting", "pct": 22})
-        rewrite_future = loop.run_in_executor(None, _do_rewrite)
-        pct = 28
-        while not rewrite_future.done():
-            yield _sse({"stage": "rewriting", "pct": min(pct, 75)})
-            await asyncio.sleep(5)
-            pct += 6
-
-        try:
-            rewrite_result = rewrite_future.result()
-        except Exception as exc:
-            yield _sse({"stage": "error", "detail": f"Rewrite failed: {exc}"})
-            return
-
-        if rewrite_result.get("error") or not rewrite_result.get("rewritten_resume"):
-            yield _sse({"stage": "error", "detail": rewrite_result.get("error", "Rewrite failed — no output returned.")})
-            return
-
-        rewritten_text = rewrite_result["rewritten_resume"]
-
-        yield _sse({"stage": "scoring_rewritten", "pct": 82})
-        rescore_future = loop.run_in_executor(None, lambda: _score_rewritten(rewritten_text))
-        while not rescore_future.done():
-            await asyncio.sleep(1)
-
-        try:
-            rewritten_ats, rewritten_hr = rescore_future.result()
-        except Exception as exc:
-            yield _sse({"stage": "error", "detail": f"Scoring rewritten resume failed: {exc}"})
-            return
-
-        rewritten_llm: dict = {"error": "skipped"}
-        if req.include_llm_score:
-            yield _sse({"stage": "scoring_llm", "pct": 88})
-            llm_score_future = loop.run_in_executor(None, lambda: _score_llm(rewritten_text))
-            _llm_pct = 90
-            while not llm_score_future.done():
-                yield _sse({"stage": "scoring_llm", "pct": min(_llm_pct, 97)})
-                await asyncio.sleep(3)
-                _llm_pct += 3
-            rewritten_llm = llm_score_future.result()
-
-        final_result = _build_final_result(original_ats, original_hr, rewrite_result, rewritten_ats, rewritten_hr, rewritten_llm)
-        yield _sse({"stage": "done", "pct": 100, "result": final_result})
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    del req, request
+    return JSONResponse(status_code=409, content=native_resume_team_required_response())
 
 
 # =============================================================================

@@ -9,7 +9,7 @@ Tools:
     score_ats         — ATS keyword/semantic scoring only
     score_hr          — HR recruiter simulation only
     score_with_llm    — LLM-augmented scoring (requires ANTHROPIC_API_KEY)
-    rewrite_resume    — AI-powered resume tailoring (requires ANTHROPIC_API_KEY)
+    rewrite_resume    — Deprecated migration guard; native Resume Team required
     explain_score     — Actionable improvement suggestions
     generate_cover_letter — AI cover letter from resume + JD
     discover_jobs     — Search jobs and score against your resume
@@ -43,6 +43,8 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from fastmcp import FastMCP
+
+from legacy_rewrite_guard import native_resume_team_required_response
 
 mcp = FastMCP(
     "AI Resume Tuner",
@@ -285,40 +287,21 @@ def score_with_llm(resume_text: str, jd_text: str, domain_hint: str = "") -> dic
 
 @mcp.tool()
 def rewrite_resume(resume_text: str, jd_text: str, domain_hint: str = "") -> dict:
-    """Rewrite a resume to better match a job description using Claude AI.
+    """Reject legacy direct rewriting and point callers to the native team.
 
-    Requires ANTHROPIC_API_KEY in environment. Tailors the resume while
-    preserving authenticity — never changes job titles, company names,
-    dates, education, publications, or certifications. Only modifies:
-    professional summary, core competencies, and bullet point phrasing.
+    The arguments are retained for backward-compatible tool discovery only.
+    This guard performs no scoring, cloud request, model call, or file write.
 
     Args:
-        resume_text: Full text of the resume to optimize.
-        jd_text: Full text of the target job description.
-        domain_hint: Optional domain (technology, finance, consulting,
-            clinical_research, healthcare, pharma_biotech).
+        resume_text: Ignored legacy argument.
+        jd_text: Ignored legacy argument.
+        domain_hint: Ignored legacy argument.
 
     Returns:
-        rewritten_resume (full text), changes_made (list of modifications),
-        and explanation (summary of optimization strategy).
+        Stable ``NATIVE_RESUME_TEAM_REQUIRED`` rejection with no draft.
     """
-    try:
-        from llm_scorer import rewrite_resume as _rewrite, ANTHROPIC_AVAILABLE
-        if not ANTHROPIC_AVAILABLE:
-            return {
-                "error": "anthropic package not installed. Run: pip install anthropic",
-                "rewritten_resume": None,
-                "changes_made": [],
-            }
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            return {
-                "error": "ANTHROPIC_API_KEY not set. Add it to your .env file.",
-                "rewritten_resume": None,
-                "changes_made": [],
-            }
-        return _rewrite(resume_text, jd_text, domain_hint=domain_hint or None)
-    except Exception as e:
-        return {"error": str(e), "rewritten_resume": None, "changes_made": []}
+    del resume_text, jd_text, domain_hint
+    return native_resume_team_required_response()
 
 
 @mcp.tool()

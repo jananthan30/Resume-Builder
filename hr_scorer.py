@@ -1891,20 +1891,32 @@ def score_impact_density(bullets: List[str]) -> Tuple[float, Dict[str, Any]]:
     return round(score, 1), stats
 
 
-AI_CLICHE_VERBS = {
-    # past tense (most common in resume bullets)
-    'spearheaded', 'leveraged', 'utilized', 'facilitated', 'ensured',
-    'demonstrated', 'collaborated', 'streamlined', 'championed', 'fostered',
-    'harnessed', 'navigated', 'liaised', 'interfaced',
-    # present/base forms
-    'spearhead', 'leverage', 'utilize', 'facilitate', 'ensure',
-    'demonstrate', 'collaborate', 'streamline', 'champion', 'foster',
-    'harness', 'navigate', 'liaise', 'interface',
-    # -ing forms
-    'spearheading', 'leveraging', 'utilizing', 'facilitating', 'ensuring',
-    'demonstrating', 'collaborating', 'streamlining', 'championing', 'fostering',
-    'harnessing', 'navigating', 'liaising', 'interfacing',
-}
+def _load_ai_cliche_verbs() -> set:
+    """Load cliché openers from data/ai_tells.json; fall back to built-in set."""
+    data = load_json_data("ai_tells.json", {})
+    openers = data.get("cliche_openers") if isinstance(data, dict) else None
+    if openers:
+        return {str(v).lower() for v in openers}
+    return {
+        # past tense (most common in resume bullets)
+        'spearheaded', 'leveraged', 'utilized', 'facilitated', 'ensured',
+        'demonstrated', 'collaborated', 'streamlined', 'championed', 'fostered',
+        'harnessed', 'navigated', 'liaised', 'interfaced',
+        'orchestrated', 'pioneered', 'revolutionized', 'architected',
+        # present/base forms
+        'spearhead', 'leverage', 'utilize', 'facilitate', 'ensure',
+        'demonstrate', 'collaborate', 'streamline', 'champion', 'foster',
+        'harness', 'navigate', 'liaise', 'interface',
+        'orchestrate', 'pioneer', 'revolutionize', 'architect',
+        # -ing forms
+        'spearheading', 'leveraging', 'utilizing', 'facilitating', 'ensuring',
+        'demonstrating', 'collaborating', 'streamlining', 'championing', 'fostering',
+        'harnessing', 'navigating', 'liaising', 'interfacing',
+        'orchestrating', 'pioneering', 'revolutionizing', 'architecting',
+    }
+
+
+AI_CLICHE_VERBS = _load_ai_cliche_verbs()
 
 
 def score_burstiness(bullets: List[str]) -> Tuple[float, Dict[str, Any]]:
