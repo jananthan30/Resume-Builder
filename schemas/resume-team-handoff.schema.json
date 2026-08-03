@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "resume-team-handoff/v1",
+  "title": "Resume Team role handoff",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "case_id",
+    "role",
+    "agent_id",
+    "attempt",
+    "parent_artifact_digest",
+    "artifact_digest",
+    "status",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {"const": "resume-team-handoff/v1"},
+    "run_id": {"type": "string", "minLength": 1},
+    "case_id": {"type": "string", "minLength": 1},
+    "role": {"enum": ["researcher", "writer", "auditor", "editor"]},
+    "agent_id": {"type": "string", "minLength": 1},
+    "attempt": {"type": "integer", "minimum": 0, "maximum": 2},
+    "parent_artifact_digest": {"$ref": "#/$defs/sha256"},
+    "artifact_digest": {"$ref": "#/$defs/sha256"},
+    "status": {"const": "complete"},
+    "payload": {"type": "object"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"role": {"const": "researcher"}}, "required": ["role"]},
+      "then": {
+        "properties": {
+          "attempt": {"const": 0},
+          "payload": {"$ref": "#/$defs/researcherPayload"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"role": {"const": "writer"}}, "required": ["role"]},
+      "then": {
+        "properties": {
+          "attempt": {"const": 0},
+          "payload": {"$ref": "#/$defs/writerPayload"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"role": {"const": "auditor"}}, "required": ["role"]},
+      "then": {
+        "properties": {
+          "attempt": {"type": "integer", "minimum": 0, "maximum": 2},
+          "payload": {"$ref": "#/$defs/auditorPayload"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"role": {"const": "editor"}}, "required": ["role"]},
+      "then": {
+        "properties": {
+          "attempt": {"type": "integer", "minimum": 1, "maximum": 2},
+          "payload": {"$ref": "#/$defs/editorPayload"}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "nonBlankString": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "requirementString": {
+      "type": "string",
+      "pattern": "[A-Za-z0-9]"
+    },
+    "claimEvidence": {
+      "type": "object",
+      "description": "Coordinator-normalized proof for one changed line. The evidence span must cover one complete non-separator source line, preventing a model from slicing away surrounding negation or qualification. That full source line and the draft line must have the same exact NFC-normalized, case-preserving token stream, including every visible symbol and one-letter token, with only the six closed first-action-verb groups compared case-insensitively. Bounds, signs, currencies, approximations, ranges, ratios, conjunctions, skills, acronyms, proper nouns, negations, qualifiers, subjects, objects, metrics, and second metrics cannot be dropped, recased, or swapped. Professional Experience evidence must remain inside the exact same canonical role header and dates, and moved or duplicated claims, metrics, master lines, or novel lines are invalid.",
+      "additionalProperties": false,
+      "required": [
+        "claim_digest",
+        "source_span_digest",
+        "source_start",
+        "source_end"
+      ],
+      "properties": {
+        "claim_digest": {"$ref": "#/$defs/sha256"},
+        "source_span_digest": {"$ref": "#/$defs/sha256"},
+        "source_start": {"type": "integer", "minimum": 0},
+        "source_end": {"type": "integer", "minimum": 1}
+      }
+    },
+    "researcherPayload": {
+      "description": "The hard_requirements sequence followed by soft_requirements must correspond one-for-one and in order to exact, unique, complete non-separator JD lines represented by jd_evidence_spans. Substrings are forbidden so surrounding negation and qualification cannot be trimmed; semantic enforcement is coordinator-owned.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rubric", "jd_evidence_spans"],
+      "properties": {
+        "rubric": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hard_requirements", "soft_requirements"],
+          "anyOf": [
+            {"properties": {"hard_requirements": {"minItems": 1}}},
+            {"properties": {"soft_requirements": {"minItems": 1}}}
+          ],
+          "properties": {
+            "hard_requirements": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/requirementString"}
+            },
+            "soft_requirements": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/requirementString"}
+            }
+          }
+        },
+        "jd_evidence_spans": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["start", "end", "digest"],
+            "properties": {
+              "start": {"type": "integer", "minimum": 0},
+              "end": {"type": "integer", "minimum": 1},
+              "digest": {"$ref": "#/$defs/sha256"}
+            }
+          }
+        }
+      }
+    },
+    "writerPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["draft", "claim_evidence"],
+      "properties": {
+        "draft": {"$ref": "#/$defs/nonBlankString"},
+        "claim_evidence": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/claimEvidence"}
+        }
+      }
+    },
+    "auditFinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "code", "evidence_digest"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"},
+        "code": {"$ref": "#/$defs/nonEmptyString"},
+        "evidence_digest": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "auditorPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verdict", "findings", "draft_digest"],
+      "properties": {
+        "verdict": {"enum": ["PASS", "FAIL"]},
+        "findings": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/auditFinding"}
+        },
+        "draft_digest": {"$ref": "#/$defs/sha256"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"verdict": {"const": "PASS"}}, "required": ["verdict"]},
+          "then": {"properties": {"findings": {"maxItems": 0}}}
+        },
+        {
+          "if": {"properties": {"verdict": {"const": "FAIL"}}, "required": ["verdict"]},
+          "then": {"properties": {"findings": {"minItems": 1}}}
+        }
+      ]
+    },
+    "editorPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["draft", "addressed_finding_ids", "claim_evidence"],
+      "properties": {
+        "draft": {"$ref": "#/$defs/nonBlankString"},
+        "addressed_finding_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonEmptyString"}
+        },
+        "claim_evidence": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/claimEvidence"}
+        }
+      }
+    }
+  }
+}

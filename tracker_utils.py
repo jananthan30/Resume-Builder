@@ -6,6 +6,7 @@ It automatically creates/updates the tracker when new applications are generated
 """
 
 import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -153,7 +154,6 @@ def add_application(
     if not EXCEL_AVAILABLE:
         print("Excel tracking not available. Install pandas and openpyxl.")
         return False
-
     # Default to today's date
     if application_date is None:
         application_date = datetime.now().strftime('%Y-%m-%d')
@@ -183,11 +183,19 @@ def add_application(
         'Interview Stages Reached': interview_stages_reached if interview_stages_reached is not None else '',
     }
 
+    temporary_path = None
     try:
+        destination = Path(TRACKER_PATH)
+        if destination.is_symlink():
+            raise ValueError("tracker path must not be a symlink")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        existing_mode = (
+            destination.stat().st_mode & 0o777 if destination.exists() else 0o600
+        )
         # Check if tracker exists
-        if TRACKER_PATH.exists():
+        if destination.exists():
             # Load existing tracker
-            df = pd.read_excel(TRACKER_PATH, sheet_name='Applications')
+            df = pd.read_excel(destination, sheet_name='Applications')
             # Migrate: ensure new strategic columns exist
             df = _ensure_strategic_columns(df)
 
@@ -199,32 +207,131 @@ def add_application(
                 for key, value in new_row.items():
                     if value != '' and value is not None:
                         df.at[idx, key] = value
-                print(f"Updated existing application: {company} - {job_title}")
+                action_message = f"Updated existing application: {company} - {job_title}"
             else:
                 # Add new row
                 df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-                print(f"Added new application: {company} - {job_title}")
+                action_message = f"Added new application: {company} - {job_title}"
         else:
             # Create new tracker
             df = pd.DataFrame([new_row], columns=TRACKER_COLUMNS)
-            print(f"Created new tracker with application: {company} - {job_title}")
+            action_message = f"Created new tracker with application: {company} - {job_title}"
 
         # Sort by date (most recent first)
         df['Application Date'] = pd.to_datetime(df['Application Date'], errors='coerce')
         df = df.sort_values('Application Date', ascending=False)
         df['Application Date'] = df['Application Date'].dt.strftime('%Y-%m-%d')
 
-        # Save to Excel
-        with pd.ExcelWriter(TRACKER_PATH, engine='openpyxl') as writer:
+        # Build and validate a sibling workbook before the single atomic
+        # replacement.  Any formatter/serializer/verification exception leaves
+        # a pre-existing tracker byte-for-byte untouched.
+        handle = tempfile.NamedTemporaryFile(
+            prefix=f'.{destination.name}.',
+            suffix='.tmp.xlsx',
+            dir=destination.parent,
+            delete=False,
+        )
+        temporary_path = Path(handle.name)
+        handle.close()
+        with pd.ExcelWriter(temporary_path, engine='openpyxl') as writer:
             df.to_excel(writer, sheet_name='Applications', index=False)
             format_excel_worksheet(writer.sheets['Applications'], len(df))
+        workbook = load_workbook(temporary_path, read_only=True)
+        try:
+            if 'Applications' not in workbook.sheetnames:
+                raise ValueError("tracker workbook verification failed")
+        finally:
+            workbook.close()
+        os.chmod(temporary_path, existing_mode)
+        descriptor = os.open(temporary_path, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary_path, destination)
+        temporary_path = None
 
-        print(f"Tracker saved: {TRACKER_PATH}")
+        print(action_message)
+        print(f"Tracker saved: {destination}")
         return True
 
     except Exception as e:
         print(f"Error updating tracker: {e}")
         return False
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+class TrackerUpdateError(RuntimeError):
+    """A guarded tracker mutation did not complete successfully."""
+
+
+def add_application_authorized(
+    company: str,
+    job_title: str,
+    *,
+    authorized_resume_path: str,
+    receipt_path: str,
+    expected_receipt_digest: str,
+    config_path: str = "config.json",
+    resume_file: str = "",
+    cover_letter_file: str = "",
+    jd_file: str = "job_description.txt",
+    ats_score: float = None,
+    hr_score: float = None,
+    application_date: str = None,
+    status: str = "Applied",
+    notes: str = "",
+    target_tier: str = "",
+    fit_label: str = "",
+    hard_reqs_missed: int = None,
+    referral_source: str = "",
+    rejection_reason: str = "",
+    interview_stages_reached: int = None,
+) -> bool:
+    """Revalidate a native-team receipt immediately before tracker mutation.
+
+    A literal ``True`` from the legacy mutation is the only success state.
+    False returns and exceptions propagate as ``TrackerUpdateError`` so callers
+    cannot report a tracker update that did not happen.
+    """
+
+    from final_receipt_verifier import verify_final_receipt
+
+    verify_final_receipt(
+        resume_path=authorized_resume_path,
+        receipt_path=receipt_path,
+        expected_receipt_digest=expected_receipt_digest,
+        config_path=config_path,
+    )
+    try:
+        updated = add_application(
+            company=company,
+            job_title=job_title,
+            resume_file=resume_file,
+            cover_letter_file=cover_letter_file,
+            jd_file=jd_file,
+            ats_score=ats_score,
+            hr_score=hr_score,
+            application_date=application_date,
+            status=status,
+            notes=notes,
+            target_tier=target_tier,
+            fit_label=fit_label,
+            hard_reqs_missed=hard_reqs_missed,
+            referral_source=referral_source,
+            rejection_reason=rejection_reason,
+            interview_stages_reached=interview_stages_reached,
+        )
+    except Exception as exc:
+        raise TrackerUpdateError('TRACKER_UPDATE_EXCEPTION') from exc
+    if updated is not True:
+        raise TrackerUpdateError('TRACKER_UPDATE_FAILED')
+    return True
 
 
 def mark_response(

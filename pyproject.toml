@@ -18,6 +18,7 @@ Repository = "https://github.com/jananthan30/resume-scorer-web"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]

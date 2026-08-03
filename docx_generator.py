@@ -31,6 +31,7 @@ Harvard Style Design Rules (Harvard Office of Career Services):
 
 import os
 import re
+import tempfile
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor, Twips
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
@@ -130,7 +131,7 @@ def _set_line_spacing(p, multiple=None):
 def add_horizontal_line(doc, thick=False):
     """Add a proper hairline paragraph-border rule (replaces underscore text)."""
     p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(4)
+    p.paragraph_format.space_before = Pt(2)
     p.paragraph_format.space_after = Pt(0)
     pPr = p._p.get_or_add_pPr()
     pBdr = OxmlElement('w:pBdr')
@@ -367,7 +368,12 @@ def create_ats_resume(
     projects=None,  # optional list of dicts with title, dates, bullets
 ):
     """
-    Create an ATS-optimized resume DOCX.
+    Format an ATS-optimized resume DOCX.
+
+    This is a low-level formatting primitive, not an authorized Resume Builder
+    workflow entrypoint. Installed workflows must call
+    ``create_resume_from_md_authorized`` so candidate-fit and final-receipt
+    verification happen before this formatter is reached.
 
     Args:
         output_path: Path to save the DOCX file
@@ -435,19 +441,24 @@ def create_ats_resume(
     # Thicker rule closes the header block
     add_horizontal_line(doc, thick=True)
 
-    # ===== PROFESSIONAL SUMMARY =====
-    add_section_header(doc, 'PROFESSIONAL SUMMARY')
+    # ===== PROFESSIONAL SUMMARY (Optional) =====
+    # Keep the entire section, including its trailing separator, conditional.
+    # The thick rule above already separates the header from the first section,
+    # so emitting another rule for a blank summary would create a double divider.
+    if isinstance(summary, str) and summary.strip():
+        add_section_header(doc, 'PROFESSIONAL SUMMARY')
 
-    summary_para = doc.add_paragraph()
-    summary_para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-    summary_para.paragraph_format.space_before = Pt(2)
-    summary_para.paragraph_format.space_after = Pt(6)
-    _set_line_spacing(summary_para)
-    summary_run = summary_para.add_run(summary)
-    set_font(summary_run, size=FONT_SIZE_BODY)
+        summary_para = doc.add_paragraph()
+        summary_para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        summary_para.paragraph_format.space_before = Pt(2)
+        summary_para.paragraph_format.space_after = Pt(6)
+        _set_line_spacing(summary_para)
+        summary_run = summary_para.add_run(summary)
+        set_font(summary_run, size=FONT_SIZE_BODY)
+
+        add_horizontal_line(doc)
 
     # ===== CORE COMPETENCIES =====
-    add_horizontal_line(doc)
     add_section_header(doc, 'CORE COMPETENCIES')
 
     # Display 3 competencies per row separated by pipe — compact and ATS-safe
@@ -470,15 +481,20 @@ def create_ats_resume(
     add_section_header(doc, 'PROFESSIONAL EXPERIENCE')
 
     for job in experience:
+        bullets = job.get('bullets') or []
+        has_location = bool(job.get('location'))
+
         # Line 1: JOB TITLE (bold, ALL-CAPS, left) .......... Dates (right-aligned)
         title_para = doc.add_paragraph()
         title_para.paragraph_format.space_before = Pt(10)
         title_para.paragraph_format.space_after = Pt(1)
+        # Chain the header block so Word keeps it with the first bullet.
+        title_para.paragraph_format.keep_with_next = True
         if job.get('dates'):
             title_para.paragraph_format.tab_stops.add_tab_stop(
-                Inches(6.3), WD_TAB_ALIGNMENT.RIGHT
+                Inches(7.1), WD_TAB_ALIGNMENT.RIGHT
             )
-        title_run = title_para.add_run(job['title'].upper())
+        title_run = title_para.add_run(job['title'])
         set_font(title_run, size=FONT_SIZE_BODY, bold=True)
         if job.get('dates'):
             title_para.add_run('\t')
@@ -490,18 +506,23 @@ def create_ats_resume(
         company_para = doc.add_paragraph()
         company_para.paragraph_format.space_before = Pt(0)
         company_para.paragraph_format.space_after = Pt(3)
-        company_name = smart_title_case(job['company'])
+        company_para.paragraph_format.keep_with_next = has_location or bool(bullets)
+        company_name = job['company']
         company_run = company_para.add_run(company_name)
         set_font(company_run, size=FONT_SIZE_BODY, bold=True)
         company_run.font.color.rgb = COLOR_DARK_GRAY
-        if job.get('location'):
-            loc_text = smart_title_case(job['location']) if job['location'].isupper() else job['location']
-            loc_run = company_para.add_run(f", {loc_text}")
+        if has_location:
+            loc_text = job['location']
+            location_para = doc.add_paragraph()
+            location_para.paragraph_format.space_before = Pt(0)
+            location_para.paragraph_format.space_after = Pt(3)
+            location_para.paragraph_format.keep_with_next = bool(bullets)
+            loc_run = location_para.add_run(loc_text)
             set_font(loc_run, size=FONT_SIZE_BODY)
             loc_run.font.color.rgb = COLOR_DARK_GRAY
 
         # Bullet points with metrics bolded
-        for bullet in job.get('bullets', []):
+        for bullet in bullets:
             clean_text, bold_parts = extract_metrics(bullet)
             add_bullet_point(doc, clean_text, bold_parts if bold_parts else None)
 
@@ -516,7 +537,7 @@ def create_ats_resume(
         edu_para.paragraph_format.space_after = Pt(1)
         if edu.get('dates'):
             edu_para.paragraph_format.tab_stops.add_tab_stop(
-                Inches(6.3), WD_TAB_ALIGNMENT.RIGHT
+                Inches(7.1), WD_TAB_ALIGNMENT.RIGHT
             )
         degree_run = edu_para.add_run(edu['degree'])
         set_font(degree_run, size=FONT_SIZE_BODY, bold=True)
@@ -542,9 +563,8 @@ def create_ats_resume(
         add_horizontal_line(doc)
         add_section_header(doc, 'CERTIFICATIONS & LICENSURE')
 
-        # Render all certifications as a single comma-separated line
-        cert_line = ', '.join(certifications)
-        add_bullet_point(doc, cert_line)
+        for certification in certifications:
+            add_bullet_point(doc, certification)
 
     # ===== PUBLICATIONS (Optional) =====
     if publications:
@@ -842,7 +862,11 @@ def create_harvard_resume(
     core_competencies=None  # list of keywords - appears after summary if provided
 ):
     """
-    Create a Harvard OCS-style resume DOCX.
+    Format a Harvard OCS-style resume DOCX.
+
+    This is a low-level formatting primitive, not an authorized Resume Builder
+    workflow entrypoint. Installed workflows must use the native Resume Team
+    and its receipt-verified DOCX finalization path.
 
     Harvard Format Key Features:
     - Times New Roman font throughout
@@ -1225,83 +1249,6 @@ def create_harvard_cover_letter(
     return output_path
 
 
-# ===== EXAMPLE USAGE =====
-if __name__ == '__main__':
-    # Example data structure for testing
-    example_resume = {
-        'name': 'JANE DOE, M.D.',
-        'contact_info': {
-            'city': 'New York',
-            'state': 'NY',
-            'zip': '10001',
-            'phone': '555-123-4567',
-            'email': 'jane.doe@example.com',
-            'linkedin': 'linkedin.com/in/janedoe'
-        },
-        'summary': 'Results-oriented Physician and Clinical Research Professional with over 10 years of experience in Clinical Development and Drug Safety. Proven track record in Signal Detection, Risk Management, and Cross-functional Team Leadership. Committed to driving patient safety and regulatory compliance in global pharmaceutical development.',
-        'core_competencies': [
-            'Clinical Research',
-            'Signal Detection & Analysis',
-            'Risk Management & Benefit-Risk Assessment',
-            'Safety Data Review',
-            'FDA/ICH-GCP Compliance',
-            'Cross-functional Team Leadership',
-            'Medical Monitoring',
-            'Regulatory Reporting',
-            'Health Authority Interactions',
-            'Real World Evidence (RWE)'
-        ],
-        'experience': [
-            {
-                'title': 'Graduate Researcher',
-                'company': 'University Medical Center',
-                'location': 'New York, NY',
-                'dates': 'June 2024 – Present',
-                'bullets': [
-                    'Designed and deployed a deep learning model using Real World Data (11,300+ records) to predict clinical outcomes with 91% sensitivity.',
-                    'Engineered utility-driven alert threshold strategy to optimize sensitivity-specificity trade-off for safety signal detection.',
-                    'Authored and submitted IRB protocol for human subjects research, defining data management plans and safety escalation protocols.'
-                ]
-            },
-            {
-                'title': 'Clinical Operations Lead',
-                'company': 'Regional Medical Center',
-                'location': 'Newark, NJ',
-                'dates': 'July 2023 – May 2024',
-                'bullets': [
-                    'Directed clinical site operations across 8 centers, ensuring 100% adherence to FDA/GCP safety protocols.',
-                    'Led aggregate safety data review and assessed AE/SAEs in partnership with Principal Investigators.',
-                    'Standardized scientific communication workflows to accelerate data cleaning and interim safety analysis.'
-                ]
-            }
-        ],
-        'education': [
-            {
-                'degree': 'Master of Public Health, Health Informatics',
-                'school': 'University Medical School',
-                'location': 'New York, NY',
-                'dates': '2024 – 2026'
-            },
-            {
-                'degree': 'Bachelor of Medicine, Bachelor of Surgery (M.B.B.S.)',
-                'school': 'School of Medicine',
-                'location': 'International',
-                'dates': '2007 – 2014'
-            }
-        ],
-        'certifications': [
-            'ACLS & BLS Certified',
-            'CITI Human Subjects Research (HSR)',
-            'Clinical Trials Operations Certification',
-            'Board Certified'
-        ],
-        'professional_memberships': [
-            'American Medical Association',
-            'American Public Health Association'
-        ]
-    }
-
-
 # =============================================================================
 # MARKDOWN-TO-DOCX PARSERS
 # =============================================================================
@@ -1358,10 +1305,123 @@ _KNOWN_SECTION_HEADERS = [
     'SKILLS', 'LANGUAGES', 'VOLUNTEER',
 ]
 
+_STANDALONE_SECTION_HEADERS = frozenset(
+    _KNOWN_SECTION_HEADERS
+    + [
+        'CERTIFICATIONS & LICENSURE',
+        'CERTIFICATIONS & TRAINING',
+        'AWARDS & HONORS',
+        'SKILLS & LANGUAGES',
+    ]
+)
+
 
 def _is_known_section_header(line: str) -> bool:
     upper = line.strip().upper()
     return any(h in upper for h in _KNOWN_SECTION_HEADERS)
+
+
+def _is_standalone_section_header(line: str) -> bool:
+    """Recognize a complete section heading without matching prose or job titles."""
+
+    normalized = line.strip()
+    normalized = re.sub(r'^#{1,6}\s*', '', normalized)
+    normalized = re.sub(r'\s*#{1,6}$', '', normalized)
+    normalized = normalized.rstrip(':').strip().upper()
+    return normalized in _STANDALONE_SECTION_HEADERS
+
+
+_MARKDOWN_BULLET_RE = re.compile(r'^[\u2022*+\-]\s+')
+_MARKDOWN_LIST_ITEM_RE = re.compile(
+    r'^(?:[\u2022*+\-]\s+|\d+[.)]\s+)(?P<body>\S(?:.*\S)?)\s*$'
+)
+
+
+def _is_markdown_bullet(line: str) -> bool:
+    """Use the same standalone bullet grammar as the authorization audits."""
+
+    return bool(_MARKDOWN_BULLET_RE.match(line.strip()))
+
+
+def _strip_markdown_bullet(line: str) -> str:
+    return _MARKDOWN_BULLET_RE.sub('', line.strip(), count=1)
+
+
+def _assert_docx_list_item_parity(md_text: str, docx_path: str) -> None:
+    """Fail closed if any authorized Markdown list item vanished in rendering."""
+
+    required = []
+    current_section = ''
+    for raw in md_text.splitlines():
+        stripped = raw.strip()
+        if _is_standalone_section_header(stripped):
+            current_section = re.sub(r'^#{1,6}\s*', '', stripped)
+            current_section = re.sub(r'\s*#{1,6}$', '', current_section)
+            current_section = current_section.rstrip(':').strip().upper()
+            continue
+
+        # A native competency row can contain more items than the DOCX row
+        # width. The renderer is allowed to regroup those items, so bind each
+        # competency value independently instead of requiring the original
+        # pipe-delimited row to remain one paragraph.
+        if '\u2022' in stripped:
+            bullet_bodies = [
+                ' '.join(part.split())
+                for part in stripped.split('\u2022')
+                if part.strip()
+            ]
+            for body in bullet_bodies:
+                if current_section in {'CORE COMPETENCIES', 'COMPETENCIES'}:
+                    required.extend(
+                        item.strip() for item in body.split('|') if item.strip()
+                    )
+                else:
+                    required.append(body)
+            continue
+        matched = _MARKDOWN_LIST_ITEM_RE.match(stripped)
+        if matched:
+            body = ' '.join(matched.group('body').split())
+            if current_section in {'CORE COMPETENCIES', 'COMPETENCIES'}:
+                required.extend(
+                    item.strip() for item in body.split('|') if item.strip()
+                )
+            else:
+                required.append(body)
+    if not required:
+        return
+
+    rendered = [
+        ' '.join(paragraph.text.split())
+        for paragraph in Document(docx_path).paragraphs
+        if paragraph.text.strip()
+    ]
+    remaining = list(rendered)
+    missing = []
+    for item in required:
+        matched_pair = next(
+            (
+                (index, matched)
+                for index, paragraph in enumerate(remaining)
+                if (
+                    matched := re.search(
+                        r'(?<!\w)' + re.escape(item) + r'(?!\w)', paragraph
+                    )
+                )
+            ),
+            None,
+        )
+        if matched_pair is None:
+            missing.append(item)
+        else:
+            matched_index, matched = matched_pair
+            paragraph = remaining[matched_index]
+            remaining[matched_index] = (
+                paragraph[:matched.start()]
+                + (' ' * (matched.end() - matched.start()))
+                + paragraph[matched.end():]
+            )
+    if missing:
+        raise ValueError('DOCX_CONTENT_PARITY')
 
 
 def _preprocess_resume_md(md_text: str) -> str:
@@ -1391,6 +1451,28 @@ def _preprocess_resume_md(md_text: str) -> str:
     return '\n'.join(result)
 
 
+def _split_resume_sections(md_text: str) -> list[str]:
+    """Split both legacy rule-delimited and native heading-only resumes."""
+
+    sections = []
+    # Preserve the legacy separator grammar, then split each chunk on exact
+    # standalone headings. Native resume-team drafts intentionally omit the
+    # underscore rules that older generated Markdown used between sections.
+    for chunk in re.split(r'\n_{3,}\n', md_text):
+        current = []
+        for line in chunk.split('\n'):
+            if _is_standalone_section_header(line) and any(
+                existing.strip() for existing in current
+            ):
+                sections.append('\n'.join(current))
+                current = [line]
+            else:
+                current.append(line)
+        if any(existing.strip() for existing in current):
+            sections.append('\n'.join(current))
+    return sections
+
+
 def parse_resume_markdown(md_text: str) -> dict:
     """
     Parse ATS/Workday-format resume markdown into a dict matching create_ats_resume() params.
@@ -1415,8 +1497,8 @@ def parse_resume_markdown(md_text: str) -> dict:
     # Remove intra-section separators (between jobs) before splitting
     md_text = _preprocess_resume_md(md_text)
 
-    # Split into sections by separator lines (3+ underscores)
-    sections = re.split(r'\n_{3,}\n', md_text)
+    # Split legacy rule-delimited Markdown and native heading-only Markdown.
+    sections = _split_resume_sections(md_text)
 
     if not sections:
         return result
@@ -1431,7 +1513,9 @@ def parse_resume_markdown(md_text: str) -> dict:
         parts = [p.strip() for p in contact_line.split('|')]
         ci = {}
         for part in parts:
-            if '@' in part:
+            if 'linkedin.com' in part.lower():
+                ci['linkedin'] = part.strip()
+            elif '@' in part:
                 ci['email'] = part.strip()
             elif re.search(r'\d{3}[-.\s]?\d{3}[-.\s]?\d{4}', part):
                 ci['phone'] = part.strip()
@@ -1470,10 +1554,19 @@ def parse_resume_markdown(md_text: str) -> dict:
                 line = line.strip()
                 if not line:
                     continue
-                # Split on bullet char or multi-space gaps
+                # Native drafts use one bullet row with pipe-delimited items.
+                # Parse those as individual competencies so the generator's
+                # existing three-per-row grouping reconstructs the same row.
                 if '\u2022' in line:
-                    parts = [p.strip() for p in line.split('\u2022') if p.strip()]
-                    comps.extend(parts)
+                    bullet_rows = [
+                        part.strip() for part in line.split('\u2022') if part.strip()
+                    ]
+                    for row in bullet_rows:
+                        comps.extend(
+                            part.strip() for part in row.split('|') if part.strip()
+                        )
+                elif _is_markdown_bullet(line):
+                    comps.append(_strip_markdown_bullet(line))
                 elif '- ' in line:
                     parts = [p.strip().lstrip('- ') for p in re.split(r'\s{2,}', line) if p.strip()]
                     comps.extend(parts)
@@ -1500,22 +1593,10 @@ def parse_resume_markdown(md_text: str) -> dict:
                     continue
 
                 pipe_parts = [p.strip() for p in stripped.split('|')]
-                is_bullet = stripped.startswith('\u2022') or stripped.startswith('-')
+                is_bullet = _is_markdown_bullet(stripped)
                 has_date = bool(_date_re.search(stripped))
 
-                if len(pipe_parts) >= 3 and not is_bullet:
-                    # TITLE | COMPANY | Location (single-line format)
-                    if current_job:
-                        jobs.append(current_job)
-                    current_job = {
-                        'title': pipe_parts[0],
-                        'company': pipe_parts[1],
-                        'location': pipe_parts[2],
-                        'dates': '',
-                        'bullets': [],
-                    }
-                    pending_title = None
-                elif len(pipe_parts) == 2 and not is_bullet and pending_title is not None:
+                if len(pipe_parts) == 2 and not is_bullet and pending_title is not None:
                     # COMPANY | Location following a standalone title line (two-line format)
                     if current_job:
                         jobs.append(current_job)
@@ -1527,6 +1608,18 @@ def parse_resume_markdown(md_text: str) -> dict:
                         'bullets': [],
                     }
                     pending_title = None
+                elif len(pipe_parts) >= 2 and not is_bullet and not has_date:
+                    # TITLE | COMPANY | Location (single-line format)
+                    if current_job:
+                        jobs.append(current_job)
+                    current_job = {
+                        'title': pipe_parts[0],
+                        'company': pipe_parts[1],
+                        'location': ' | '.join(pipe_parts[2:]),
+                        'dates': '',
+                        'bullets': [],
+                    }
+                    pending_title = None
                 elif not is_bullet and has_date:
                     # Date line
                     if current_job and not current_job['dates']:
@@ -1534,7 +1627,7 @@ def parse_resume_markdown(md_text: str) -> dict:
                     pending_title = None
                 elif is_bullet:
                     if current_job:
-                        bullet = re.sub(r'^[\u2022\-]\s*', '', stripped)
+                        bullet = _strip_markdown_bullet(stripped)
                         current_job['bullets'].append(bullet)
                     pending_title = None
                 elif len(pipe_parts) == 1 and not is_bullet and not has_date:
@@ -1557,7 +1650,7 @@ def parse_resume_markdown(md_text: str) -> dict:
             while i < len(edu_lines):
                 line = edu_lines[i]
                 # Degree line (doesn't start with bullet, not a date)
-                if not line.startswith('\u2022') and not line.startswith('-'):
+                if not _is_markdown_bullet(line):
                     edu_entry = {'degree': line, 'school': '', 'location': '', 'dates': ''}
                     if i + 1 < len(edu_lines):
                         next_line = edu_lines[i + 1]
@@ -1577,7 +1670,7 @@ def parse_resume_markdown(md_text: str) -> dict:
                         i += 1
 
                     # Check for GPA or additional info lines
-                    while i < len(edu_lines) and (edu_lines[i].startswith('\u2022') or edu_lines[i].startswith('-') or 'GPA' in edu_lines[i].upper()):
+                    while i < len(edu_lines) and (_is_markdown_bullet(edu_lines[i]) or 'GPA' in edu_lines[i].upper()):
                         i += 1
 
                     edu_list.append(edu_entry)
@@ -1589,8 +1682,8 @@ def parse_resume_markdown(md_text: str) -> dict:
             certs = []
             for line in body_lines:
                 stripped = line.strip()
-                if stripped and (stripped.startswith('\u2022') or stripped.startswith('-')):
-                    certs.append(re.sub(r'^[\u2022\-]\s*', '', stripped))
+                if stripped and _is_markdown_bullet(stripped):
+                    certs.append(_strip_markdown_bullet(stripped))
                 elif stripped and len(stripped) > 3:
                     certs.append(stripped)
             result['certifications'] = certs
@@ -1599,28 +1692,39 @@ def parse_resume_markdown(md_text: str) -> dict:
             pubs = {}
             current_category = None
             pub_footer = None
+            current_pub = None
             for line in body_lines:
                 stripped = line.strip()
                 if not stripped:
                     continue
                 # Detect "Full publication list:" or similar footer with URL
                 if stripped.lower().startswith('full publication') or stripped.lower().startswith('full list'):
+                    if current_pub:
+                        pubs.setdefault('_default', []).append(current_pub)
+                        current_pub = None
                     pub_footer = stripped
                     continue
-                if stripped.startswith('\u2022') or stripped.startswith('-'):
-                    pub = re.sub(r'^[\u2022\-]\s*', '', stripped)
+                if (_is_markdown_bullet(stripped) or
+                        re.match(r'^\d+[.)]\s+', stripped)):
+                    if current_pub:
+                        pubs.setdefault('_default', []).append(current_pub)
+                    pub = re.sub(r'^(?:[\u2022*+\-]\s+|\d+[.)]\s+)', '', stripped)
                     if current_category:
                         if current_category not in pubs:
                             pubs[current_category] = []
                         pubs[current_category].append(pub)
+                        current_pub = None
                     else:
-                        if '_default' not in pubs:
-                            pubs['_default'] = []
-                        pubs['_default'].append(pub)
+                        current_pub = pub
+                elif current_pub:
+                    # Wrapped continuation of the preceding publication.
+                    current_pub += ' ' + stripped
                 else:
                     # Non-bullet line = subcategory header
                     if not stripped.isupper():
                         current_category = stripped
+            if current_pub:
+                pubs.setdefault('_default', []).append(current_pub)
             # Extract footer before post-processing categories
             footer = pub_footer
             # Count real categories (not _default, not _footer)
@@ -1650,7 +1754,7 @@ def parse_resume_markdown(md_text: str) -> dict:
                 stripped = line.strip()
                 if not stripped:
                     continue
-                is_bullet = stripped.startswith('\u2022') or stripped.startswith('-')
+                is_bullet = _is_markdown_bullet(stripped)
                 if not is_bullet and '|' in stripped:
                     # Project title line: "Title | Dates"
                     if current_project:
@@ -1662,7 +1766,7 @@ def parse_resume_markdown(md_text: str) -> dict:
                         'bullets': [],
                     }
                 elif is_bullet and current_project:
-                    bullet = re.sub(r'^[\u2022\-]\s*', '', stripped)
+                    bullet = _strip_markdown_bullet(stripped)
                     current_project['bullets'].append(bullet)
                 elif not is_bullet and current_project:
                     # Continuation line
@@ -1675,8 +1779,8 @@ def parse_resume_markdown(md_text: str) -> dict:
             members = []
             for line in body_lines:
                 stripped = line.strip()
-                if stripped and (stripped.startswith('\u2022') or stripped.startswith('-')):
-                    members.append(re.sub(r'^[\u2022\-]\s*', '', stripped))
+                if stripped and _is_markdown_bullet(stripped):
+                    members.append(_strip_markdown_bullet(stripped))
                 elif stripped and len(stripped) > 3:
                     members.append(stripped)
             result['professional_memberships'] = members
@@ -1684,9 +1788,34 @@ def parse_resume_markdown(md_text: str) -> dict:
     return result
 
 
-def create_resume_from_md(md_path: str, output_path: str) -> str:
+def create_resume_from_md(
+    md_path: str, output_path: str, *, master_path: str | None = None,
+    config_path: str = 'config.json',
+    _authorized_draft_digest: str | None = None,
+) -> str:
     """
-    Read a resume markdown file and create an ATS-compliant DOCX.
+    Reject the retired direct Markdown-to-resume-DOCX entrypoint.
+
+    Resume DOCX creation must start at ``create_resume_from_md_authorized``.
+    Keeping this legacy signature gives older callers a stable migration error;
+    even a caller-supplied digest cannot stand in for final-receipt verification.
+
+    The rejection happens before either input or output is touched.
+    """
+    from legacy_rewrite_guard import NativeResumeTeamRequiredError
+
+    raise NativeResumeTeamRequiredError()
+
+
+def _create_resume_from_verified_md(
+    md_path: str,
+    output_path: str,
+    *,
+    master_path: str | None,
+    config_path: str,
+    authorized_draft_digest: str,
+) -> str:
+    """Render bytes already bound to a successfully verified final receipt.
 
     Args:
         md_path: Path to the resume .md file
@@ -1698,21 +1827,87 @@ def create_resume_from_md(md_path: str, output_path: str) -> str:
     with open(md_path, 'r', encoding='utf-8') as f:
         md_text = f.read()
 
-    data = parse_resume_markdown(md_text)
+    # Check the exact bytes read by the generator. This closes the
+    # verify-then-read gap after the authorized wrapper validates the receipt.
+    from final_receipt_verifier import canonical_digest
 
-    return create_ats_resume(
-        output_path=output_path,
-        name=data['name'],
-        contact_info=data['contact_info'],
-        summary=data['summary'],
-        core_competencies=data['core_competencies'],
-        experience=data['experience'],
-        education=data['education'],
-        certifications=data['certifications'],
-        professional_memberships=data.get('professional_memberships'),
-        publications=data.get('publications'),
-        publications_footer=data.get('publications_footer'),
-        projects=data.get('projects'),
+    if canonical_digest(md_text) != authorized_draft_digest:
+        raise ValueError('AUTHORIZED_DRAFT_CHANGED')
+
+    # Local import keeps the generator usable without an import cycle.
+    from resume_integrity_audit import (
+        audit_resume_files, format_audit_report, resolve_master_path,
+    )
+
+    resolved_master = str(master_path or resolve_master_path(config_path))
+    pre_report = audit_resume_files(
+        tailored_path=md_path, master_path=resolved_master, config_path=config_path
+    )
+    if not pre_report['passed']:
+        raise ValueError(format_audit_report(pre_report))
+
+    data = parse_resume_markdown(md_text)
+    destination = os.path.abspath(output_path)
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        prefix=f'.{os.path.basename(destination)}.', suffix='.tmp.docx',
+        dir=os.path.dirname(destination), delete=False,
+    )
+    temp_path = handle.name
+    handle.close()
+    try:
+        create_ats_resume(
+            output_path=temp_path,
+            name=data['name'],
+            contact_info=data['contact_info'],
+            summary=data['summary'],
+            core_competencies=data['core_competencies'],
+            experience=data['experience'],
+            education=data['education'],
+            certifications=data['certifications'],
+            professional_memberships=data.get('professional_memberships'),
+            publications=data.get('publications'),
+            publications_footer=data.get('publications_footer'),
+            projects=data.get('projects'),
+        )
+        _assert_docx_list_item_parity(md_text, temp_path)
+        post_report = audit_resume_files(
+            tailored_path=temp_path, master_path=resolved_master, config_path=config_path
+        )
+        if not post_report['passed']:
+            raise ValueError(format_audit_report(post_report))
+        os.replace(temp_path, destination)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+    return output_path
+
+
+def create_resume_from_md_authorized(
+    md_path: str,
+    output_path: str,
+    *,
+    receipt_path: str,
+    expected_receipt_digest: str,
+    master_path: str | None = None,
+    config_path: str = 'config.json',
+) -> str:
+    """Create a resume DOCX only from a currently authorized native-team draft."""
+
+    from final_receipt_verifier import verify_final_receipt
+
+    receipt = verify_final_receipt(
+        resume_path=md_path,
+        receipt_path=receipt_path,
+        expected_receipt_digest=expected_receipt_digest,
+        config_path=config_path,
+    )
+    return _create_resume_from_verified_md(
+        md_path,
+        output_path,
+        master_path=master_path,
+        config_path=config_path,
+        authorized_draft_digest=receipt['draft_digest'],
     )
 
 
@@ -1812,7 +2007,13 @@ def parse_cover_letter_markdown(md_text: str) -> dict:
     return result
 
 
-def create_cover_letter_from_md(md_path: str, output_path: str, job_title: str = '') -> str:
+def create_cover_letter_from_md(
+    md_path: str,
+    output_path: str,
+    job_title: str = '',
+    *,
+    company: str = '',
+) -> str:
     """
     Read a cover letter markdown file and create an ATS-compliant DOCX.
 
@@ -1824,37 +2025,116 @@ def create_cover_letter_from_md(md_path: str, output_path: str, job_title: str =
     Returns:
         Path to created DOCX file
     """
-    with open(md_path, 'r', encoding='utf-8') as f:
-        md_text = f.read()
+    # Read once, audit these exact bytes in memory, and render from that same
+    # immutable text. A concurrent source rewrite therefore cannot create an
+    # audit-then-read substitution.
+    with open(md_path, 'rb') as handle:
+        md_bytes = handle.read()
+    md_text = md_bytes.decode('utf-8')
+
+    from human_voice_audit import audit_text, format_audit_report
+
+    voice_report = audit_text(md_text, mode='cover_letter')
+    if not voice_report['passed']:
+        raise ValueError(format_audit_report(voice_report))
 
     data = parse_cover_letter_markdown(md_text)
+    if company:
+        data['recipient_info']['company'] = company
 
     # Use provided job_title if given, else fall back to parsed
     final_job_title = job_title if job_title else data.get('job_title', '')
+    destination = os.path.abspath(output_path)
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        prefix=f'.{os.path.basename(destination)}.',
+        suffix='.tmp.docx',
+        dir=os.path.dirname(destination),
+        delete=False,
+    )
+    temp_path = handle.name
+    handle.close()
+    try:
+        create_ats_cover_letter(
+            output_path=temp_path,
+            name=data['name'],
+            contact_info=data['contact_info'],
+            date=data['date'],
+            recipient_info=data['recipient_info'],
+            job_title=final_job_title,
+            paragraphs=data['paragraphs'],
+            closing=data.get('closing', 'Sincerely,'),
+        )
+        if not os.path.isfile(temp_path) or os.path.getsize(temp_path) <= 0:
+            raise ValueError('COVER_LETTER_DOCX_EMPTY')
+        rendered_document = Document(temp_path)
+        rendered_text = '\n'.join(
+            ' '.join(paragraph.text.split())
+            for paragraph in rendered_document.paragraphs
+            if paragraph.text.strip()
+        )
+        required_text = [
+            data['name'],
+            final_job_title,
+            *data['paragraphs'],
+            data.get('closing', 'Sincerely,'),
+        ]
+        if any(
+            ' '.join(value.split()) not in rendered_text
+            for value in required_text
+            if isinstance(value, str) and value.strip()
+        ):
+            raise ValueError('COVER_LETTER_CONTENT_PARITY')
+        with open(temp_path, 'rb') as generated:
+            os.fsync(generated.fileno())
+        os.replace(temp_path, destination)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+    return output_path
 
-    return create_ats_cover_letter(
-        output_path=output_path,
-        name=data['name'],
-        contact_info=data['contact_info'],
-        date=data['date'],
-        recipient_info=data['recipient_info'],
-        job_title=final_job_title,
-        paragraphs=data['paragraphs'],
-        closing=data.get('closing', 'Sincerely,'),
+
+def create_cover_letter_from_md_authorized(
+    md_path: str,
+    output_path: str,
+    *,
+    authorized_resume_path: str,
+    receipt_path: str,
+    expected_receipt_digest: str,
+    job_title: str = '',
+    company: str = '',
+    config_path: str = 'config.json',
+) -> str:
+    """Create a cover-letter DOCX only after revalidating its resume prerequisite."""
+
+    from final_receipt_verifier import verify_final_receipt
+
+    verify_final_receipt(
+        resume_path=authorized_resume_path,
+        receipt_path=receipt_path,
+        expected_receipt_digest=expected_receipt_digest,
+        config_path=config_path,
+    )
+    return create_cover_letter_from_md(
+        md_path,
+        output_path,
+        job_title=job_title,
+        company=company,
     )
 
 
 if __name__ == '__main__':
-    # Test resume generation
-    create_ats_resume(
-        'test_resume.docx',
-        example_resume['name'],
-        example_resume['contact_info'],
-        example_resume['summary'],
-        example_resume['core_competencies'],
-        example_resume['experience'],
-        example_resume['education'],
-        example_resume['certifications'],
-        example_resume['professional_memberships']
+    # This module used to create an unverified ``test_resume.docx`` when run as
+    # a script. Keep the invocation fail-closed and point callers at the only
+    # authorized resume-DOCX workflow.
+    import sys
+    from legacy_rewrite_guard import (
+        NATIVE_RESUME_TEAM_REQUIRED,
+        NATIVE_RESUME_TEAM_REQUIRED_MESSAGE,
     )
-    print("Test resume created: test_resume.docx")
+
+    print(
+        f'{NATIVE_RESUME_TEAM_REQUIRED}: {NATIVE_RESUME_TEAM_REQUIRED_MESSAGE}',
+        file=sys.stderr,
+    )
+    raise SystemExit(1)

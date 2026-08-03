@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Resume Builder CLI Tool
------------------------
-Automatically tailors your resume and generates cover letters based on job descriptions.
-Creates company-specific folders with DOCX outputs.
+Legacy Resume Builder CLI Guard
+-------------------------------
+Direct resume tailoring is disabled. Use the native Resume Team so candidate
+fit, provenance, audit, and publication authorization are enforced.
 
 Usage:
     python resume_builder.py
@@ -13,32 +13,38 @@ Or with Claude Code custom commands:
     /cover-letter
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import re
 import json
+import tempfile
 from pathlib import Path
 from datetime import datetime
+
+from legacy_rewrite_guard import (
+    NATIVE_RESUME_TEAM_REQUIRED,
+    NATIVE_RESUME_TEAM_REQUIRED_MESSAGE,
+    NativeResumeTeamRequiredError,
+)
 
 try:
     import anthropic
 except ImportError:
-    print("Error: anthropic package not installed. Run: pip install anthropic")
-    sys.exit(1)
+    anthropic = None
 
 try:
     import pdfplumber
 except ImportError:
-    print("Error: pdfplumber package not installed. Run: pip install pdfplumber")
-    sys.exit(1)
+    pdfplumber = None
 
 try:
     from docx import Document
     from docx.shared import Pt, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 except ImportError:
-    print("Error: python-docx package not installed. Run: pip install python-docx")
-    sys.exit(1)
+    Document = Pt = Inches = WD_ALIGN_PARAGRAPH = None
 
 
 # Configuration
@@ -203,47 +209,9 @@ def create_output_folder(company_name: str, config: dict) -> Path:
 
 
 def optimize_resume_with_claude(resume_text: str, job_description: str, client: anthropic.Anthropic) -> str:
-    """Use Claude to optimize resume based on job description."""
-
-    prompt = f"""Role: Expert Senior Recruiter and Hiring Manager with 20+ years of experience in ATS optimization.
-
-Task: Rewrite the user's resume to maximize ATS compatibility and match the Target Job Description (JD).
-
-Input Data:
-1. User Resume:
-{resume_text}
-
-2. Target Job Description:
-{job_description}
-
-Instructions:
-1. **Semantic Mapping**: Replace generic terms with JD-specific keywords.
-   - Map existing skills/experience to the exact terminology used in the JD
-   - Ensure keywords appear naturally in context, not just listed
-
-2. **Gap Analysis**: Identify the top 5 hard requirements in the JD. Ensure the Resume Summary explicitly addresses these skills with evidence.
-
-3. **Prioritization**: Reorder experience bullets to lead with the most relevant achievements for this specific role.
-
-4. **Quantification**: Add metrics where possible (%, $, #) to strengthen impact statements.
-
-5. **Format Requirements**:
-   - Keep total length to 1-2 pages maximum
-   - Use clear section headers: SUMMARY, EXPERIENCE, EDUCATION, SKILLS, CERTIFICATIONS
-   - Use bullet points for achievements
-   - Include relevant keywords in the Skills section
-
-6. **Output Format**: Provide the complete rewritten resume in clean, professional format.
-
-CRITICAL CONSTRAINT: Do not invent experience or credentials. Only reframe and highlight existing experience using the JD's terminology."""
-
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=4000,
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    return message.content[0].text
+    """Reject the retired standalone rewrite helper before using its client."""
+    del resume_text, job_description, client
+    raise NativeResumeTeamRequiredError()
 
 
 def generate_cover_letter_with_claude(resume_text: str, job_description: str, company_name: str, job_title: str, config: dict, client: anthropic.Anthropic) -> str:
@@ -295,8 +263,45 @@ Output the complete cover letter text only, ready to be formatted."""
     return message.content[0].text
 
 
-def save_as_docx(content: str, output_path: Path, doc_type: str = "resume"):
+def save_as_docx(
+    content: str, output_path: Path, doc_type: str = "resume", *,
+    master_path: str | Path | None = None, config_path: str = "config.json"
+):
     """Save content as a formatted DOCX file."""
+    destination = Path(output_path)
+    temp_docx = None
+    temp_md = None
+    if doc_type == "resume":
+        from resume_integrity_audit import (
+            audit_resume_files, format_audit_report, resolve_master_path,
+        )
+
+        resolved_master = Path(master_path) if master_path is not None else resolve_master_path(config_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        md_handle = tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", prefix=f".{destination.name}.",
+            suffix=".tmp.md", dir=destination.parent, delete=False,
+        )
+        temp_md = Path(md_handle.name)
+        try:
+            md_handle.write(content)
+        finally:
+            md_handle.close()
+        pre_report = audit_resume_files(
+            tailored_path=temp_md, master_path=resolved_master, config_path=config_path
+        )
+        if not pre_report["passed"]:
+            temp_md.unlink(missing_ok=True)
+            raise ValueError(format_audit_report(pre_report))
+        temp_md.unlink(missing_ok=True)
+        docx_handle = tempfile.NamedTemporaryFile(
+            prefix=f".{destination.name}.", suffix=".tmp.docx",
+            dir=destination.parent, delete=False,
+        )
+        temp_docx = Path(docx_handle.name)
+        docx_handle.close()
+        output_path = temp_docx
+
     doc = Document()
 
     # Set up document margins
@@ -348,8 +353,22 @@ def save_as_docx(content: str, output_path: Path, doc_type: str = "resume"):
             p = doc.add_paragraph(line)
             p.paragraph_format.space_after = Pt(6)
 
-    doc.save(output_path)
-    print(f"Saved: {output_path}")
+    try:
+        doc.save(output_path)
+        if doc_type == "resume":
+            post_report = audit_resume_files(
+                tailored_path=temp_docx, master_path=resolved_master, config_path=config_path
+            )
+            if not post_report["passed"]:
+                raise ValueError(format_audit_report(post_report))
+            os.replace(temp_docx, destination)
+            temp_docx = None
+        print(f"Saved: {destination}")
+    finally:
+        if temp_md is not None:
+            temp_md.unlink(missing_ok=True)
+        if temp_docx is not None:
+            temp_docx.unlink(missing_ok=True)
 
 
 def get_multiline_input(prompt_text: str) -> str:
@@ -372,120 +391,13 @@ def get_multiline_input(prompt_text: str) -> str:
 
 
 def main():
-    """Main CLI entry point."""
+    """Fail closed before configuration, model, directory, or file access."""
     print("\n" + "=" * 60)
-    print("       RESUME BUILDER - AI-Powered Job Application Tool")
+    print("       RESUME BUILDER - LEGACY DIRECT REWRITE DISABLED")
     print("=" * 60 + "\n")
-
-    # Load configuration
-    config = load_config()
-
-    # Check for API key
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        print("Error: ANTHROPIC_API_KEY environment variable not set.")
-        print("Set it with: export ANTHROPIC_API_KEY='your-key-here'")
-        sys.exit(1)
-
-    client = anthropic.Anthropic(api_key=api_key)
-
-    # Get master resume path
-    resume_path = Path(__file__).parent / config["master_resume_path"]
-    if not resume_path.exists():
-        print(f"Error: Master resume not found at {resume_path}")
-        print("Update config.json with the correct path.")
-        sys.exit(1)
-
-    print(f"Master Resume: {resume_path.name}")
-
-    # Extract resume text
-    print("Extracting resume content...")
-    resume_text = extract_text_from_file(str(resume_path))
-
-    if not resume_text.strip():
-        print(f"Error: Could not extract text from resume ({resume_path.suffix}).")
-        sys.exit(1)
-
-    print(f"Extracted {len(resume_text)} characters from resume.\n")
-
-    # Get job description
-    job_description = get_multiline_input("Paste the Job Description:")
-
-    if not job_description.strip():
-        print("Error: No job description provided.")
-        sys.exit(1)
-
-    # Extract company name and job title
-    print("\nAnalyzing job description...")
-    company_name = extract_company_name(job_description)
-    job_title = get_job_title(job_description)
-
-    # Confirm or get company name
-    if company_name:
-        confirm = input(f"Detected company: {company_name}. Correct? (y/n): ").strip().lower()
-        if confirm != 'y':
-            company_name = input("Enter company name: ").strip()
-    else:
-        company_name = input("Enter company name: ").strip()
-
-    # Confirm or get job title
-    if job_title != "Position":
-        confirm = input(f"Detected job title: {job_title}. Correct? (y/n): ").strip().lower()
-        if confirm != 'y':
-            job_title = input("Enter job title: ").strip()
-    else:
-        job_title = input("Enter job title: ").strip()
-
-    # Create output folder
-    output_dir = create_output_folder(company_name, config)
-    print(f"\nOutput folder: {output_dir}")
-
-    # Generate tailored resume
-    print("\nGenerating tailored resume...")
-    optimized_resume = optimize_resume_with_claude(resume_text, job_description, client)
-
-    # Generate cover letter
-    print("Generating cover letter...")
-    cover_letter = generate_cover_letter_with_claude(
-        resume_text, job_description, company_name, job_title, config, client
-    )
-
-    # Save job description for reference
-    jd_path = output_dir / "job_description.txt"
-    with open(jd_path, 'w', encoding='utf-8') as f:
-        f.write(f"Company: {company_name}\n")
-        f.write(f"Position: {job_title}\n")
-        f.write(f"Date: {datetime.now().strftime('%Y-%m-%d')}\n")
-        f.write("=" * 50 + "\n\n")
-        f.write(job_description)
-    print(f"Saved: {jd_path}")
-
-    # Save as DOCX
-    resume_filename = f"{config['user_name'].replace(' ', '_')}_Resume_{sanitize_folder_name(company_name)}.docx"
-    cover_letter_filename = f"{config['user_name'].replace(' ', '_')}_Cover_Letter_{sanitize_folder_name(company_name)}.docx"
-
-    save_as_docx(optimized_resume, output_dir / resume_filename, "resume")
-    save_as_docx(cover_letter, output_dir / cover_letter_filename, "cover_letter")
-
-    # Also save as markdown for easy viewing
-    with open(output_dir / "resume.md", 'w', encoding='utf-8') as f:
-        f.write(optimized_resume)
-
-    with open(output_dir / "cover_letter.md", 'w', encoding='utf-8') as f:
-        f.write(cover_letter)
-
-    print("\n" + "=" * 60)
-    print("                    COMPLETE!")
-    print("=" * 60)
-    print(f"\nAll files saved to: {output_dir}")
-    print("\nGenerated files:")
-    print(f"  - {resume_filename}")
-    print(f"  - {cover_letter_filename}")
-    print(f"  - job_description.txt")
-    print(f"  - resume.md")
-    print(f"  - cover_letter.md")
-    print("\nGood luck with your application!")
+    print(f"{NATIVE_RESUME_TEAM_REQUIRED}: {NATIVE_RESUME_TEAM_REQUIRED_MESSAGE}")
+    return 2
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

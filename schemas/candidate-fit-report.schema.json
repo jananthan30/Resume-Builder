@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "candidate-fit-report/v1",
+  "title": "Candidate Fit Preflight Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "policy_version",
+    "scorer_version",
+    "run_id",
+    "case_id",
+    "as_of_date",
+    "threshold",
+    "semantic_mode",
+    "resume_digest",
+    "job_description_digest",
+    "score",
+    "component_scores",
+    "recommendation",
+    "hard_knockouts",
+    "extraction_trustworthy",
+    "passed",
+    "codes"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "policy_version": {"const": "candidate-fit-policy-v2"},
+    "scorer_version": {"const": "deterministic-job-fit-v1"},
+    "run_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "case_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "as_of_date": {"type": "string", "format": "date"},
+    "threshold": {"const": 70.0},
+    "semantic_mode": {"const": "disabled"},
+    "resume_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "job_description_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "score": {"type": "number", "minimum": 0, "maximum": 100},
+    "component_scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "experience_match",
+        "skills_match",
+        "title_alignment",
+        "domain_match",
+        "education_match",
+        "certification_match",
+        "seniority_match"
+      ],
+      "properties": {
+        "experience_match": {"type": "number", "minimum": 0, "maximum": 100},
+        "skills_match": {"type": "number", "minimum": 0, "maximum": 100},
+        "title_alignment": {"type": "number", "minimum": 0, "maximum": 100},
+        "domain_match": {"type": "number", "minimum": 0, "maximum": 100},
+        "education_match": {"type": "number", "minimum": 0, "maximum": 100},
+        "certification_match": {"type": "number", "minimum": 0, "maximum": 100},
+        "seniority_match": {"type": "number", "minimum": 0, "maximum": 100}
+      }
+    },
+    "recommendation": {"enum": ["PROCEED", "REJECT"]},
+    "hard_knockouts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "category", "requirement", "candidate_has"],
+        "properties": {
+          "code": {"type": "string", "minLength": 1},
+          "category": {"type": "string", "minLength": 1},
+          "requirement": {"type": "string", "minLength": 1},
+          "candidate_has": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "extraction_trustworthy": {"type": "boolean"},
+    "passed": {"type": "boolean"},
+    "codes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "UNTRUSTWORTHY_EXTRACTION",
+          "HARD_KNOCKOUT",
+          "SCORE_BELOW_THRESHOLD"
+        ]
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"passed": {"const": true}}},
+      "then": {
+        "properties": {
+          "recommendation": {"const": "PROCEED"},
+          "extraction_trustworthy": {"const": true},
+          "score": {"minimum": 70.0},
+          "hard_knockouts": {"maxItems": 0},
+          "codes": {"maxItems": 0}
+        }
+      },
+      "else": {"properties": {"recommendation": {"const": "REJECT"}}}
+    }
+  ]
+}

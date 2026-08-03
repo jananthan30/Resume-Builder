@@ -6,8 +6,12 @@ config.json
 *MASTER*RESUME*
 *_RESUME_*
 *_Resume_*
+!native_resume_team.py
 yale_transcript.txt
 Job_Application_Tracker.xlsx
+*.xlsx.bak
+FAERS_GLP1_PV_Project_Skeleton.txt
+.frontier/
 tailored_resume.txt
 _iter*.json
 Best_Fit_Job_Positions*.docx
@@ -80,6 +84,7 @@ generate_kymera_docs.py
 # ========================
 .claude/memory/
 .playwright-mcp/
+.resume-team-state/
 
 # ========================
 # Gemini commands (mirror of Claude commands — not needed for public)
@@ -119,6 +124,20 @@ requirements-cloud.txt
 # Tests (private — not needed in public repo)
 # ========================
 tests/
+!tests/
+tests/*
+!tests/test_resume_integrity.py
+!tests/test_multi_agent_team.py
+!tests/test_provenance_guards.py
+!tests/test_native_resume_team.py
+!tests/test_finalization_guards.py
+!tests/test_human_voice_audit.py
+!tests/test_evidence_audit.py
+!tests/test_docx_generator_optional_summary.py
+!tests/fixtures/
+tests/fixtures/*
+!tests/fixtures/resume_integrity/
+!tests/fixtures/resume_integrity/**
 pytest.ini
 .pytest_cache/
 .coverage

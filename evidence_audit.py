@@ -38,6 +38,7 @@ _EXPOSURE_MARKERS = [
     r'\(learning\)',
 ]
 _EXPOSURE_RE = re.compile('|'.join(_EXPOSURE_MARKERS), re.IGNORECASE)
+_UNSAFE_LINE_SEPARATORS = ("\r", "\v", "\f", "\x85", "\u2028", "\u2029")
 
 
 def _extract_sections(md: str) -> dict[str, str]:
@@ -197,10 +198,9 @@ def _has_evidence(item: str, bullets: list[str], summary: str, extras: str = '')
     return False
 
 
-def audit_resume_md(resume_path: str) -> dict[str, Any]:
+def audit_text(md: str) -> dict[str, Any]:
     """
-    Check that every Core Competencies item is backed by evidence in Summary
-    or Professional Experience bullets.
+    Check resume Markdown already loaded in memory.
 
     Returns a dict:
         passed (bool)       — True iff every non-exposure-marked item has evidence
@@ -210,9 +210,6 @@ def audit_resume_md(resume_path: str) -> dict[str, Any]:
         exposure_marked (list) — items with (exposure)/(coursework)/etc.
         warnings (list[str])
     """
-    with open(resume_path, 'r', encoding='utf-8') as f:
-        md = f.read()
-
     sections = _extract_sections(md)
     core_comp = ''
     summary = ''
@@ -227,12 +224,36 @@ def audit_resume_md(resume_path: str) -> dict[str, Any]:
             if not experience:
                 experience = v
 
+    structural_errors: list[str] = []
+    unsafe = [f"U+{ord(value):04X}" for value in _UNSAFE_LINE_SEPARATORS if value in md]
+    if unsafe:
+        structural_errors.append(
+            "UNSAFE_LINE_SEPARATORS:" + ",".join(unsafe)
+        )
+    core_sections = [
+        value for key, value in sections.items() if 'CORE COMPETENC' in key
+    ]
+    experience_sections = [
+        value
+        for key, value in sections.items()
+        if 'EXPERIENCE' in key and 'EARLIER' not in key
+    ]
+
     items = _extract_core_comp_items(core_comp)
     bullets = _extract_bullets(experience)
     # Also scan bullets from any other ALL-CAPS section with EXPERIENCE in name
     for k, v in sections.items():
         if 'EXPERIENCE' in k and v is not experience:
             bullets.extend(_extract_bullets(v))
+
+    if not core_sections:
+        structural_errors.append('CORE_COMPETENCIES_SECTION_MISSING')
+    elif not items:
+        structural_errors.append('CORE_COMPETENCIES_EMPTY')
+    if not experience_sections:
+        structural_errors.append('EXPERIENCE_SECTION_MISSING')
+    elif not bullets:
+        structural_errors.append('EXPERIENCE_BULLETS_MISSING')
 
     # Publications / Education / Certifications / Projects can also back
     # Core Comp items (e.g., "Peer-Reviewed Publications", "Board Certification").
@@ -261,6 +282,8 @@ def audit_resume_md(resume_path: str) -> dict[str, Any]:
             unsupported.append(item)
 
     warnings: list[str] = []
+    for code in structural_errors:
+        warnings.append(f"  - STRUCTURAL: {code}")
     if unsupported:
         warnings.append(
             f"{len(unsupported)} Core Competency item(s) lack evidence in bullets "
@@ -272,13 +295,21 @@ def audit_resume_md(resume_path: str) -> dict[str, Any]:
             warnings.append(f"  - UNSUPPORTED: {u}")
 
     return {
-        'passed': len(unsupported) == 0,
+        'passed': not structural_errors and len(unsupported) == 0,
         'total_items': len(items),
         'supported': supported,
         'unsupported': unsupported,
         'exposure_marked': exposure_marked,
+        'structural_errors': structural_errors,
         'warnings': warnings,
     }
+
+
+def audit_resume_md(resume_path: str) -> dict[str, Any]:
+    """Read one Markdown resume and apply :func:`audit_text`."""
+
+    with open(resume_path, 'r', encoding='utf-8') as f:
+        return audit_text(f.read())
 
 
 def format_audit_report(report: dict[str, Any]) -> str:
@@ -289,7 +320,13 @@ def format_audit_report(report: dict[str, Any]) -> str:
     lines.append(f'Backed by bullets/summary   : {len(report["supported"])}')
     lines.append(f'Marked as exposure-only     : {len(report["exposure_marked"])}')
     lines.append(f'UNSUPPORTED (action needed) : {len(report["unsupported"])}')
+    lines.append(f'STRUCTURAL FAILURES         : {len(report.get("structural_errors", []))}')
     lines.append('')
+    if report.get('structural_errors'):
+        lines.append('Structural failures:')
+        for code in report['structural_errors']:
+            lines.append(f'  ✗ {code}')
+        lines.append('')
     if report['unsupported']:
         lines.append('Unsupported items:')
         for item in report['unsupported']:

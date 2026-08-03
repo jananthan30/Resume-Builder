@@ -1,0 +1,548 @@
+{
+  "schema_version": "1.0",
+  "corpus": "resume-integrity-synthetic-sentinels",
+  "synthetic_only": true,
+  "fixtures": {
+    "base": "base_master.md",
+    "unchanged": "unchanged_tailored.md",
+    "bullets_reworded": "bullets_reworded_tailored.md",
+    "reordered": "reordered_tailored.md",
+    "formatting": "formatting_tailored.md",
+    "duplicate_matrix": "duplicate_matrix_master.md"
+  },
+  "mutation_rules": {
+    "omit_role_2": {
+      "operation": "remove_exact_role",
+      "target": {"title": "SIGNAL CARTOGRAPHER", "company": "Quartz Loom Cooperative", "dates": "January 2021 – Present", "header_segments": 2}
+    },
+    "omit_role_3": {
+      "operation": "remove_exact_role",
+      "target": {"title": "ARCHIVE TUNER", "company": "Cobalt Kite Works", "dates": "February 2018 - December 2020", "header_segments": 3}
+    },
+    "omit_role_4": {
+      "operation": "remove_exact_role",
+      "target": {"title": "RELAY STEWARD", "company": "Amber Finch Bureau", "dates": "2015—2018", "header_segments": 4}
+    },
+    "merge_roles_2_3": {
+      "operation": "replace_two_exact_roles_with_one",
+      "targets": [
+        {"title": "SIGNAL CARTOGRAPHER", "company": "Quartz Loom Cooperative", "dates": "January 2021 – Present"},
+        {"title": "ARCHIVE TUNER", "company": "Cobalt Kite Works", "dates": "February 2018 - December 2020"}
+      ],
+      "replacement": {"title": "SIGNAL CARTOGRAPHER & ARCHIVE TUNER", "company": "Quartz Loom Cooperative + Cobalt Kite Works", "dates": "February 2018 – Present"}
+    },
+    "merge_roles_3_4": {
+      "operation": "replace_two_exact_roles_with_one",
+      "targets": [
+        {"title": "ARCHIVE TUNER", "company": "Cobalt Kite Works", "dates": "February 2018 - December 2020"},
+        {"title": "RELAY STEWARD", "company": "Amber Finch Bureau", "dates": "2015—2018"}
+      ],
+      "replacement": {"title": "ARCHIVE TUNER & RELAY STEWARD", "company": "Cobalt Kite Works + Amber Finch Bureau", "dates": "2015 – December 2020"}
+    },
+    "change_title_2": {"operation": "replace_role_field", "role_company": "Quartz Loom Cooperative", "field": "title", "from": "SIGNAL CARTOGRAPHER", "to": "SIGNAL GEOMETER"},
+    "change_title_3": {"operation": "replace_role_field", "role_company": "Cobalt Kite Works", "field": "title", "from": "ARCHIVE TUNER", "to": "ARCHIVE CALIBRATOR"},
+    "change_title_4": {"operation": "replace_role_field", "role_company": "Amber Finch Bureau", "field": "title", "from": "RELAY STEWARD", "to": "RELAY SUPERVISOR"},
+    "change_company_2": {"operation": "replace_role_field", "role_title": "SIGNAL CARTOGRAPHER", "field": "company", "from": "Quartz Loom Cooperative", "to": "Quartz Loom Consortium"},
+    "change_company_3": {"operation": "replace_role_field", "role_title": "ARCHIVE TUNER", "field": "company", "from": "Cobalt Kite Works", "to": "Cobalt Kite Foundry"},
+    "change_company_4": {"operation": "replace_role_field", "role_title": "RELAY STEWARD", "field": "company", "from": "Amber Finch Bureau", "to": "Amber Finch Office"},
+    "change_dates_2": {"operation": "replace_role_field", "role_title": "SIGNAL CARTOGRAPHER", "field": "dates", "from": "January 2021 – Present", "to": "January 2022 – Present"},
+    "change_dates_3": {"operation": "replace_role_field", "role_title": "ARCHIVE TUNER", "field": "dates", "from": "February 2018 - December 2020", "to": "February 2018 - November 2020"},
+    "change_dates_4": {"operation": "replace_role_field", "role_title": "RELAY STEWARD", "field": "dates", "from": "2015—2018", "to": "2014—2018"},
+    "alter_education": {"operation": "replace_exact_entry_text", "section": "EDUCATION", "from": "Master of Synthetic Systems", "to": "Master of Imaginary Systems"},
+    "omit_education": {"operation": "remove_exact_entry", "section": "EDUCATION", "entry": "Master of Synthetic Systems, GPA: 3.91 | Northstar Fictional Institute, Harbor Nine, ZZ | 2017 – 2019"},
+    "add_education": {"operation": "insert_exact_entry_before_next_section", "section": "EDUCATION", "entry": "Doctorate of Invented Records | Neverland Sentinel University | 2020", "before_section": "CERTIFICATIONS & LICENSURE"},
+    "alter_publication": {"operation": "replace_exact_entry_text", "section": "PUBLICATIONS", "from": "Cobalt Signals in Paper Archives", "to": "Cobalt Signals in Glass Archives"},
+    "omit_publication": {"operation": "remove_exact_entry", "section": "PUBLICATIONS", "entry": "Finch C. \"A Deterministic Atlas of Imaginary Relays.\" Journal of Fixture Studies. 2022;8:2-7."},
+    "add_publication": {"operation": "insert_exact_entry_before_footer", "section": "PUBLICATIONS", "entry": "Moth F. \"An Added Entry That Must Fail.\" Sentinel Additions. 2025;1:1-3."},
+    "alter_publication_footer": {"operation": "replace_exact_entry_text", "section": "PUBLICATIONS", "from": "Full publication list: https://example.invalid/sentinel-publications", "to": "Full publication list: https://example.invalid/sentinel-publications-altered"},
+    "alter_publication_punctuation": {"operation": "replace_exact_entry_text", "section": "PUBLICATIONS", "from": "Sentinel Methods. 2024;4:11-19.", "to": "Sentinel Methods: 2024;4:11-19."},
+    "alter_certification": {"operation": "replace_exact_entry_text", "section": "CERTIFICATIONS & LICENSURE", "from": "Clockwork Safety License — CSL-441", "to": "Clockwork Safety License — CSL-442"},
+    "omit_certification": {"operation": "remove_exact_entry", "section": "CERTIFICATIONS & LICENSURE", "entry": "Fictional Records Certificate | FRC-209"},
+    "add_certification": {"operation": "insert_exact_entry_before_next_section", "section": "CERTIFICATIONS & LICENSURE", "entry": "Added Sentinel License | ASL-901", "before_section": "PUBLICATIONS"},
+    "alter_membership": {"operation": "replace_exact_entry_text", "section": "PROFESSIONAL MEMBERSHIPS", "from": "Guild of Synthetic Cartographers", "to": "Guild of Synthetic Geometers"},
+    "omit_membership": {"operation": "remove_exact_entry", "section": "PROFESSIONAL MEMBERSHIPS", "entry": "Association for Imaginary Archives"},
+    "add_membership": {"operation": "append_exact_entry", "section": "PROFESSIONAL MEMBERSHIPS", "entry": "Council of Added Sentinel Records"},
+    "remove_duplicate_role": {"operation": "decrement_exact_counter", "section": "PROFESSIONAL EXPERIENCE", "entry": {"title": "DUPLICATE RELAY KEEPER", "company": "Mirror Finch Cooperative", "dates": "2020 – Present"}, "master_count": 2, "tailored_count": 1},
+    "remove_duplicate_education": {"operation": "decrement_exact_counter", "section": "EDUCATION", "entry": "Diploma in Duplicate Mechanics | Mirror Fixture School, Echo Bay, ZZ | 2016", "master_count": 2, "tailored_count": 1},
+    "remove_duplicate_publication": {"operation": "decrement_exact_counter", "section": "PUBLICATIONS", "entry": "Moth A. \"A Duplicate Sentinel Entry.\" Mirror Fixture Journal. 2021;1:1-2.", "master_count": 2, "tailored_count": 1},
+    "remove_duplicate_certification": {"operation": "decrement_exact_counter", "section": "CERTIFICATIONS & LICENSURE", "entry": "Duplicate Archive Permit | DAP-11", "master_count": 2, "tailored_count": 1},
+    "remove_duplicate_membership": {"operation": "decrement_exact_counter", "section": "PROFESSIONAL MEMBERSHIPS", "entry": "Society of Duplicate Fixtures", "master_count": 2, "tailored_count": 1},
+    "empty_master": {"operation": "replace_artifact_bytes", "target": "master", "suffix": ".md", "bytes": "empty"},
+    "empty_tailored": {"operation": "replace_artifact_bytes", "target": "tailored", "suffix": ".md", "bytes": "empty"},
+    "both_empty": {"operation": "replace_artifact_bytes", "target": "both", "suffix": ".md", "bytes": "empty"},
+    "headings_only_master": {"operation": "replace_with_headings_only", "target": "master", "headings": ["PROFESSIONAL EXPERIENCE", "EDUCATION", "CERTIFICATIONS & LICENSURE", "PUBLICATIONS", "PROFESSIONAL MEMBERSHIPS"]},
+    "headings_only_tailored": {"operation": "replace_with_headings_only", "target": "tailored", "headings": ["PROFESSIONAL EXPERIENCE", "EDUCATION", "CERTIFICATIONS & LICENSURE", "PUBLICATIONS", "PROFESSIONAL MEMBERSHIPS"]},
+    "marker_only_tailored": {"operation": "replace_with_marker_only", "target": "tailored", "lines": ["SOURCE RESUME VERIFIED", "CANONICAL INTEGRITY PASSED"]},
+    "corrupt_docx_master": {"operation": "replace_artifact_bytes", "target": "master", "suffix": ".docx", "bytes_hex_prefix": "504b0304", "form": "truncated non-ZIP DOCX"},
+    "corrupt_docx_tailored": {"operation": "replace_artifact_bytes", "target": "tailored", "suffix": ".docx", "bytes_hex_prefix": "504b0304", "form": "truncated non-ZIP DOCX"},
+    "unsupported_suffix_master": {"operation": "copy_base_with_suffix", "target": "master", "suffix": ".rtf"},
+    "unsupported_suffix_tailored": {"operation": "copy_base_with_suffix", "target": "tailored", "suffix": ".rtf"},
+    "invalid_utf8_master": {"operation": "replace_artifact_bytes", "target": "master", "suffix": ".md", "bytes_hex": "53454e54494e454cfffefa"},
+    "invalid_utf8_tailored": {"operation": "replace_artifact_bytes", "target": "tailored", "suffix": ".md", "bytes_hex": "53454e54494e454cfffefa"},
+    "duplicate_header_master": {"operation": "append_duplicate_protected_header", "target": "master", "header": "EDUCATION", "form": "second EDUCATION header plus one sentinel entry"},
+    "duplicate_header_tailored": {"operation": "append_duplicate_protected_header", "target": "tailored", "header": "EDUCATION", "form": "second EDUCATION header plus one sentinel entry"}
+  },
+  "scenarios": [
+    {
+      "id": "C01",
+      "name": "unchanged Markdown pair",
+      "subcases": [
+        {
+          "id": "distinct_identical_files",
+          "builder": "fixture_pair",
+          "master": "base",
+          "tailored": "unchanged",
+          "expected_result": "accept",
+          "expected_codes": []
+        }
+      ]
+    },
+    {
+      "id": "C02",
+      "name": "bullet and entry reordering controls",
+      "subcases": [
+        {
+          "id": "bullets_reworded_and_reordered",
+          "builder": "fixture_pair",
+          "master": "base",
+          "tailored": "bullets_reworded",
+          "expected_result": "accept",
+          "expected_codes": []
+        },
+        {
+          "id": "roles_and_protected_entries_reordered",
+          "builder": "fixture_pair",
+          "master": "base",
+          "tailored": "reordered",
+          "expected_result": "accept",
+          "expected_codes": []
+        }
+      ]
+    },
+    {
+      "id": "C03",
+      "name": "formatting and DOCX cross-format controls",
+      "subcases": [
+        {
+          "id": "markdown_formatting_only",
+          "builder": "fixture_pair",
+          "master": "base",
+          "tailored": "formatting",
+          "expected_result": "accept",
+          "expected_codes": []
+        },
+        {
+          "id": "tailored_docx_vs_master_markdown",
+          "builder": "tailored_docx",
+          "master": "base",
+          "docx_source": "unchanged",
+          "expected_result": "accept",
+          "expected_codes": []
+        },
+        {
+          "id": "tailored_markdown_vs_master_docx",
+          "builder": "master_docx",
+          "tailored": "formatting",
+          "docx_source": "unchanged",
+          "expected_result": "accept",
+          "expected_codes": []
+        }
+      ]
+    },
+    {
+      "id": "C04",
+      "name": "one role omitted",
+      "subcases": [
+        {
+          "id": "omit_two_segment_role",
+          "builder": "mutate_base",
+          "mutation": "omit_role_2",
+          "expected_result": "reject",
+          "expected_codes": ["ROLE_MISSING"]
+        },
+        {
+          "id": "omit_three_segment_role",
+          "builder": "mutate_base",
+          "mutation": "omit_role_3",
+          "expected_result": "reject",
+          "expected_codes": ["ROLE_MISSING"]
+        },
+        {
+          "id": "omit_four_segment_role",
+          "builder": "mutate_base",
+          "mutation": "omit_role_4",
+          "expected_result": "reject",
+          "expected_codes": ["ROLE_MISSING"]
+        }
+      ]
+    },
+    {
+      "id": "C05",
+      "name": "two source roles merged",
+      "subcases": [
+        {
+          "id": "merge_two_and_three_segment_roles",
+          "builder": "mutate_base",
+          "mutation": "merge_roles_2_3",
+          "expected_result": "reject",
+          "expected_codes": ["ROLE_MERGED"]
+        },
+        {
+          "id": "merge_three_and_four_segment_roles",
+          "builder": "mutate_base",
+          "mutation": "merge_roles_3_4",
+          "expected_result": "reject",
+          "expected_codes": ["ROLE_MERGED"]
+        }
+      ]
+    },
+    {
+      "id": "C06",
+      "name": "role title changed",
+      "subcases": [
+        {
+          "id": "change_two_segment_title",
+          "builder": "mutate_base",
+          "mutation": "change_title_2",
+          "expected_result": "reject",
+          "expected_codes": ["ROLE_TITLE_CHANGED"]
+        },
+        {
+          "id": "change_three_segment_title",
+          "builder": "mutate_base",
+          "mutation": "change_title_3",
+          "expected_result": "reject",
+          "expected_codes": ["ROLE_TITLE_CHANGED"]
+        },
+        {
+          "id": "change_four_segment_title",
+          "builder": "mutate_base",
+          "mutation": "change_title_4",
+          "expected_result": "reject",
+          "expected_codes": ["ROLE_TITLE_CHANGED"]
+        }
+      ]
+    },
+    {
+      "id": "C07",
+      "name": "role company changed",
+      "subcases": [
+        {
+          "id": "change_two_segment_company",
+          "builder": "mutate_base",
+          "mutation": "change_company_2",
+          "expected_result": "reject",
+          "expected_codes": ["ROLE_COMPANY_CHANGED"]
+        },
+        {
+          "id": "change_three_segment_company",
+          "builder": "mutate_base",
+          "mutation": "change_company_3",
+          "expected_result": "reject",
+          "expected_codes": ["ROLE_COMPANY_CHANGED"]
+        },
+        {
+          "id": "change_four_segment_company",
+          "builder": "mutate_base",
+          "mutation": "change_company_4",
+          "expected_result": "reject",
+          "expected_codes": ["ROLE_COMPANY_CHANGED"]
+        }
+      ]
+    },
+    {
+      "id": "C08",
+      "name": "role dates changed",
+      "subcases": [
+        {
+          "id": "change_two_segment_dates",
+          "builder": "mutate_base",
+          "mutation": "change_dates_2",
+          "expected_result": "reject",
+          "expected_codes": ["ROLE_DATES_CHANGED"]
+        },
+        {
+          "id": "change_three_segment_dates",
+          "builder": "mutate_base",
+          "mutation": "change_dates_3",
+          "expected_result": "reject",
+          "expected_codes": ["ROLE_DATES_CHANGED"]
+        },
+        {
+          "id": "change_four_segment_dates",
+          "builder": "mutate_base",
+          "mutation": "change_dates_4",
+          "expected_result": "reject",
+          "expected_codes": ["ROLE_DATES_CHANGED"]
+        }
+      ]
+    },
+    {
+      "id": "C09",
+      "name": "Education altered omitted or added",
+      "subcases": [
+        {
+          "id": "education_altered",
+          "builder": "mutate_base",
+          "mutation": "alter_education",
+          "expected_result": "reject",
+          "expected_codes": ["EDUCATION_CHANGED"]
+        },
+        {
+          "id": "education_omitted",
+          "builder": "mutate_base",
+          "mutation": "omit_education",
+          "expected_result": "reject",
+          "expected_codes": ["EDUCATION_MISSING"]
+        },
+        {
+          "id": "education_added",
+          "builder": "mutate_base",
+          "mutation": "add_education",
+          "expected_result": "reject",
+          "expected_codes": ["EDUCATION_ADDED"]
+        }
+      ]
+    },
+    {
+      "id": "C10",
+      "name": "Publications altered omitted or added",
+      "subcases": [
+        {
+          "id": "publication_altered",
+          "builder": "mutate_base",
+          "mutation": "alter_publication",
+          "expected_result": "reject",
+          "expected_codes": ["PUBLICATION_CHANGED"]
+        },
+        {
+          "id": "publication_omitted",
+          "builder": "mutate_base",
+          "mutation": "omit_publication",
+          "expected_result": "reject",
+          "expected_codes": ["PUBLICATION_MISSING"]
+        },
+        {
+          "id": "publication_added",
+          "builder": "mutate_base",
+          "mutation": "add_publication",
+          "expected_result": "reject",
+          "expected_codes": ["PUBLICATION_ADDED"]
+        },
+        {
+          "id": "publication_footer_altered",
+          "builder": "mutate_base",
+          "mutation": "alter_publication_footer",
+          "expected_result": "reject",
+          "expected_codes": ["PUBLICATION_CHANGED"]
+        },
+        {
+          "id": "publication_semantic_punctuation_altered",
+          "builder": "mutate_base",
+          "mutation": "alter_publication_punctuation",
+          "expected_result": "reject",
+          "expected_codes": ["PUBLICATION_CHANGED"]
+        }
+      ]
+    },
+    {
+      "id": "C11",
+      "name": "Certifications and Licensure altered omitted or added",
+      "subcases": [
+        {
+          "id": "certification_altered",
+          "builder": "mutate_base",
+          "mutation": "alter_certification",
+          "expected_result": "reject",
+          "expected_codes": ["CERTIFICATION_CHANGED"]
+        },
+        {
+          "id": "certification_omitted",
+          "builder": "mutate_base",
+          "mutation": "omit_certification",
+          "expected_result": "reject",
+          "expected_codes": ["CERTIFICATION_MISSING"]
+        },
+        {
+          "id": "certification_added",
+          "builder": "mutate_base",
+          "mutation": "add_certification",
+          "expected_result": "reject",
+          "expected_codes": ["CERTIFICATION_ADDED"]
+        }
+      ]
+    },
+    {
+      "id": "C12",
+      "name": "Professional Memberships altered omitted or added",
+      "subcases": [
+        {
+          "id": "membership_altered",
+          "builder": "mutate_base",
+          "mutation": "alter_membership",
+          "expected_result": "reject",
+          "expected_codes": ["MEMBERSHIP_CHANGED"]
+        },
+        {
+          "id": "membership_omitted",
+          "builder": "mutate_base",
+          "mutation": "omit_membership",
+          "expected_result": "reject",
+          "expected_codes": ["MEMBERSHIP_MISSING"]
+        },
+        {
+          "id": "membership_added",
+          "builder": "mutate_base",
+          "mutation": "add_membership",
+          "expected_result": "reject",
+          "expected_codes": ["MEMBERSHIP_ADDED"]
+        }
+      ]
+    },
+    {
+      "id": "C13",
+      "name": "duplicate-count multiset matrix",
+      "subcases": [
+        {
+          "id": "remove_one_identical_role",
+          "builder": "mutate_duplicate_matrix",
+          "mutation": "remove_duplicate_role",
+          "expected_result": "reject",
+          "expected_codes": ["ROLE_MISSING"]
+        },
+        {
+          "id": "remove_one_identical_education_entry",
+          "builder": "mutate_duplicate_matrix",
+          "mutation": "remove_duplicate_education",
+          "expected_result": "reject",
+          "expected_codes": ["EDUCATION_MISSING"]
+        },
+        {
+          "id": "remove_one_identical_publication",
+          "builder": "mutate_duplicate_matrix",
+          "mutation": "remove_duplicate_publication",
+          "expected_result": "reject",
+          "expected_codes": ["PUBLICATION_MISSING"]
+        },
+        {
+          "id": "remove_one_identical_certification",
+          "builder": "mutate_duplicate_matrix",
+          "mutation": "remove_duplicate_certification",
+          "expected_result": "reject",
+          "expected_codes": ["CERTIFICATION_MISSING"]
+        },
+        {
+          "id": "remove_one_identical_membership",
+          "builder": "mutate_duplicate_matrix",
+          "mutation": "remove_duplicate_membership",
+          "expected_result": "reject",
+          "expected_codes": ["MEMBERSHIP_MISSING"]
+        }
+      ]
+    },
+    {
+      "id": "C14",
+      "name": "malformed fail-closed matrix",
+      "subcases": [
+        {
+          "id": "empty_master",
+          "builder": "malformed",
+          "variant": "empty_master",
+          "expected_result": "reject",
+          "expected_codes": ["EMPTY_ARTIFACT"]
+        },
+        {
+          "id": "empty_tailored",
+          "builder": "malformed",
+          "variant": "empty_tailored",
+          "expected_result": "reject",
+          "expected_codes": ["EMPTY_ARTIFACT"]
+        },
+        {
+          "id": "both_empty",
+          "builder": "malformed",
+          "variant": "both_empty",
+          "expected_result": "reject",
+          "expected_codes": ["EMPTY_ARTIFACT"]
+        },
+        {
+          "id": "headings_only_master",
+          "builder": "malformed",
+          "variant": "headings_only_master",
+          "expected_result": "reject",
+          "expected_codes": ["NO_CANONICAL_CONTENT"]
+        },
+        {
+          "id": "headings_only_tailored",
+          "builder": "malformed",
+          "variant": "headings_only_tailored",
+          "expected_result": "reject",
+          "expected_codes": ["NO_CANONICAL_CONTENT"]
+        },
+        {
+          "id": "marker_only_tailored",
+          "builder": "malformed",
+          "variant": "marker_only_tailored",
+          "expected_result": "reject",
+          "expected_codes": ["NO_CANONICAL_CONTENT"]
+        },
+        {
+          "id": "corrupt_docx_master",
+          "builder": "malformed",
+          "variant": "corrupt_docx_master",
+          "expected_result": "reject",
+          "expected_codes": ["UNREADABLE_ARTIFACT"]
+        },
+        {
+          "id": "corrupt_docx_tailored",
+          "builder": "malformed",
+          "variant": "corrupt_docx_tailored",
+          "expected_result": "reject",
+          "expected_codes": ["UNREADABLE_ARTIFACT"]
+        },
+        {
+          "id": "unsupported_suffix_master",
+          "builder": "malformed",
+          "variant": "unsupported_suffix_master",
+          "expected_result": "reject",
+          "expected_codes": ["UNSUPPORTED_FORMAT"]
+        },
+        {
+          "id": "unsupported_suffix_tailored",
+          "builder": "malformed",
+          "variant": "unsupported_suffix_tailored",
+          "expected_result": "reject",
+          "expected_codes": ["UNSUPPORTED_FORMAT"]
+        },
+        {
+          "id": "invalid_utf8_master",
+          "builder": "malformed",
+          "variant": "invalid_utf8_master",
+          "expected_result": "reject",
+          "expected_codes": ["INVALID_ENCODING"]
+        },
+        {
+          "id": "invalid_utf8_tailored",
+          "builder": "malformed",
+          "variant": "invalid_utf8_tailored",
+          "expected_result": "reject",
+          "expected_codes": ["INVALID_ENCODING"]
+        },
+        {
+          "id": "duplicate_header_master",
+          "builder": "malformed",
+          "variant": "duplicate_header_master",
+          "expected_result": "reject",
+          "expected_codes": ["DUPLICATE_PROTECTED_SECTION"]
+        },
+        {
+          "id": "duplicate_header_tailored",
+          "builder": "malformed",
+          "variant": "duplicate_header_tailored",
+          "expected_result": "reject",
+          "expected_codes": ["DUPLICATE_PROTECTED_SECTION"]
+        }
+      ]
+    }
+  ]
+}

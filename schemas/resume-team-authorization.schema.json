@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "resume-team-authorization/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "draft_digest", "passed", "codes", "findings", "votes"],
+  "properties": {
+    "schema_version": {"const": "resume-team-authorization/v1"},
+    "draft_digest": {"$ref": "#/$defs/digest"},
+    "passed": {"type": "boolean"},
+    "codes": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "findings": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/finding"}
+    },
+    "votes": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {"$ref": "#/$defs/evidenceVote"},
+        {"$ref": "#/$defs/humanVoiceVote"},
+        {"$ref": "#/$defs/canonicalIntegrityVote"}
+      ],
+      "items": false
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line_number", "source_line", "line_digest"],
+      "properties": {
+        "line_number": {"type": "integer", "minimum": 1},
+        "source_line": {"type": "string", "minLength": 1},
+        "line_digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "vote_name", "code", "actionable", "locations"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "vote_name": {"enum": ["evidence", "human_voice", "canonical_integrity"]},
+        "code": {"type": "string", "minLength": 1},
+        "actionable": {"type": "boolean"},
+        "locations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/location"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"actionable": {"const": true}}, "required": ["actionable"]},
+          "then": {"properties": {"locations": {"minItems": 1}}},
+          "else": {"properties": {"locations": {"maxItems": 0}}}
+        }
+      ]
+    },
+    "voteBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "name",
+        "invocation_id",
+        "passed",
+        "draft_digest",
+        "codes"
+      ],
+      "properties": {
+        "schema_version": {"const": "resume-team-vote/v1"},
+        "name": {
+          "enum": ["evidence", "human_voice", "canonical_integrity"]
+        },
+        "invocation_id": {"type": "string", "minLength": 1},
+        "passed": {"type": "boolean"},
+        "draft_digest": {"$ref": "#/$defs/digest"},
+        "codes": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "evidenceVote": {
+      "allOf": [
+        {"$ref": "#/$defs/voteBase"},
+        {"properties": {"name": {"const": "evidence"}}}
+      ]
+    },
+    "humanVoiceVote": {
+      "allOf": [
+        {"$ref": "#/$defs/voteBase"},
+        {"properties": {"name": {"const": "human_voice"}}}
+      ]
+    },
+    "canonicalIntegrityVote": {
+      "allOf": [
+        {"$ref": "#/$defs/voteBase"},
+        {"properties": {"name": {"const": "canonical_integrity"}}}
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"passed": {"const": true}}, "required": ["passed"]},
+      "then": {
+        "properties": {
+          "codes": {"maxItems": 0},
+          "findings": {"maxItems": 0}
+        }
+      },
+      "else": {
+        "properties": {
+          "codes": {"minItems": 1},
+          "findings": {"minItems": 1}
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "resume-team-final-receipt/v2",
+  "title": "Native Resume Team final draft authorization receipt",
+  "description": "A non-PII, independently checkable receipt for one authorized Markdown draft, the attested master-resume source, the exact job description, and the validated Researcher artifact. Verifiers must additionally require every nested draft digest to equal the verified target digest, the ordered vote IDs to equal the authorization-report vote IDs, authorization_digest to equal the canonical SHA-256 of authorization_report, and the source and job-description digests to match current trusted inputs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "case_id",
+    "draft_digest",
+    "source_digest",
+    "job_description_digest",
+    "candidate_fit_report",
+    "candidate_fit_report_digest",
+    "researcher_agent_id",
+    "researcher_artifact_digest",
+    "auditor_attestation",
+    "authorization_digest",
+    "authorization_report",
+    "vote_invocation_ids",
+    "publication_id",
+    "verified_target_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "resume-team-final-receipt/v2"},
+    "run_id": {"type": "string", "minLength": 1},
+    "case_id": {"type": "string", "minLength": 1},
+    "draft_digest": {"$ref": "#/$defs/digest"},
+    "source_digest": {"$ref": "#/$defs/digest"},
+    "job_description_digest": {"$ref": "#/$defs/digest"},
+    "candidate_fit_report": {"$ref": "#/$defs/candidateFitPassingReport"},
+    "candidate_fit_report_digest": {"$ref": "#/$defs/digest"},
+    "researcher_agent_id": {"$ref": "#/$defs/nativeAgentId"},
+    "researcher_artifact_digest": {"$ref": "#/$defs/digest"},
+    "auditor_attestation": {"$ref": "#/$defs/auditorAttestation"},
+    "authorization_digest": {"$ref": "#/$defs/digest"},
+    "authorization_report": {"$ref": "#/$defs/authorizationReport"},
+    "vote_invocation_ids": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "publication_id": {"type": "string", "minLength": 1},
+    "verified_target_digest": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nativeAgentId": {
+      "type": "string",
+      "pattern": "^(codex|claude):[A-Za-z0-9._:-]{1,128}$"
+    },
+    "fitScore": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "candidateFitComponentScores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "experience_match",
+        "skills_match",
+        "title_alignment",
+        "domain_match",
+        "education_match",
+        "certification_match",
+        "seniority_match"
+      ],
+      "properties": {
+        "experience_match": {"$ref": "#/$defs/fitScore"},
+        "skills_match": {"$ref": "#/$defs/fitScore"},
+        "title_alignment": {"$ref": "#/$defs/fitScore"},
+        "domain_match": {"$ref": "#/$defs/fitScore"},
+        "education_match": {"$ref": "#/$defs/fitScore"},
+        "certification_match": {"$ref": "#/$defs/fitScore"},
+        "seniority_match": {"$ref": "#/$defs/fitScore"}
+      }
+    },
+    "candidateFitKnockout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "category", "requirement", "candidate_has"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "category": {"type": "string", "minLength": 1},
+        "requirement": {"type": "string", "minLength": 1},
+        "candidate_has": {"type": "string", "minLength": 1}
+      }
+    },
+    "candidateFitReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "policy_version",
+        "scorer_version",
+        "run_id",
+        "case_id",
+        "as_of_date",
+        "threshold",
+        "semantic_mode",
+        "resume_digest",
+        "job_description_digest",
+        "score",
+        "component_scores",
+        "recommendation",
+        "hard_knockouts",
+        "extraction_trustworthy",
+        "passed",
+        "codes"
+      ],
+      "properties": {
+        "schema_version": {"const": "1.0.0"},
+        "policy_version": {"const": "candidate-fit-policy-v2"},
+        "scorer_version": {"const": "deterministic-job-fit-v1"},
+        "run_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "case_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "as_of_date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+        "threshold": {"const": 70.0},
+        "semantic_mode": {"const": "disabled"},
+        "resume_digest": {"$ref": "#/$defs/digest"},
+        "job_description_digest": {"$ref": "#/$defs/digest"},
+        "score": {"$ref": "#/$defs/fitScore"},
+        "component_scores": {"$ref": "#/$defs/candidateFitComponentScores"},
+        "recommendation": {"enum": ["PROCEED", "REJECT"]},
+        "hard_knockouts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/candidateFitKnockout"}
+        },
+        "extraction_trustworthy": {"type": "boolean"},
+        "passed": {"type": "boolean"},
+        "codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["UNTRUSTWORTHY_EXTRACTION", "HARD_KNOCKOUT", "SCORE_BELOW_THRESHOLD"]}
+        }
+      }
+    },
+    "candidateFitPassingReport": {
+      "allOf": [
+        {"$ref": "#/$defs/candidateFitReport"},
+        {
+          "properties": {
+            "recommendation": {"const": "PROCEED"},
+            "hard_knockouts": {"maxItems": 0},
+            "extraction_trustworthy": {"const": true},
+            "passed": {"const": true},
+            "codes": {"maxItems": 0},
+            "score": {"minimum": 70.0}
+          }
+        }
+      ]
+    },
+    "auditorAttestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_id", "artifact_digest", "verdict", "draft_digest"],
+      "properties": {
+        "agent_id": {"$ref": "#/$defs/nativeAgentId"},
+        "artifact_digest": {"$ref": "#/$defs/digest"},
+        "verdict": {"const": "PASS"},
+        "draft_digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "voteBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "name",
+        "invocation_id",
+        "passed",
+        "draft_digest",
+        "codes"
+      ],
+      "properties": {
+        "schema_version": {"const": "resume-team-vote/v1"},
+        "name": {"enum": ["evidence", "human_voice", "canonical_integrity"]},
+        "invocation_id": {"type": "string", "minLength": 1},
+        "passed": {"const": true},
+        "draft_digest": {"$ref": "#/$defs/digest"},
+        "codes": {"type": "array", "maxItems": 0}
+      }
+    },
+    "evidenceVote": {
+      "allOf": [
+        {"$ref": "#/$defs/voteBase"},
+        {"properties": {"name": {"const": "evidence"}}}
+      ]
+    },
+    "humanVoiceVote": {
+      "allOf": [
+        {"$ref": "#/$defs/voteBase"},
+        {"properties": {"name": {"const": "human_voice"}}}
+      ]
+    },
+    "canonicalIntegrityVote": {
+      "allOf": [
+        {"$ref": "#/$defs/voteBase"},
+        {"properties": {"name": {"const": "canonical_integrity"}}}
+      ]
+    },
+    "authorizationReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "draft_digest", "passed", "codes", "findings", "votes"],
+      "properties": {
+        "schema_version": {"const": "resume-team-authorization/v1"},
+        "draft_digest": {"$ref": "#/$defs/digest"},
+        "passed": {"const": true},
+        "codes": {"type": "array", "maxItems": 0},
+        "findings": {"type": "array", "maxItems": 0},
+        "votes": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "prefixItems": [
+            {"$ref": "#/$defs/evidenceVote"},
+            {"$ref": "#/$defs/humanVoiceVote"},
+            {"$ref": "#/$defs/canonicalIntegrityVote"}
+          ],
+          "items": false
+        }
+      }
+    }
+  }
+}
