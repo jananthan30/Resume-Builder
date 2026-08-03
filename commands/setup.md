@@ -42,7 +42,7 @@ Ask the user which setup they prefer:
 - Cloud-based scoring — no heavy downloads
 - Installs only 2 small packages (~5 seconds)
 - Scoring happens on our cloud server (5 free scores, then Pro $12/month for unlimited)
-- AI rewriting available with your own Anthropic API key
+- Optional LLM-augmented scoring with your own Anthropic API key
 
 **Option B: Full Local Setup (For developers / offline use)**
 - Installs all scoring engines locally (~500MB, takes 2-3 minutes)
@@ -89,12 +89,14 @@ Check if the user has a `config.json` in their project. If not, create one from 
 
 ### Step 5: (Optional) LLM Features Setup
 
-Ask the user if they want to enable AI-powered scoring and resume rewriting.
+Ask the user if they want to enable advisory AI-powered scoring.
 
 If yes:
 1. They need an Anthropic API key from https://console.anthropic.com/
 2. Create a `.env` file with: `ANTHROPIC_API_KEY=sk-ant-...`
-3. This enables the `score_with_llm` and `rewrite_resume` tools
+3. This enables the advisory `score_with_llm` tool. Legacy direct rewrite tools
+   are not production-authorized; the native Resume Team is the sole production
+   resume rewrite and draft-publication path.
 
 If no, skip this step. The ATS and HR scorers work without an API key.
 

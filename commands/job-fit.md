@@ -1,64 +1,63 @@
 ---
-description: Quickly score whether a job description is worth applying to before tailoring a resume.
+description: Run the deterministic, digest-bound candidate-fit gate before any resume tailoring.
 ---
 
-# Job Fit Pre-Screen — Quick GO/NO-GO Check
+# Job Fit Pre-Screen — Deterministic GO/NO-GO Gate
 
-Evaluate whether this job description is worth applying to before any resume tailoring work.
+Evaluate the configured master resume against this exact job description before
+any resume work begins.
 
 ## Input
 $ARGUMENTS
 
-## Steps
+## CANDIDATE-FIT PREFLIGHT (MANDATORY FIRST GATE)
 
-### Step 1: Read Master Resume
+1. Read `config.json` and resolve its exact `master_resume_path`. This configured
+   master is the only resume allowed in the assessment. Never use a previous
+   tailored resume, application resume, or “best match” template.
+2. Put the exact job description in a private temporary UTF-8 file. Do not create
+   an application/output directory, resume draft, DOCX, or tracker row.
+3. Generate one safe `run_id`, one safe `case_id`, and one strict ISO calendar
+   `as_of_date`, then capture the sole intended machine output from:
 
-Read the master resume from `config.json` -> `master_resume_path`.
+   `python candidate_fit_preflight.py --resume <configured-master-resume> --job-description <private-exact-JD.txt> --run-id <run_id> --case-id <case_id> --as-of-date <YYYY-MM-DD> --json`
 
-For `.docx`, use the MCP `extract_text` tool when available, or extract text with Python:
+4. Parse only the JSON report. Require `schema_version: "1.0.0"`,
+   `policy_version: "candidate-fit-policy-v2"`,
+   `scorer_version: "deterministic-job-fit-v1"`, the exact run/case IDs and date,
+   exact master/JD SHA-256 digests, exact `threshold: 70.0`, all seven named
+   component scores, a boolean `extraction_trustworthy`, `hard_knockouts`,
+   `passed`, and ordered `codes`. Recompute the canonical JSON SHA-256 and display
+   it as `candidate_fit_report_digest`.
+5. Proceed status is valid only when the process exits `0`, `score >= 70`,
+   extraction is trustworthy, `hard_knockouts` is empty, `passed` is true, and
+   `codes` is empty. No dimension, recommendation, ATS score, HR score, or user
+   preference can compensate for a failed condition.
+6. Exit `1`, any score below 70, or any hard knockout is
+   `REJECTED:CANDIDATE_FIT`. Exit `2` or an unavailable, malformed, non-canonical,
+   stale, or digest-mismatched report is `FAILED:CANDIDATE_FIT_PREFLIGHT`. Both
+   fail closed and authorize no tailoring, role/native-team invocation, output,
+   DOCX, or tracker operation.
 
-```bash
-python -c "from docx import Document; [print(p.text) for p in Document('MASTER_RESUME.docx').paragraphs]"
-```
+## Report
 
-For `.pdf`, `.md`, or `.txt`, read the file directly.
-
-### Step 2: Score Job Fit
-
-Run the job fit scorer via the scorer server:
-
-```bash
-curl -s -X POST http://localhost:8100/score/job-fit \
-  -H "Content-Type: application/json" \
-  -d "{\"resume_text\": \"<master resume text>\", \"jd_text\": \"<job description text>\"}"
-```
-
-If the server is not running, run the scorer directly:
-
-```python
-from job_fit_scorer import calculate_job_fit, format_report
-result = calculate_job_fit(resume_text, jd_text)
-print(format_report(result))
-```
-
-### Step 3: Display Report
-
-Format the results clearly:
+Display the exact source-bound decision clearly:
 
 ```text
 ================================================================
-  JOB FIT SCORE: XX/100 — [RECOMMENDATION]
+  CANDIDATE FIT: XX.X/100 — [PROCEED | REJECTED | PREFLIGHT FAILED]
 ================================================================
 
-  Job: [Title]
-  Company: [Company]
-  Domain: [domain] | Seniority: [level]
+  Source: configured master_resume_path
+  Policy: candidate-fit-policy-v2 | Threshold: 70.0
+  Master digest: [SHA-256]
+  JD digest: [SHA-256]
+  Report digest: [candidate_fit_report_digest]
 
-  KNOCKOUTS:
-  [X] [requirement] — you have [what candidate has]
-      > [suggestion]
+  HARD KNOCKOUTS:
+  [None, or exact category / requirement / candidate-has summary]
 
-  DIMENSIONS:
+  COMPONENTS:
   Experience Match:     XX/100
   Skills Match:         XX/100
   Title Alignment:      XX/100
@@ -67,19 +66,29 @@ Format the results clearly:
   Certification Match:  XX/100
   Seniority Match:      XX/100
 
-  ESTIMATED SCORES (if tailored):
-  ATS: XX% - XX%  |  HR: XX% - XX%
+  CODES: [none | UNTRUSTWORTHY_EXTRACTION | HARD_KNOCKOUT |
+          SCORE_BELOW_THRESHOLD]
 
   VERDICT:
-  [Clear action: proceed to /resume-builder:tailor-resume, skip, or apply to alternatives]
+  [Clear next action]
 ================================================================
 ```
 
-### Step 4: Recommendation
+## Fixed recommendation policy
 
-Based on the result:
+- `70–100`, zero hard knockouts, trustworthy extraction: `PROCEED`. The same
+  report and digest must be recomputed and bound into any later
+  `resume-team-result/v2` and `resume-team-final-receipt/v2`.
+- `60–69`: `REJECTED:CANDIDATE_FIT` — blocked for manual reconsideration. The
+  system must not automatically tailor or offer a bypass. Reconsideration means
+  reviewing the target or adding genuine evidence to the master resume, then
+  running a fresh assessment; it is not permission to override the threshold.
+- Below `60`: `REJECTED:CANDIDATE_FIT` — target a closer role or correct genuinely
+  wrong source input before a fresh assessment.
+- Any hard knockout: `REJECTED:CANDIDATE_FIT` regardless of score.
+- Untrustworthy extraction or any invalid report:
+  `FAILED:CANDIDATE_FIT_PREFLIGHT`; fix the input/tooling and rerun from scratch.
 
-- STRONG FIT (75+): "Proceed with /resume-builder:tailor-resume — good match."
-- MODERATE FIT (55-74): "Can apply with modifications. Key changes needed: [list fixable gaps]"
-- WEAK FIT (35-54): "Low probability. Consider these alternatives instead: [list alternative titles]"
-- NO-GO (<35 or knockouts): "Do NOT apply. Knockout: [reason]. Better targets: [alternatives]"
+ATS and HR baseline scoring may be shown later as advisory diagnostics only after
+candidate fit passes. They are not this gate, cannot raise or lower its decision,
+and cannot authorize resume development.

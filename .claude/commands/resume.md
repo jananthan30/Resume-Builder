@@ -1,31 +1,141 @@
-# Resume Builder — Precision Edition v5.1 (Triple-Scorer Swarm)
+---
+description: Generate a tailored resume and cover letter from a job description, score both, create DOCX files, and update the tracker.
+---
 
-Generate a tailored resume AND cover letter using parallel agent execution with scoring-aware optimization. Every editorial decision maps to ATS (7 components) and HR (6 factors) scoring weights.
+# Resume Builder — Native Four-Role Team + Triple Scoring
+
+Generate a tailored resume AND cover letter using Codex parallel tool execution with scoring-aware optimization. Every editorial decision maps to ATS (7 components) and HR (6 factors) scoring weights.
 
 ## Job Description
 $ARGUMENTS
 
+## CANDIDATE-FIT PREFLIGHT (MANDATORY FIRST GATE)
+
+Before scorer startup, research, resume development, role/team invocation, output
+or application-directory creation, DOCX generation, or tracker work, resolve
+`master_resume_path` from `config.json` and save this exact job description to a
+private temporary UTF-8 file. Screen only that configured master resume—never a
+previously tailored resume. Generate one safe `run_id`, one safe `case_id`, and one
+strict ISO `as_of_date`, then run:
+
+`python candidate_fit_preflight.py --resume <configured-master-resume> --job-description <private-exact-JD.txt> --run-id <run_id> --case-id <case_id> --as-of-date <YYYY-MM-DD> --json`
+
+Require exit `0` plus a valid `candidate-fit-policy-v2` report bound to the same
+IDs, date, master SHA-256, and exact-JD SHA-256. Canonically hash it as
+`candidate_fit_report_digest`. Proceed only when `threshold` is exactly `70.0`,
+`score >= 70`, `extraction_trustworthy` is true, `hard_knockouts` is empty,
+`passed` is true, and `codes` is empty. Exit `1`, a score below 70 (including
+60–69), or any hard knockout is `REJECTED:CANDIDATE_FIT`; stop with no team/role
+invocation and no application directory, draft, DOCX, or tracker mutation. Exit
+`2` or an unavailable, malformed, stale, non-canonical, or digest-mismatched
+report is `FAILED:CANDIDATE_FIT_PREFLIGHT` and fails closed. There is no automatic
+or manual workflow bypass. ATS/HR baselines remain advisory and cannot override
+candidate fit.
+
 ## Instructions
 
-You are an expert resume editor AND a parallel-agent orchestrator. The user has provided a job description above. You will:
-1. Internalize both scoring engines before writing a single word
-2. Deconstruct the JD into a scoring blueprint
-3. Draft with every section mapped to specific scoring components
-4. Diagnose gaps by component weight, not guesswork
-5. Execute via parallel agents for speed
+You are the coordinator, not the resume author. The user has provided a job description above. You will:
+1. Pass the fixed candidate-fit gate against the configured master resume
+2. Internalize both advisory scoring engines before writing a single word
+3. Deconstruct the JD into a scoring blueprint
+4. Delegate drafting to the native `resume-writer` with least-authority context
+5. Diagnose gaps by component weight, not guesswork
+6. Require an independent `resume-auditor`, bounded `resume-editor` corrections, and three deterministic authorization votes
 
 ---
 
 ## GLOBAL CONSTRAINTS (read first, enforce always)
 
+**Editorial priority (never invert):** Authenticity → Human voice → HR impact → ATS match.
+
 - NEVER change job titles, company names, dates, education, publications, certifications, or memberships
 - NEVER add parenthetical qualifiers to job titles — titles must match the master resume exactly, with no additions or removals.
-- NEVER omit any job experience entry — every role in the master resume must appear in the tailored resume. Reduce bullet count for older/less-relevant roles (minimum 1 bullet each), but NEVER drop an entire role.
 - NEVER use `**bold**` markdown in `.md` files — the DOCX generator handles bold automatically
 - NEVER exceed 2 appearances of any single keyword across the entire resume
+- NEVER keyword-stuff experience bullets — Core Competencies is the primary ATS keyword home; bullets stay factual and human
+- NEVER open bullets with AI-cliché verbs (spearheaded, leveraged, orchestrated, championed, …) — use plain strong verbs (Led, Built, Wrote, Cut, Reviewed)
 - Publications & Education: Keep EXACTLY as in master resume — zero modifications
-- Cover letter DOCX: ALWAYS use `create_ats_cover_letter()` directly — NEVER use `create_cover_letter_from_md()` (known KeyError bug)
-- Score targets: ATS 75-85%, HR 70%+. If JD contains staffing/benefits boilerplate, ATS ceiling is ~69-73% — accept once all domain weights are maxed. Max 2 iterations against a boilerplate ceiling.
+- DOCX and tracker finalization must use only the receipt-validating authorized wrappers specified in Phase 5; never call lower-level generators or tracker mutations directly
+- Score targets: ATS 75-85%, HR 70%+, **Human Voice audit pass**. If JD contains staffing/benefits boilerplate, ATS ceiling is ~69-73% — accept once all domain weights are maxed. Max 2 complete fresh team retries against a boilerplate ceiling.
+- 75% ATS with human prose beats 90% stuffed AI prose
+
+---
+
+## NATIVE RESUME TEAM (mandatory control plane)
+
+Only after the candidate-fit preflight passes, read `commands/resume-team.md`, run
+its host preflight, and invoke `native_resume_team.py` for the current host with the
+same `run_id`, `case_id`, `as_of_date`, exact private JD file, and a prospective
+non-existing output path. Do not create the path first. Do not manually
+reproduce the role sequence for a publishable draft. The runtime enforces:
+
+1. `resume-researcher` receives only the job description.
+2. `resume-writer` receives only the master resume and validated Researcher artifact.
+3. `resume-auditor` independently audits the exact Writer draft.
+4. `resume-editor` is called only after `FAIL`, corrects only named findings, and is followed by a fresh Auditor review. Maximum two corrections.
+
+The coordinator must validate every `resume-team-handoff/v1` digest and lineage,
+require distinct role identities, and fail closed on malformed, stale, replayed,
+ambiguous, unavailable, timed-out, or side-effecting results. The coordinator must
+not write or silently repair the resume itself. Require macOS or Linux; Windows
+preflight fails closed with `POSIX_RUNTIME_REQUIRED`.
+
+For Codex only, omit model flags by default because the hardened subprocess ignores
+user configuration and transient parent-session settings; do not claim an inherited
+profile, model, or Ultra setting. Add `--model <exact-model>` and/or
+`--reasoning-effort ultra` only when the user explicitly requests those pins. There
+is no runtime profile option, and Claude must not receive Codex-only pins.
+
+Accept the `resume-team-result/v2` runtime result only on exit `0`,
+`terminal_class: PUBLISHED`, and an
+independent SHA-256 match between `final_draft_digest` and the published
+`resume.md`. Require its `candidate_fit_report` and
+`candidate_fit_report_digest` to exactly match the independently validated
+preflight. `PUBLISHED` means only an authorized, digest-verified Markdown
+draft-stage artifact. It is not a completed package and must not be reported as
+one. This command must still complete cover-letter generation, resume DOCX,
+cover-letter DOCX, tracker update, artifact/state verification, cleanup, and its
+final report before reporting package completion.
+
+If the runtime's defense-in-depth recomputation returns
+`REJECTED:CANDIDATE_FIT` or `FAILED:CANDIDATE_FIT_PREFLIGHT`, require the
+prospective output path to remain absent and stop without any role result,
+finalization, or fallback draft.
+
+The `PUBLISHED` result must also contain an inline `resume-team-final-receipt/v2`
+`authorization_receipt`, its
+`authorization_receipt_digest`, and a durable `authorization_receipt_path`. Resolve
+it against the output directory when relative and require its resolved parent to
+equal the resolved output directory. Read only a regular, non-symlink JSON file;
+validate `schemas/resume-team-final-receipt.schema.json`, recompute its canonical
+digest, and match both receipt fields. Require matching
+run/case IDs; require its candidate-fit report and digest to match the runtime and
+independent preflight; and bind `draft_digest` and `verified_target_digest` to
+`final_draft_digest` and the independently hashed `resume.md`. Recompute
+`source_digest` from the current configured master and `job_description_digest`
+from the fixed sibling `job_description.txt`; require a SHA-256 Researcher
+artifact and distinct same-host native Researcher/Auditor identities. Require exact
+`auditor_attestation` with a native agent ID, SHA-256 artifact digest, PASS verdict,
+and the same draft digest. Require exact `authorization_report` with the same draft,
+`passed: true`, no codes, and exactly three ordered named PASS votes—`evidence`,
+`human_voice`, `canonical_integrity`—with no codes, the same draft, and distinct
+invocation IDs. Its canonical digest must equal `authorization_digest`, and
+`vote_invocation_ids` must equal the vote IDs in order. Require a publication ID.
+Fail closed on any missing, malformed, stale, or mismatched value, and preserve the
+durable sidecar during cleanup.
+
+Authorization is byte-specific and immutable. After the runtime publishes `resume.md`, neither
+the coordinator nor any scoring/audit step may edit, rewrite, normalize, format, or
+otherwise change it. Any desired resume change invalidates the authorization and
+requires an entirely new `resume-team/v2` run with a fresh `run_id`; do not reuse
+agents, handoffs, verdicts, votes, or digests from the prior run. All writing and
+score-improvement guidance later in this command is input guidance for a fresh
+native-team run only, never permission for coordinator-authored edits.
+
+Immediately before DOCX creation, all three independent votes must exit 0 on the
+same final draft digest: `evidence_audit.py`, `human_voice_audit.py`, and
+`resume_integrity_audit.py`. ATS/HR/LLM scores are advisory and cannot override a
+failed role or deterministic gate.
 
 ---
 
@@ -39,7 +149,7 @@ curl -s http://localhost:8100/health
 - If server responds with `{"status":"ok",...}`: Proceed immediately (scoring calls will take <2s each).
 - If server NOT running: Start it in background:
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "scorer-server"):
+Start this as a background shell session from the repo root:
 cd "." && python scorer_server.py --port 8100
 ```
 Then retry `/health` up to 15 seconds (models now lazy-load on first request, server starts in ~5s). Once healthy, proceed.
@@ -55,78 +165,46 @@ NOTE: v2.1 Performance Improvements Applied:
 
 ---
 
-## PHASE 0.5: JOB FIT PRE-CHECK (mandatory gate)
+## PHASE 1: READ-ONLY MASTER/JD PLANNING
 
-Before investing time in tailoring, run the Job Fit Scorer to check for knockout disqualifiers:
+The candidate-fit gate is already complete. Keep the configured master resume as
+the sole base and factual source; do not search for or use a prior tailored resume.
 
-```bash
-curl -s -X POST http://localhost:8100/score/job-fit \
-  -H "Content-Type: application/json" \
-  -d '{"resume_text": "<master_resume_text>", "jd_text": "<jd_text>"}'
-```
-
-If server is not running, use Python directly:
-```python
-from job_fit_scorer import calculate_job_fit, format_report
-result = calculate_job_fit(resume_text, jd_text)
-```
-
-**Decision gate:**
-- **STRONG FIT (75+)**: Proceed to Phase 1.
-- **MODERATE FIT (55-74)**: Proceed — show the user fixable gaps and note them for Phase 2 writing.
-- **WEAK FIT (35-54)**: PAUSE. Show the user the report and ask: "This job is a weak fit (score: X). [Show knockouts/gaps]. Continue anyway?"
-- **NO-GO (<35 or hard knockouts)**: STOP. Show the full report with knockouts and alternative job titles. Do NOT proceed to Phase 1. Tell the user: "This job has disqualifying requirements: [list knockouts]. Better-fit roles for your profile: [alternatives]."
-
-Display the fit score, any knockouts, and key dimensions before proceeding.
+- Read the configured master for canonical job titles, dates, company names,
+  education, certifications, publications, and memberships.
+- Extract company and role only to derive a prospective sanitized
+  `applications/{CompanyName} - {JobTitle}/` path. Require the path not to exist;
+  do not create it or save state there.
+- Complete the JD Deconstruction in STEP 1 below as planning input for a fresh
+  native run. It cannot alter or waive the already passing candidate-fit report.
 
 ---
 
-## PHASE 1: PARALLEL RESEARCH + JD DECONSTRUCTION (launch all simultaneously)
+## PHASE 2: NATIVE TEAM, THEN ADVISORY BASE SCORING
 
-Execute these 3 actions in a single parallel tool call (no agents needed — use Read, Glob, and Write tools simultaneously):
+Invoke the mandatory native runtime first with the exact private JD, prospective
+non-existing output path, and the same `run_id`, `case_id`, and `as_of_date` used
+by the candidate-fit preflight. The runtime independently recomputes that report
+before it creates the output directory or invokes Researcher. Require its report
+and digest to exactly match the independently validated preflight.
 
-Action A — Find best matching resume:
-- Use `Glob` to find all `applications/**/*Resume*.docx` files
-- From the folder names (format: `{Company} - {JobTitle}`), identify the most semantically similar role to the new JD (same domain, similar responsibilities, overlapping keywords)
-- If a match is found (PREFERRED): Read the `.docx` using Python via Bash: `python -c "from docx import Document; [print(p.text) for p in Document('path').paragraphs]"`
-- If no match found: Fall back to the master resume (read `config.json` for `master_resume_path`, or glob for `*MASTER*RESUME*.md`, `*MASTER*RESUME*.docx`, `*MASTER*RESUME*.pdf`)
+After an authorized `PUBLISHED` result has been fully verified, initialize shared
+state using the configured master resume—not a prior tailored resume:
 
-Action B — Read master resume:
-- Read the master resume (path from `config.json` → `master_resume_path`) for canonical job titles, dates, company names, education, certifications, publications, and memberships (these NEVER change)
-- **Format-aware reading:** `.md`/`.txt` → use `Read` tool directly. `.pdf` → use `Read` tool directly (Claude handles PDFs natively). `.docx` → call `extract_text` MCP tool with the file path (Claude cannot read binary DOCX files directly).
-
-Action B2 — Check Supplemental Experience:
-- Read `SUPPLEMENTAL_EXPERIENCE.md` in the project root. This file contains experience entries (e.g., independent drug development research) that are NOT in the master resume.
-- During JD Deconstruction, evaluate whether ANY supplemental entries match the JD (check the USE WHEN / DO NOT USE WHEN guidance in the file).
-- If a supplemental entry matches: include it in the tailored resume at the appropriate chronological position. If it does not match: omit it entirely.
-- NEVER add supplemental entries to the master resume itself — they are selective-use only.
-
-Action C — Setup output + initialize orchestration state:
-- Extract company name and job title from JD
-- Create output folder: `applications/{CompanyName} - {JobTitle}/`
-- Save JD as `job_description.txt` in the output folder
-- Initialize shared state via Bash:
 ```
 cd "." && python -c "
 from orchestration_state import init_state
-init_state('applications/{folder}', '{Company}', '{JobTitle}', 'applications/{folder}/job_description.txt', '{base_template}')
+init_state('applications/{folder}', '{Company}', '{JobTitle}', 'applications/{folder}/job_description.txt', '{configured_master_resume_path}')
 print('State initialized')
 "
 ```
 
-THEN — Before writing anything, complete the JD Deconstruction (see STEP 1 in Scoring-Aware Writing Rules below). This takes 30 seconds and prevents generic, under-optimized drafts.
+ATS and HR base scores are needed only for the final comparison report. They are
+advisory and cannot override candidate fit or authorize writing.
 
----
-
-## PHASE 2: BACKGROUND BASE SCORING + IMMEDIATE RESUME WRITING
-
-Launch background Bash agents AND start writing immediately — do NOT wait for base scores.
-
-Base scores are only needed for the final comparison report, NOT for writing the resume.
-
-Background Agent A — Combined Base Score (ATS + HR) → writes to state.json:
+Background Task A — Combined Base Score (ATS + HR) -> writes to state.json:
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "base-scorer"):
+Run in a background shell session named `base-scorer` if available:
 cd "." && python -c "
 from orchestration_state import write_score_results, set_phase, log_error
 import subprocess, json
@@ -135,7 +213,7 @@ try:
     result = subprocess.run(
         ['curl', '-s', '-X', 'POST', 'http://localhost:8100/score/both',
          '-H', 'Content-Type: application/json',
-         '-d', json.dumps({'resume_path': '{base_template_path}',
+         '-d', json.dumps({'resume_path': '{configured_master_resume_path}',
                            'jd_path': 'applications/{folder}/job_description.txt'})],
         capture_output=True, text=True, timeout=120)
     write_score_results('applications/{folder}', 'base_both', result.stdout)
@@ -145,11 +223,13 @@ except Exception as e:
     print(f'Error: {e}')
 "
 ```
-Fallback (if server not running): Use 2 separate Bash agents with `python ats_scorer.py --score ... --json` and `python hr_scorer.py --score ... --json`, piping output through `write_score_results('applications/{folder}', 'base_ats'|'base_hr', result)`.
+Fallback (if server not running): Run `python ats_scorer.py --score ... --json` and `python hr_scorer.py --score ... --json` against the configured master and exact fixed JD as separate shell scoring commands, piping output through `write_score_results('applications/{folder}', 'base_ats'|'base_hr', result)`.
 
-MAIN AGENT — Generate the tailored resume using the Scoring-Aware Writing Rules (Steps 0-2 below).
+NATIVE RESUME TEAM — The mandatory runtime above atomically writes the authorized `resume.md`; the coordinator must not write or save the role output again. Independently recompute the published file's SHA-256 and require it to equal `final_draft_digest`. Any later byte change invalidates this run. Record this as draft-stage authorization only, not package completion.
 
-Save as `resume.md` in the output folder when done, then update state:
+The runtime has already published `resume.md`; never save or rewrite it. Only after
+the runtime result, resume digest, and durable receipt have all been independently
+verified may the coordinator record that existing path and advance state:
 ```
 cd "." && python -c "
 from orchestration_state import update_state, set_phase
@@ -165,11 +245,11 @@ CRITICAL .md FORMATTING RULE: Do NOT use `**` (markdown bold asterisks) anywhere
 
 ## PHASE 3: PARALLEL SCORING + COVER LETTER (launch all simultaneously)
 
-Once `resume.md` is saved, launch 3 agents in a single parallel tool call:
+Once the runtime-published `resume.md` and its receipt are verified, run tailored scoring and cover-letter writing concurrently where possible:
 
-Background Agent C — Combined Tailored Score (ATS + HR + LLM) → writes to state.json:
+Background Task C — Combined Tailored Score (ATS + HR + LLM) -> writes to state.json:
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "tailored-scorer"):
+Run in a background shell session named `tailored-scorer` if available:
 cd "." && python -c "
 from orchestration_state import write_score_results, set_phase, log_error
 import subprocess, json
@@ -188,12 +268,12 @@ except Exception as e:
     print(f'Error: {e}')
 "
 ```
-NOTE: `/score/combined` runs all 3 scorers (ATS rules + HR rules + LLM Claude) and returns blended scores (70% rules + 30% LLM). If LLM fails (no API key, timeout), it gracefully falls back to rules-only.
+NOTE: `/score/combined` runs all 3 scorers (ATS rules + HR rules + LLM rubric scorer) and returns blended scores (70% rules + 30% LLM). If LLM fails (no API key, timeout), it gracefully falls back to rules-only.
 Fallback (if server not running): Use CLI scorers + llm_scorer.py directly.
 
-Background Agent E — Cover Letter:
+Background Task E — Cover Letter:
 ```
-Use Task tool (subagent_type: "general-purpose", run_in_background: true, name: "cover-letter-writer"):
+Draft the cover letter in parallel with scoring if possible:
 Prompt: "Generate a one-page cover letter (350-400 words) for {Name} applying to {Job Title} at {Company}.
 
 JD: [paste full JD text]
@@ -223,9 +303,9 @@ Email: {user_email from config.json}"
 
 ---
 
-## PHASE 4: PRECISION DIAGNOSIS + ITERATION (max 3 rounds)
+## PHASE 4: ADVISORY SCORE REVIEW (no post-authorization editing)
 
-1. Collect all three scores from state.json (single read replaces polling multiple agent outputs):
+1. Collect all three scores from state.json (single read replaces polling multiple task outputs):
 ```
 cd "." && python -c "
 from orchestration_state import read_state
@@ -245,7 +325,7 @@ llm = ts.get('llm', {})
 print(f'--- Rules-based ---')
 print(f'ATS (rules): {rules_ats.get(\"total_score\", \"?\")}%')
 print(f'HR  (rules): {rules_hr.get(\"overall_score\", \"?\")}%')
-print(f'--- LLM (Claude) ---')
+print(f'--- LLM rubric scorer ---')
 print(f'ATS (LLM): {llm.get(\"ats_score\", \"?\")}%')
 print(f'HR  (LLM): {llm.get(\"hr_score\", \"?\")}%')
 if llm.get('explanation'):
@@ -256,166 +336,128 @@ if state.get('errors'):
     print(f'Errors: {json.dumps(state[\"errors\"], indent=2)}')
 "
 ```
-Use the COMBINED scores for iteration decisions (they incorporate LLM semantic understanding).
-2. Diagnose BEFORE editing — follow the decision trees in Step 3 of Scoring-Aware Writing Rules below. Fix the highest-weighted gap first.
+Use the COMBINED scores only for reporting and for deciding whether to accept the
+already-authorized draft. Scoring is advisory: it never authorizes a resume change,
+and a low score is not a failed safety vote.
 
-IF ATS < 75%:
-```
-1. Keyword Match (22%) — Are all high-frequency JD nouns in Core Competencies?
-   FIX: Add missing JD keywords to Core Competencies
-2. Semantic Similarity (22%) — Is Summary using JD vocabulary or paraphrased vocabulary?
-   FIX: Rewrite Summary sentences 2-3 to mirror JD phrasing exactly
-3. Weighted Industry Terms (18%) — Are all domain-critical keywords present?
-   FIX: Add missing domain terms to Core Competencies
-4. Phrase Match (13%) — Are exact 2-4 word JD phrases appearing verbatim?
-   FIX: Insert 1-2 exact JD phrases into bullets naturally
-5. BM25 (13%) — Are key terms appearing at least twice but not more than twice?
-   FIX: Add one natural repetition of under-represented terms
-STOP if boilerplate ceiling applies (~69-73%). Max 2 iteration cycles.
-```
+2. If ATS or HR is below target, record the component-level diagnosis without
+changing `resume.md`. The coordinator has only two allowed choices:
+   - accept the authorized draft and report the advisory score honestly; or
+   - discard this candidate and start a complete new native-team run with a fresh
+     `run_id`, beginning again at Researcher and ending with a new Auditor verdict.
 
-IF ATS >= 75% AND HR < 70%:
-```
-1. Job Fit (25%) — Are domain-defining terms in first 100 words?
-   FIX: Rewrite Summary sentence 1 to lead with domain identity
-2. Skills Match (20%) — Are skills IN ACTION (verb + skill + metric) or just listed?
-   FIX: Reframe 2-3 listed skills as action bullets (2x weight multiplier)
-3. Experience Fit (20%) — Does Summary explicitly state years of experience?
-   FIX: Ensure Summary mentions years matching JD minimum +/- 3 yrs
-4. Impact Signals (15%) — Do 50%+ of bullets contain metrics?
-   FIX: Add metrics to bare bullets. Move highest-magnitude metric to bullet 1.
-5. Competitive Edge (10%) — Are prestige signals (top companies/universities) appearing early?
-   FIX: Name-drop in Summary sentence 1 or 3
-```
-
-IF ATS >= 75% AND HR >= 70%:
-   PASS — proceed to finalization
-
-Re-score after each iteration using all 3 scorers and write to state.json:
-```
-cd "." && python -c "
-from orchestration_state import write_score_results, update_state, read_state
-import subprocess, json
-result = subprocess.run(
-    ['curl', '-s', '-X', 'POST', 'http://localhost:8100/score/combined',
-     '-H', 'Content-Type: application/json',
-     '-d', json.dumps({'resume_path': 'applications/{folder}/resume.md',
-                        'jd_path': 'applications/{folder}/job_description.txt'})],
-    capture_output=True, text=True, timeout=180)
-write_score_results('applications/{folder}', 'tailored_combined', result.stdout)
-state = read_state('applications/{folder}')
-ts = state.get('tailored_scores', {})
-iters = state.get('iterations', [])
-iters.append({
-    'round': len(iters)+1,
-    'combined_ats': ts.get('combined_ats', '?'),
-    'combined_hr': ts.get('combined_hr', '?'),
-    'rules_ats': ts.get('rules_ats', {}).get('total_score', '?'),
-    'rules_hr': ts.get('rules_hr', {}).get('overall_score', '?'),
-    'llm_ats': ts.get('llm', {}).get('ats_score', '?'),
-    'llm_hr': ts.get('llm', {}).get('hr_score', '?'),
-    'changes': ['describe changes']
-})
-update_state('applications/{folder}', 'iterations', iters)
-"
-```
-
-Iteration protocol:
-| Iteration | Focus | Stop Condition |
-|-----------|-------|----------------|
-| 1 | Fix top 2 gaps from diagnosis | Re-score |
-| 2 | Fix remaining gaps if still below target | Re-score |
-| 3 | Micro-adjustments only (single word/phrase swaps) | Accept if within 3 pts of target |
-| MAX | Do not exceed 3 iterations | Diminishing returns / risk of over-optimization |
-
-Anti-patterns to avoid during iteration:
-- Stuffing keywords that don't match real experience
-- Inflating metrics beyond defensible truth
-- Breaking readability grade above 12 with complex rewrites
-- Removing metrics to make room for keywords (metrics are 15% of HR)
-- Editing Publications or Education sections
+3. A fresh run may use the scoring diagnosis only as planning context outside the
+signed handoffs. It must still obey the scoped payloads in `commands/resume-team.md`.
+Never patch the old draft, invoke Writer or Editor alone, reuse a handoff, or carry
+forward an Auditor verdict or deterministic vote. Bound the workflow to three
+complete team runs; if targets remain unmet, accept the best fully authorized
+candidate or report failure without publishing.
 
 ---
 
-## PHASE 5: PARALLEL FINALIZATION (launch all 3 simultaneously)
+## PHASE 4.5: EVIDENCE + HUMAN VOICE AUDITS (mandatory before DOCX)
 
-Once scores pass AND cover letter is ready, set phase to finalizing and launch 3 agents in a single parallel tool call:
-```
-cd "." && python -c "from orchestration_state import set_phase; set_phase('applications/{folder}', 'finalizing')"
+The following are authorization votes, not editing tools. First confirm the current
+`resume.md` SHA-256 still equals the candidate digest and that the final Auditor
+returned `PASS` for exactly that digest. Then run all three independent commands:
+
+```bash
+python evidence_audit.py "applications/{folder}/resume.md"
+python human_voice_audit.py "applications/{folder}/resume.md"
+python resume_integrity_audit.py --config config.json --tailored "applications/{folder}/resume.md"
 ```
 
-Background Agent F — Resume DOCX (from markdown) → updates state.json:
+- Recompute SHA-256 immediately before and after each command, and record that
+  command's exit code only against the observed unchanged candidate digest.
+- Authorization exists only when the final Auditor verdict is `PASS`, all three
+  commands exit 0, and all four decisions refer to the same unchanged digest.
+- If a vote fails or the digest changes, reject this run. Do not fix the file from
+  audit output. Either stop or begin a complete fresh team run with a new `run_id`.
+- Run `python human_voice_audit.py "applications/{folder}/cover_letter.md" --mode cover_letter`
+  separately. Cover-letter correction may change only `cover_letter.md`; it must
+  never change the authorized resume.
+- Do not generate DOCX while any required vote is missing, failed, or digest-stale.
+
+Shared lexicon: `data/ai_tells.json`. Examples: `references/human_voice_examples.md`.
+
+---
+
+## PHASE 5: ORDERED FINALIZATION
+
+Immediately before DOCX, reread and revalidate the durable authorization sidecar
+against the runtime result and `resume.md`, then recompute `resume.md` SHA-256 one
+last time. Proceed only
+if it equals the digest shared by the final Auditor `PASS` and all three exit-0
+votes. No process may modify `resume.md` after this check. Resume DOCX creation
+must complete first, and its exceptions must propagate and stop the workflow.
+Only after the verified resume exists may the phase become `finalizing`; then
+create the cover-letter DOCX, and only after both DOCX files succeed may the
+tracker run. Tracker updates and cleanup are forbidden if authorization is absent,
+failed, or stale.
+
+Task F — Authorized resume DOCX -> update state only after verified success:
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "resume-docx-creator"):
 cd "." && python -c "
-from docx_generator import create_resume_from_md
-from orchestration_state import update_state, log_error
-try:
-    create_resume_from_md('applications/{folder}/resume.md', 'applications/{folder}/{Name}_Resume_{Company}.docx')
-    update_state('applications/{folder}', 'docx_resume_path', 'applications/{folder}/{Name}_Resume_{Company}.docx')
-    print('Resume DOCX created successfully')
-except Exception as e:
-    log_error('applications/{folder}', 'finalizing', f'Resume DOCX failed: {e}')
-    print(f'Error: {e}')
+from pathlib import Path
+from docx_generator import create_resume_from_md_authorized
+from final_receipt_verifier import verify_final_receipt
+from orchestration_state import set_phase, update_state
+app_dir = Path('applications/{folder}')
+resume_path = app_dir / 'resume.md'
+raw_receipt = Path('{authorization_receipt_path from runtime result}')
+receipt_path = raw_receipt if raw_receipt.is_absolute() else app_dir / raw_receipt
+receipt_digest = '{authorization_receipt_digest from runtime result}'
+output_path = app_dir / '{Name}_Resume_{Company}.docx'
+verify_final_receipt(resume_path=resume_path, receipt_path=receipt_path, expected_receipt_digest=receipt_digest)
+create_resume_from_md_authorized(str(resume_path), str(output_path), receipt_path=str(receipt_path), expected_receipt_digest=receipt_digest, config_path='config.json')
+if output_path.is_symlink() or not output_path.is_file() or output_path.stat().st_size == 0:
+    raise RuntimeError('AUTHORIZED_RESUME_DOCX_NOT_VERIFIED')
+update_state(str(app_dir), 'docx_resume_path', str(output_path))
+set_phase(str(app_dir), 'finalizing')
+print('Resume DOCX created successfully')
 "
 ```
 
-Background Agent G — Cover Letter DOCX (ALWAYS use create_ats_cover_letter directly) → updates state.json:
+Task G — Authorized cover-letter DOCX (run only after Task F succeeds) -> update state only after verified success:
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "cover-letter-docx-creator"):
 cd "." && python -c "
-from docx_generator import create_ats_cover_letter
-from orchestration_state import update_state, log_error
-try:
-    with open('applications/{folder}/cover_letter.md', 'r') as f:
-        content = f.read()
-    lines = [l.strip() for l in content.split('\n') if l.strip()]
-    body_paragraphs = []
-    skip_patterns = [config_name.split()[0], config_city, config_phone[:7], 'Dear', 'Sincerely', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December', 'January', 'Hiring Manager', 'Re:']
-    for line in lines:
-        if not any(p in line for p in skip_patterns) and len(line) > 50:
-            body_paragraphs.append(line)
-    create_ats_cover_letter(
-        output_path='applications/{folder}/{Name}_Cover_Letter_{Company}.docx',
-        name='{user_name from config.json}',
-        contact_info={'city': '{city}', 'state': '{state}', 'phone': '{phone}', 'email': '{email}'},
-        date='{date}',
-        recipient_info={'name': 'Hiring Manager', 'company': '{Company}', 'title': ''},
-        job_title='{Job Title}',
-        paragraphs=body_paragraphs[:4],
-        closing='Sincerely'
-    )
-    update_state('applications/{folder}', 'docx_cover_letter_path', 'applications/{folder}/{Name}_Cover_Letter_{Company}.docx')
-    print('Cover Letter DOCX created successfully')
-except Exception as e:
-    log_error('applications/{folder}', 'finalizing', f'Cover Letter DOCX failed: {e}')
-    print(f'Error: {e}')
+from pathlib import Path
+from docx_generator import create_cover_letter_from_md_authorized
+from final_receipt_verifier import verify_final_receipt
+from orchestration_state import update_state
+app_dir = Path('applications/{folder}')
+resume_path = app_dir / 'resume.md'
+raw_receipt = Path('{authorization_receipt_path from runtime result}')
+receipt_path = raw_receipt if raw_receipt.is_absolute() else app_dir / raw_receipt
+receipt_digest = '{authorization_receipt_digest from runtime result}'
+output_path = app_dir / '{Name}_Cover_Letter_{Company}.docx'
+verify_final_receipt(resume_path=resume_path, receipt_path=receipt_path, expected_receipt_digest=receipt_digest)
+create_cover_letter_from_md_authorized(str(app_dir / 'cover_letter.md'), str(output_path), authorized_resume_path=str(resume_path), receipt_path=str(receipt_path), expected_receipt_digest=receipt_digest, job_title='{Job Title}', company='{Company}')
+if output_path.is_symlink() or not output_path.is_file() or output_path.stat().st_size == 0:
+    raise RuntimeError('AUTHORIZED_COVER_LETTER_DOCX_NOT_VERIFIED')
+update_state(str(app_dir), 'docx_cover_letter_path', str(output_path))
+print('Cover Letter DOCX created successfully')
 "
 ```
 
-Background Agent H — Update Tracker → updates state.json:
+Task H — Authorized tracker update (run only after Tasks F and G succeed) -> mark state only after literal `True`:
 ```
-Use Task tool (subagent_type: "Bash", run_in_background: true, name: "tracker-updater"):
 cd "." && python -c "
-from tracker_utils import add_application
-from orchestration_state import update_state, log_error
-try:
-    add_application(
-        company='{Company}',
-        job_title='{Job Title}',
-        resume_file='{Name}_Resume_{Company}.docx',
-        cover_letter_file='{Name}_Cover_Letter_{Company}.docx',
-        jd_file='job_description.txt',
-        ats_score={final_ats},
-        hr_score={final_hr},
-        application_date=None,
-        status='Applied'
-    )
-    update_state('applications/{folder}', 'tracker_updated', True)
-    print('Tracker updated successfully')
-except Exception as e:
-    log_error('applications/{folder}', 'finalizing', f'Tracker update failed: {e}')
-    print(f'Error: {e}')
+from pathlib import Path
+from final_receipt_verifier import verify_final_receipt
+from orchestration_state import update_state
+from tracker_utils import TrackerUpdateError, add_application_authorized
+app_dir = Path('applications/{folder}')
+resume_path = app_dir / 'resume.md'
+raw_receipt = Path('{authorization_receipt_path from runtime result}')
+receipt_path = raw_receipt if raw_receipt.is_absolute() else app_dir / raw_receipt
+receipt_digest = '{authorization_receipt_digest from runtime result}'
+verify_final_receipt(resume_path=resume_path, receipt_path=receipt_path, expected_receipt_digest=receipt_digest)
+updated = add_application_authorized(company='{Company}', job_title='{Job Title}', authorized_resume_path=str(resume_path), receipt_path=str(receipt_path), expected_receipt_digest=receipt_digest, resume_file='{Name}_Resume_{Company}.docx', cover_letter_file='{Name}_Cover_Letter_{Company}.docx', jd_file='job_description.txt', ats_score={final_ats}, hr_score={final_hr}, application_date=None, status='Applied')
+if updated is not True:
+    raise TrackerUpdateError('TRACKER_UPDATE_NOT_CONFIRMED')
+update_state(str(app_dir), 'tracker_updated', True)
+print('Tracker updated successfully')
 "
 ```
 
@@ -429,17 +471,17 @@ cd "." && python -c "
 from orchestration_state import read_state, set_phase, cleanup_state
 import json
 state = read_state('applications/{folder}')
+required = ('docx_resume_path', 'docx_cover_letter_path')
+missing = [key for key in required if not state.get(key)]
+errors = state.get('errors', [])
+if missing or errors or not state.get('tracker_updated'):
+    raise SystemExit(f'Finalization incomplete: missing={missing}, errors={len(errors)}, tracker={state.get("tracker_updated", False)}')
 set_phase('applications/{folder}', 'done')
 print(json.dumps(state, indent=2))
-# Check for any errors logged during the run
-errors = state.get('errors', [])
-if errors:
-    print(f'\nWARNING: {len(errors)} error(s) during run:')
-    for e in errors: print(f'  [{e[\"phase\"]}] {e[\"message\"]}')
 "
 ```
 2. Extract base_scores and tailored_scores from the state dict for the comparison report
-3. Delete intermediate files: `resume.md`, `cover_letter.md`, and `state.json` (AFTER verifying DOCX paths exist in state)
+3. Delete intermediate files: `resume.md`, `cover_letter.md`, and `state.json` (AFTER verifying DOCX paths exist in state). Never delete the durable authorization-receipt sidecar.
 ```
 cd "." && python -c "
 from orchestration_state import cleanup_state
@@ -454,13 +496,13 @@ print('Cleanup complete')
 
 ```
 ================================================================================
-          RESUME BUILDER - FINAL REPORT (v5.1 Triple-Scorer Swarm)
+          RESUME BUILDER - FINAL REPORT (Native Team + Triple Scoring)
 ================================================================================
 
 COMPANY: {Company Name}
 POSITION: {Job Title}
 DOMAIN DETECTED: {clinical_research/pharma_biotech/technology/etc.}
-BASE TEMPLATE: {source application folder or "Master Resume"}
+BASE RESUME: {configured master_resume_path}
 
 --------------------------------------------------------------------------------
                     COMBINED SCORES (70% Rules + 30% LLM)
@@ -515,24 +557,29 @@ SCORES              |    {X}%       |    {Y}%      |    {X}%     |    {Y}%
 FOLDER: applications/{Company} - {JobTitle}/
 
 ================================================================================
-SCORERS: 3 (ATS Rules + HR Rules + LLM Claude)
-SWARM AGENTS USED: {count} | ITERATIONS: {count}
+SCORERS: 3 (ATS Rules + HR Rules + LLM rubric scorer)
+CONCURRENT TASKS USED: {count} | ITERATIONS: {count}
 ================================================================================
 ```
 
 5. Offer to open web comparison reports:
 ```bash
-python ats_scorer.py --web --base "{base_template}" --tailored "applications/{folder}/resume.md" --jd "applications/{folder}/job_description.txt"
+python ats_scorer.py --web --base "{configured_master_resume_path}" --tailored "applications/{folder}/resume.md" --jd "applications/{folder}/job_description.txt"
 python hr_scorer.py --score "applications/{folder}/{Name}_Resume_{Company}.docx" "applications/{folder}/job_description.txt" --web
 ```
 
 ---
 
-## SCORING-AWARE WRITING RULES (Applied during Phase 2)
+## NATIVE WRITER GUIDANCE (fresh team runs during Phase 2 only)
+
+Only native role agents may act on this section. It never authorizes the
+coordinator, a scorer, or an audit to change a saved candidate.
 
 ### STEP 0 — INTERNALIZE THE SCORING ENGINE
 
-Read both scoring tables in full before writing a single word. Every section you write maps to specific weighted components. The weights tell you where to spend your editing budget.
+Read both scoring tables before starting the native team. Every section the Writer
+proposes maps to weighted components; the guidance must remain subordinate to the
+role scopes, evidence contract, and Auditor.
 
 ATS Scorer (7 components):
 
@@ -566,7 +613,7 @@ Domain Bonuses (auto-detected):
 
 ### STEP 1 — JD DECONSTRUCTION (complete before writing)
 
-Extract each item below and hold it as your editing blueprint. If you skip this step, your draft will be generic and under-optimized.
+The Researcher extracts the items below into its scoped rubric for a fresh run.
 
 1A. Role Classification:
 - Role tier: Lead CS, supporting CS, or hybrid? Determines seniority framing in summary.
@@ -585,21 +632,21 @@ Extract each item below and hold it as your editing blueprint. If you skip this 
 
 1C. Ceiling Check:
 Does the JD contain non-role boilerplate? (Salary ranges, benefits paragraphs, staffing-agency language, EEO text exceeding 2 sentences)
-- If YES: ATS ceiling is ~69-73%. Set expectations. Do NOT over-iterate chasing 75%+ if all domain component weights are at 100%. Max 2 iteration cycles.
+- If YES: ATS ceiling is ~69-73%. Set expectations. Do not chase 75%+ when all domain component weights are maxed; at most two complete fresh team retries.
 - If NO: Standard 75-85% ATS target applies.
 
 ---
 
 ### STEP 2 — SECTION-BY-SECTION OPTIMIZATION
 
-Each section targets specific scoring components. The component targets are listed so you know exactly why you're making each choice.
+These constraints guide the Writer's proposal inside a fresh authorized run.
 
 #### PROFESSIONAL SUMMARY
 Targets: Semantic Similarity (22%), Job Fit (25%), BM25 (13%)
 
 | Sentence | Purpose | Rule |
 |----------|---------|------|
-| 1 | Identity + seniority + domain | "Physician and [target profession from JD] with 10+ years of combined clinical and [target domain] experience" — ALWAYS lead with "Physician and" to establish MD differentiator, then the target role descriptor (e.g., "medical information professional", "clinical researcher", "medical writer", "clinical trial manager"). Use "combined clinical and [domain]" to bridge clinical background to target field. |
+| 1 | Identity + seniority + domain | "[Title descriptor] with [X] years in [domain/specialty]" |
 | 2 | JD phrase injection | Use 2-3 exact JD noun phrases naturally in one sentence |
 | 3 | Top differentiator | Include highest-magnitude metric available |
 | 4 | Forward-looking alignment | Match JD mission or company therapeutic focus |
@@ -639,9 +686,9 @@ Verb Hierarchy (use L3+ for 70%+ of bullets):
 
 | Level | Label | Verbs | Usage Target |
 |-------|-------|-------|--------------|
-| L4 | Transformative | Pioneered, Architected, Instituted, Generated, Secured | 1-2 bullets max (signature achievements) |
-| L3 | Directive | Spearheaded, Directed, Championed, Orchestrated, Established | Primary verb level (40-50% of bullets) |
-| L2 | Managerial | Led, Managed, Oversaw, Coordinated, Supervised | Supporting bullets (20-30%) |
+| L4 | Transformative | Built, Created, Secured, Cut, Recovered | Use only where the master resume proves the result |
+| L3 | Directive | Led, Directed, Established, Governed, Validated | Primary verb level (40-50% of bullets) |
+| L2 | Managerial | Managed, Oversaw, Coordinated, Supervised, Reviewed | Supporting bullets (20-30%) |
 | L1 | Contributory | Reviewed, Monitored, Assisted, Supported, Participated | Minimize (10% or less) |
 | L0 | AVOID | "Responsible for", "Helped", "Worked on" | Never use |
 
@@ -735,40 +782,34 @@ ATS FORMAT RULES:
 - Recent relevant roles: 3-4 bullets each
 - Older relevant roles: 2-3 bullets each
 - Very old roles (10+ years): 1-2 bullets
-- RULE: Every role from the master resume must appear. Never skip a role to save space. Condense bullets, not roles.
 
 ---
 
-### WRITING COACH (Rules 1-10 — Apply to EVERY bullet)
+### WRITING COACH — HUMAN VOICE + IMPACT (Rules 0–16)
 
-Rule 1 (So What?): Every bullet must show impact, not just activity
-Rule 2 (6-Second): Front-load value in first 3 words of each bullet
-Rule 3 (Deadwood): Strip "Responsible for", "Successfully", "Various", "Helped", "Assisted"
-Rule 4 (Metrics): 50%+ of bullets must contain quantified metrics (plain text, no ** bold)
-Rule 5 (Verbs L3+): 70%+ verbs at Directive/Strategic/Transformative level
-Rule 6 (Architecture): Use Impact Lead, Challenge-Action-Result, or Scope-Authority structures
-Rule 7 (Burstiness): Vary bullet lengths: SHORT (6-10 words), MEDIUM (11-18 words), LONG (19-28 words). Never 3+ bullets in a row at same approximate length. Target per job block: 1-2 short, 3-4 medium, 1-2 long.
-Rule 8 (Parallel): Consistent grammar patterns within each role
-Rule 9 (Summary Hook): Open with identity + authority, close with differentiator
-Rule 10 (Authenticity): Every bullet must pass the "Could they discuss this in an interview?" test
+Full skill: `commands/writing-coach.md`. Rule 0 (human voice) overrides all other writing rules.
 
-Rule 11 (Anti-Cliché): FORBIDDEN verbs: Spearheaded, Leveraged, Utilized, Facilitated, Ensured, Demonstrated, Collaborated, Streamlined, Championed, Fostered, Harnessed, Liaised. USE: Led, Directed, Built, Drove, Cut, Grew, Won, Launched, Transformed, Redesigned, Managed.
+- Rule 0: Human voice gate — out-loud test + `human_voice_audit.py` must pass
+- Rule 1–2: So-what + front-load value
+- Rule 3: Deadwood out; do NOT replace with leverage/spearhead/etc.
+- Rule 4: 50%+ bullets with real metrics (plain text, no ** bold)
+- Rule 5: Plain strong verbs (Led, Built, Wrote, Cut, Reviewed) — ban AI-cliché openers
+- Rule 6: Flexible structures; allow punch fragments; avoid identical skeletons
+- Rule 7: Burstiness — mix 6–12 / 13–20 / 21–28 word bullets; mean ≤ 22; CV ≥ 0.30
+- Rule 8: Light parallel structure (tense/grammar), not metronome length
+- Rule 9: Summary = plain identity + one proof + optional differentiator (≤ 3 sentences, ≤ 70 words). Never "Results-driven…"
+- Rule 10: Interview test
+- Rules 11–16: Banned AI lexicon, no synonym-pair padding, keyword hierarchy (Competencies → Summary → bullets), brevity caps, machine audit, out-loud test
 
-Rule 12 (Grammatical Variety): Min 2 bullets per job block must NOT start with an action verb. Options: noun-led ("Key architect of…"), participial ("Working across 5 teams, unified…"), result-led ("Zero protocol deviations — achieved via…").
-
-Rule 13 (Texture): One real-world specific detail per job block: named tool, regulation, or real constraint. e.g. "using Medidata Rave", "per ICH E6(R2)", "despite COVID-19 closures".
-
-Rule 14 (Summary Anti-Cliché): NEVER write: "proven track record", "passionate about", "dynamic professional", "results-driven". First sentence MUST follow this format: "Physician and [target profession] with 10+ years of combined clinical and [target domain] experience..." — always lead with "Physician and" to establish MD differentiator, followed by the target role descriptor derived from the JD (e.g., "medical information professional", "clinical researcher", "clinical trial operations professional"). Max 4 sentences. Sound like a senior practitioner, not a LinkedIn template.
-
-Tone: Senior professional — authoritative and evidence-based, NOT junior coordinator.
+Tone: Confident human professional — specific, calm, brief. Not junior fluff and not corporate AI poetry.
 
 ---
 
 ## QUICK REFERENCE — SCORING CHEAT SHEET
 
-Fastest levers by gap type:
+Possible Writer emphasis for a complete fresh run:
 
-| Problem | Fastest Fix | Weight Moved |
+| Advisory score gap | Fresh-run Writer emphasis | Weight Moved |
 |---------|-------------|--------------|
 | ATS low, keywords missing | Add to Core Competencies | 22% |
 | ATS low, phrasing off | Rewrite Summary in JD language | 22% |
@@ -791,8 +832,7 @@ Component coverage by section:
 
 ## ETHICAL REQUIREMENTS (NON-NEGOTIABLE)
 
-- NEVER CHANGE JOB TITLES — Must match master resume exactly (copy verbatim, including all qualifiers already in the title)
-- NEVER OMIT JOB EXPERIENCES — All roles from the master resume must be included. Older or less-relevant roles get fewer bullets (min 1), but zero roles may be dropped.
+- NEVER CHANGE JOB TITLES — Must match master resume exactly
 - NEVER CHANGE PUBLICATIONS — Titles and citations stay as-is
 - Never invent experience — Only reframe existing content
 - Keywords go in: Core Competencies (primary), Summary (3-5 terms), select bullets

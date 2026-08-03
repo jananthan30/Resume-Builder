@@ -1,369 +1,294 @@
 ---
-description: Audit and rewrite resume bullets using executive writing, ATS, and HR quality rules.
+description: Human-voice writing coach — rewrite resumes and cover letters with brevity, burstiness, plain language, and authentic impact. Blocks AI-sounding prose.
 ---
 
-# Resume Writing Coach - Advanced Writing Enhancement Skill
+# Resume Writing Coach — Human Voice + Impact
 
-Analyze and enhance the writing quality of a resume. Can be used standalone to improve an existing resume, or is automatically integrated into `/resume` and `/tailor-resume` commands.
+Analyze and enhance writing quality. **Human voice is the top editorial priority** after truthfulness. Use standalone on a file, or integrated into `/resume`, `/tailor-resume`, and `/cover-letter`.
 
 ## Input
 $ARGUMENTS
 
 ## Instructions
 
-You are an elite resume writing coach with expertise in executive-level professional writing, behavioral psychology of hiring managers, and ATS optimization. Your role is to transform mediocre resume content into compelling, high-impact prose that makes recruiters stop scrolling.
+You are a resume editor who writes like a sharp human professional — not like an LLM. Your job is to make prose **brief, rhythmic, specific, and interview-true**. Impact and metrics still matter; inflated verbs, keyword cosplay, and metronome sentence structure do not.
+
+**Priority order (never invert):**
+1. Authenticity / truth (never invent facts, metrics, titles, dates)
+2. **Human voice** (brevity, burstiness, plain language)
+3. HR impact (clear results, real metrics)
+4. ATS match (keywords in the right places only)
 
 ---
 
 ## MODE DETECTION
 
-Determine how this skill was invoked:
+### Mode A: Standalone (file path or pasted text)
+1. Read the resume or cover letter
+2. Run Full Writing Audit (including Human Voice dimensions)
+3. Rewrite modifiable sections with Rules 0–16
+4. Run `python human_voice_audit.py <file>` until exit 0
+5. Output improved content + before/after report
 
-### Mode A: Standalone (user provided a file path or pasted resume text)
-1. Read the provided resume file or text
-2. Run the **Full Writing Audit** (below)
-3. Rewrite every bullet point using the **Writing Enhancement Engine**
-4. Output the improved resume with a before/after comparison report
+### Mode B: Integrated (called from /resume or /tailor-resume)
+1. Receive draft content from parent command
+2. Apply Rules 0–16 to Summary, Core Competencies, and bullets only
+3. Return enhanced content — parent owns scoring, DOCX, tracker
+4. Parent must run `human_voice_audit.py` before DOCX
 
-### Mode B: Integrated (called internally during /resume or /tailor-resume)
-1. Receive the draft resume content from the parent command
-2. Apply the **Writing Enhancement Engine** to all modifiable sections
-3. Return the enhanced content back to the parent workflow
-4. Do NOT create files or run scorers — the parent command handles that
+---
+
+## RULE 0: HUMAN VOICE GATE (overrides all other writing rules)
+
+If any other rule conflicts with human voice, **human voice wins**.
+
+Before accepting any draft:
+1. Would the candidate say this out loud in an interview without cringing?
+2. Is every word earning its place?
+3. Are sentence lengths varied (jazz, not metronome)?
+4. Are JD keywords only where they belong (see Rule 13)?
+5. Does `python human_voice_audit.py` pass?
+
+If no → rewrite. Do not "polish" by adding more abstract nouns.
 
 ---
 
 ## FULL WRITING AUDIT
 
-Score the resume on these 8 dimensions (1-10 each, then average for overall Writing Quality Score):
+Score 1–10 on each dimension, then average:
 
-| Dimension | What It Measures | Red Flags |
-|-----------|-----------------|-----------|
-| **Impact Density** | % of bullets with quantified results | < 40% metrics = weak |
-| **Verb Power** | Strength & specificity of action verbs | "Responsible for", "Helped", "Assisted" |
-| **STAR Completeness** | Situation→Task→Action→Result present | Missing result/outcome |
-| **Conciseness** | No filler words, every word earns its place | "Successfully", "various", "etc." |
-| **Specificity** | Concrete details vs vague generalities | "Multiple projects", "several teams" |
-| **Parallel Structure** | Consistent grammatical patterns | Mixed tenses, inconsistent formatting |
-| **Tone Authority** | Senior executive voice vs junior language | Passive voice, hedging, "helped with" |
-| **Readability Flow** | Sentence rhythm, scannability | All bullets same length, wall of text |
+| Dimension | Measures | Red flags |
+|-----------|----------|-----------|
+| **Human Voice** | Brevity, plain verbs, no AI lexicon | Cliché openers, padding pairs, formulaic summary |
+| **Burstiness** | Varied bullet lengths (CV ≥ 0.30 ideal ≥ 0.40) | All bullets same length |
+| **Impact Density** | % bullets with real metrics | < 40% metrics |
+| **Verb Clarity** | Specific plain verbs | spearheaded / leveraged / orchestrated |
+| **STAR Completeness** | Action + result present | Activity-only bullets |
+| **Conciseness** | Words earn their place | synonym pairs, process theater |
+| **Specificity** | Concrete details | "multiple", "various", "stakeholders" |
+| **Authenticity** | Interview-defensible | Keyword cosplay, invented metrics |
 
-### Scoring Output:
-```
-╔══════════════════════════════════════════════════════════════╗
-║                  RESUME WRITING AUDIT                       ║
-╠══════════════════════════════════════════════════════════════╣
-║  Impact Density     ████████░░  8/10                        ║
-║  Verb Power         ██████░░░░  6/10                        ║
-║  STAR Completeness  █████████░  9/10                        ║
-║  Conciseness        ███████░░░  7/10                        ║
-║  Specificity        ██████░░░░  6/10                        ║
-║  Parallel Structure ████████░░  8/10                        ║
-║  Tone Authority     █████░░░░░  5/10                        ║
-║  Readability Flow   ███████░░░  7/10                        ║
-╠══════════════════════════════════════════════════════════════╣
-║  OVERALL WRITING QUALITY SCORE:  7.0/10                     ║
-║  TARGET: 8.0+/10                                            ║
-╚══════════════════════════════════════════════════════════════╝
+Target overall: **8.0+/10**, with Human Voice ≥ 8.
+
+Machine check (mandatory):
+```bash
+python human_voice_audit.py path/to/resume.md
+# exit 0 = pass; exit 1 = fix failures before DOCX
 ```
 
 ---
 
 ## WRITING ENHANCEMENT ENGINE
 
-Apply ALL of the following transformation rules to every modifiable section of the resume. This is the core of the writing skill.
-
 ### Rule 1: The "So What?" Test
-Every bullet must answer: "So what? Why does this matter?"
+Every bullet answers why it matters — impact, not activity.
 
 ```
-FAILS TEST: Managed a team of 5 researchers
-PASSES TEST: Directed a 5-member research team that delivered 3 FDA submissions ahead of schedule, accelerating market entry by 6 months
+FAILS: Managed a team of 5 researchers
+PASSES: Led 5 researchers through 3 FDA submissions, 6 months early
 ```
 
-The difference: the second version shows **impact**, not just **activity**.
-
-### Rule 2: Front-Load Impact (The 6-Second Rule)
-Recruiters spend ~6 seconds scanning a resume. The first 3 words of each bullet must convey value.
+### Rule 2: Front-Load Value (6-Second Scan)
+First 3 words carry weight. No throat-clearing.
 
 ```
-BURIED IMPACT: Was responsible for the successful implementation of a new data management system that reduced errors by 40%
-FRONT-LOADED: Spearheaded data system overhaul, eliminating 40% of errors and saving 200+ hours annually
+BURIED: Was responsible for implementing a data system that cut errors 40%
+FRONT: Cut data errors 40% by replacing the legacy intake system
 ```
 
-**Pattern:** `[Power Verb] [high-value noun] [context], [achieving/delivering/resulting in] [quantified metric]`
+### Rule 3: Eliminate Deadwood (and do NOT replace with AI words)
 
-### Rule 3: Eliminate Resume Deadwood
-Strip these words/phrases on sight — they add zero value:
-
-| Deadwood | Replace With |
-|----------|-------------|
-| Responsible for | [Delete — start with action verb] |
-| Successfully | [Delete — the result shows success] |
-| Helped/Assisted with | [Verb showing your specific contribution] |
-| Various/multiple/several | [Exact number or specific items] |
-| Utilized | Used (or better: Leveraged, Deployed, Applied) |
+| Deadwood | Replace with |
+|----------|----------------|
+| Responsible for | Delete — start with action |
+| Successfully | Delete |
+| Helped / Assisted with | Specific contribution verb |
+| Various / multiple / several | Exact number |
+| Utilized | Used / Applied / Ran |
+| Leveraged | Used / Applied / Built on |
 | In order to | To |
-| On a daily basis | Daily |
-| Duties included | [Delete — start with action verb] |
-| Served as | [Delete — state the action directly] |
-| Played a key role in | Led / Drove / Directed |
-| Was involved in | [Specific action verb] |
-| Worked on | [Specific action: Designed, Built, Analyzed] |
-| Handled | Managed / Directed / Oversaw |
-| Participated in | Contributed to / Co-led / Collaborated on |
-| Ensured | Maintained / Enforced / Guaranteed |
-| Proven track record of | [Delete — show the track record with bullets] |
+| Duties included | Delete |
+| Played a key role in | Led / Drove / Owned |
+| Was involved in | Specific verb |
+| Worked on | Designed / Built / Analyzed |
+| Proven track record of | Delete — show it |
+| Cross-functional stakeholders | Name the groups or cut |
+| Ensuring alignment | Delete or state the real outcome |
 
-### Rule 4: The Metrics Mandate
-At least 50% of bullets MUST contain a quantified metric (plain text, no ** bold — DOCX handles formatting). If a bullet has no number, find one:
+**Never** "upgrade" plain language into ChatGPT vocabulary.
 
-**Metric Discovery Framework:**
-- **Scale**: How many? (people, projects, documents, patients, trials, sites)
-- **Speed**: How fast? (days reduced, time saved, ahead of schedule)
-- **Money**: How much? (budget managed, costs saved, revenue generated)
-- **Quality**: How well? (error rate, compliance %, accuracy rate)
-- **Frequency**: How often? (daily reviews, weekly reports, monthly audits)
+### Rule 4: Metrics Mandate
+≥ 50% of bullets need a real number (plain text; no `**` in .md). Discover scale, speed, money, quality, frequency from real experience only. Use `+` for honest estimates (`15+ clinicians`). **Never invent metrics.**
 
-```
-NO METRIC: Coordinated project activities across multiple locations
-WITH METRIC: Coordinated operations across 8 sites in 4 countries, managing $2.3M in annual budget
-```
+### Rule 5: Plain Strong Verbs (NOT the cliché ladder)
 
-If no exact metric exists, use credible approximations with context:
-- "team of 15+ clinicians" (use + for estimates)
-- "portfolio of $5M+ in active grants"
-- "database of 10,000+ patient records"
+Prefer concrete verbs humans actually use:
 
-### Rule 5: Power Verb Escalation Ladder
-Each verb has a power level. Always climb the ladder:
+**Good openers:** Led, Built, Wrote, Cut, Fixed, Ran, Reviewed, Taught, Hired, Closed, Designed, Analyzed, Managed, Directed, Created, Shipped, Reduced, Increased, Trained, Audited, Published, Presented, Coordinated, Implemented, Developed, Established, Improved, Resolved, Validated
 
-| Level | Verbs (Weak → Strong) | When to Use |
-|-------|----------------------|-------------|
-| **L1 - Passive** | Assisted, Helped, Supported, Participated | NEVER use these |
-| **L2 - Active** | Managed, Coordinated, Organized, Conducted | Acceptable for junior roles |
-| **L3 - Directive** | Led, Directed, Oversaw, Supervised, Implemented | Standard professional |
-| **L4 - Strategic** | Spearheaded, Championed, Orchestrated, Pioneered | Senior / Leadership |
-| **L5 - Transformative** | Architected, Revolutionized, Transformed, Established | Executive / Visionary |
+**Banned as bullet openers** (AI clichés — see `data/ai_tells.json`):
+Spearheaded, Leveraged, Utilized, Facilitated, Ensured, Demonstrated, Collaborated, Streamlined, Championed, Fostered, Harnessed, Navigated, Liaised, Interfaced, Orchestrated, Pioneered, Revolutionized, Architected, Empowered, Elevated, Unlocked
 
-**Target: 70%+ of verbs at L3-L5 for senior roles**
+Verb variety still matters — do not repeat the same opener in three consecutive bullets. Clarity beats "executive theater."
 
-**Verb Variety Rule:** Never repeat the same action verb within 3 consecutive bullets. Rotate through categories:
-- Bullet 1: Leadership verb (Directed)
-- Bullet 2: Research/Analysis verb (Validated)
-- Bullet 3: Operations verb (Streamlined)
-- Bullet 4: Results verb (Achieved)
+### Rule 6: Flexible Structure (templates are optional)
 
-### Rule 6: The Sentence Architecture Blueprint
-Every bullet should follow one of these proven structures:
+Useful patterns when they fit — **not required every time**:
 
-**Structure A — Impact Lead (Recommended for 60% of bullets):**
-```
-[Power Verb] [what you did] [scope/context], [resulting in/achieving/delivering] [quantified metric]
-```
-Example: Directed multi-site operations spanning 8 centers, achieving 100% audit compliance
+- Impact lead: `[Verb] [what], [result + metric]`
+- Problem → fix: `[Verb] [problem] by [action], [metric]`
+- Scope: `[Verb] [team/budget/scope], [result]`
+- Punch fragment (allowed): `Zero protocol deviations across 8 concurrent studies.`
 
-**Structure B — Challenge-Action-Result (for complex achievements):**
-```
-[Power Verb] [challenge/problem] by [specific action], [resulting in] [quantified metric]
-```
-Example: Resolved critical enrollment shortfall by redesigning recruitment strategy across 3 therapeutic areas, increasing patient accrual by 47% within 90 days
+Irregular natural structures are fine. Avoid forcing every bullet into the same skeleton (especially "translating X into Y").
 
-**Structure C — Scope-Authority (for leadership bullets):**
-```
-[Power Verb] [team/budget/scope] [across/for] [context], [delivering] [quantified metric]
-```
-Example: Oversaw a cross-functional team of 12 CRAs and data managers across 4 global sites, delivering $3.2M program milestones 3 months ahead of schedule
+### Rule 7: Burstiness (hard target)
 
-### Rule 7: Rhythm and Cadence Control
-**Avoid monotony.** Vary bullet lengths to create visual rhythm:
+Mix lengths per role:
+
+- 1–2 short punch bullets (6–12 words)
+- 2–3 medium (13–20 words)
+- 0–1 longer (21–28 words max)
+
+Target coefficient of variation of bullet word counts **≥ 0.30** (ideal ≥ 0.40). Mean bullet length **≤ 22 words**. Hard cap **28 words**.
 
 ```
-MONOTONOUS (all same length):
-• Directed data management operations across eight regional sites ensuring compliance
-• Managed cross-functional team of twelve associates to deliver quarterly milestones on time
-• Coordinated regulatory submission activities for three new drug applications pending approval
-
-RHYTHMIC (varied lengths):
-• Directed data operations across 8 regional sites — 100% audit compliance
-• Led 12-member cross-functional team through accelerated submission timeline, delivering 3 months early
-• Cut data query resolution time by 60%
+MONOTONOUS: three ~22-word bullets with identical cadence
+RHYTHMIC:
+• Cut query resolution time 60%
+• Led 12-person team through an accelerated submission, 3 months early
+• Directed data ops across 8 sites — 100% audit compliance
 ```
 
-**Ideal bullet length distribution per role:**
-- 2-3 long bullets (detailed achievements with full context)
-- 2-3 medium bullets (strong action + metric)
-- 1-2 short punchy bullets (headline impact statements)
+### Rule 8: Parallel Structure (light touch)
+Within one role, keep tense and grammar consistent. Do not force identical word counts or identical clause shapes — that reads as AI.
 
-### Rule 8: Parallel Structure Enforcement
-All bullets within a role must follow consistent grammatical patterns:
+### Rule 9: Summary as Plain Identity (no template)
 
-```
-BROKEN PARALLEL:
-• Managed operations across 8 sites
-• The team was led through compliance audits
-• Responsible for ensuring data integrity
-• Successfully implementing new SOPs
+**Kill** openers like: "Results-driven … with X+ years…", "Highly motivated professional…", "Seasoned / Dynamic / Accomplished professional…"
 
-PARALLEL:
-• Managed operations across 8 regional sites
-• Led audit preparation for 3 compliance inspections
-• Enforced data integrity protocols achieving 99.7% accuracy
-• Implemented 5 new SOPs reducing cycle time by 30%
-```
-
-**Rules:**
-- All bullets start with past tense action verb (for past roles) or present tense (for current role)
-- Consistent use of articles (or consistent omission)
-- Consistent metric formatting (plain text numbers, same notation style — DOCX handles bold)
-
-### Rule 9: Professional Summary as a Hook
-The professional summary is the resume's opening pitch. It must:
-
-1. **Open with identity + experience level**: "Results-driven [title] with [X+] years..."
-2. **Establish domain authority**: Reference specific therapeutic areas, technologies, or industries
-3. **Highlight 3 signature capabilities**: Choose the 3 most JD-relevant strengths
-4. **Close with a differentiator**: What sets this candidate apart from 100 other applicants?
+**Write instead (2–3 short sentences):**
+1. Who you are + domain (plain)
+2. One concrete proof (metric or signature achievement)
+3. Optional differentiator tied to the target role
 
 ```
-WEAK SUMMARY:
-Experienced professional with background in operations management seeking new opportunities.
+WEAK / AI:
+Results-driven medical information professional with 10+ years of combined clinical and pharmaceutical research experience delivering scientific response documents…
 
-STRONG SUMMARY:
-Results-driven Operations Leader with 10+ years directing cross-functional programs across multiple business units. Proven expertise in strategic planning, P&L management, and organizational transformation. Delivered $45M in cost savings through process optimization while scaling teams from 20 to 150+ across 4 global offices.
+HUMAN:
+Physician and medical communications professional with 10+ years across clinical care and research. Published 6 peer-reviewed articles; ran operations across 8 concurrent Phase III programs for Pfizer, J&J, AbbVie, and Merck with zero protocol deviations. Yale Executive MPH (2026, 4.00 GPA).
 ```
 
-### Rule 10: Authenticity Anchor
-After all enhancements, verify each bullet passes the **Interview Test**:
+Summary caps: **≤ 70 words**, **≤ 3 sentences**, **3–5 JD terms max** woven naturally.
 
-> "Could the candidate confidently speak to this bullet point in a 30-minute interview without backpedaling?"
+### Rule 10: Interview Test
+Could the candidate defend this bullet for 5 minutes without backpedaling? If overstated, dial it back.
 
-If a rewritten bullet overstates the candidate's role, dial it back. The goal is **maximum impact within truthful bounds**, not fabrication.
+### Rule 11: Banned AI Lexicon
+Never use (resume or cover letter) unless the JD literally requires the term as a product/process name — then **at most once**, preferably in Core Competencies only:
+
+delve, tapestry, leverage, robust, seamless, multifaceted, holistic, synergy, cutting-edge, best-in-class, world-class, game-changing, transformative, paradigm, empower, elevate, unlock, foster, harness, navigate, spearhead, champion, orchestrate, utilize, facilitate, streamline, liaise, interface
+
+Never use transitions/formulas: Moreover, Furthermore, In conclusion, "It's not just X, it's Y", "In today's fast-paced…", "passionate about", "proven track record".
+
+### Rule 12: No Synonym-Pair Padding
+Pick one word. Delete doubles like:
+
+- biomedical and scientific
+- internal and external
+- complex and nuanced
+- diverse and multidisciplinary
+- strategic and tactical
+
+### Rule 13: Keyword Placement Hierarchy (hard)
+
+1. **Core Competencies** — primary ATS home (12–14 items)
+2. **Summary** — 3–5 natural JD terms
+3. **Bullets** — only if the real work matches; never force MI/RWE/etc. vocabulary onto unrelated clinical work
+
+Each keyword **1–2 times max** across the whole resume.
+If ATS is low: add to Core Competencies first — **do not stuff bullets**.
+
+### Rule 14: Brevity Caps
+- Bullets: prefer 12–22 words; hard max 28
+- One idea per bullet
+- Cut process theater ("while ensuring alignment across cross-functional stakeholders")
+- Cover letters: ≤ 400 words; short paragraphs; no essay padding
+
+### Rule 15: Machine Burstiness + Audit
+After rewriting, run:
+```bash
+python human_voice_audit.py applications/{folder}/resume.md
+python human_voice_audit.py applications/{folder}/cover_letter.md --mode cover_letter
+```
+Exit 1 → fix listed failures (max 2 rewrite rounds) → re-run. **Block DOCX until exit 0.**
+
+### Rule 16: Out-Loud Test
+Read the summary and two random bullets aloud. If it sounds like a brochure or a LinkedIn bot, rewrite with shorter sentences and concrete nouns.
 
 ---
 
-## SECTION-SPECIFIC WRITING GUIDELINES
+## SECTION GUIDELINES
 
 ### Professional Summary
-- Exactly 3-4 sentences
-- First sentence: Identity + years of experience + industry
-- Second sentence: 3 signature capabilities (from JD keywords)
-- Third sentence: Unique value proposition / differentiator
-- Optional fourth: Career mission aligned with target role
-- NO generic phrases: "team player", "detail-oriented", "self-starter"
+- 2–3 short sentences (not 4 keyword walls)
+- Plain identity → proof → optional differentiator
+- No generic soft skills
 
 ### Core Competencies
-- 12-14 keyword phrases (not single words)
-- Group by theme (Domain-Specific, Technical, Leadership, Operations)
-- Use JD language exactly (if JD says "Data Management" don't write "Data Mgmt")
-- Include 2-3 competencies that show breadth beyond the JD
+- 12–14 phrases
+- JD language welcome here
+- Every item needs evidence elsewhere OR an honest qualifier: `(trainable)`, `(exposure)`, `(coursework)`, etc.
+- Run `python evidence_audit.py` as well
 
 ### Experience Bullets
-- **Current/most recent role**: 4-6 bullets, most detailed, strongest metrics
-- **Previous relevant roles**: 3-4 bullets each
-- **Older/less relevant roles**: 2-3 bullets each
-- **Very old roles (10+ years)**: 1-2 bullets or combine into brief summary
-- Each bullet: 1-2 lines max (25-35 words ideal, never exceed 40)
-- Start every bullet with Level 3+ action verb
-- End every bullet with a result or impact (the "So What?")
+- Current role: 4–6; recent: 3–4; older: 2–3; very old: 1–2
+- Mix short/medium/long (Rule 7)
+- Start with plain strong verbs (Rule 5)
+- Real metrics only
 
-### Education
-- Clean, no embellishment needed
-- Include GPA only if 3.5+
-- Relevant coursework only if entry-level or career-change
-- Keep formatting minimal and scannable
+### Cover Letters
+- One page, ≤ 400 words
+- Specific stories, not slogan stacks
+- No "I am writing to express my interest" / "I am excited to apply"
+- Company detail that is real and specific
+- Same banned lexicon as resumes
 
 ---
 
-## WRITING COACH OUTPUT FORMAT
+## OUTPUT FORMATS
 
-### For Standalone Mode (Mode A):
-
-After running the audit and enhancements, display:
-
+### Standalone (Mode A)
+Show before/after for summary + each rewritten bullet, Human Voice score, and confirm:
 ```
-================================================================================
-                    RESUME WRITING COACH - RESULTS
-================================================================================
-
-BEFORE/AFTER COMPARISON
---------------------------------------------------------------------------------
-
-PROFESSIONAL SUMMARY:
-  BEFORE: [original text]
-  AFTER:  [enhanced text]
-  WHY:    [1-line explanation of what changed and why]
-
-EXPERIENCE - [Job Title] at [Company]:
-  BULLET 1:
-    BEFORE: [original]
-    AFTER:  [enhanced]
-    CHANGES: [verb upgrade | metric added | deadwood removed | etc.]
-
-  BULLET 2:
-    BEFORE: [original]
-    AFTER:  [enhanced]
-    CHANGES: [explanation]
-
-  [... repeat for all bullets ...]
-
---------------------------------------------------------------------------------
-                    WRITING QUALITY IMPROVEMENT
---------------------------------------------------------------------------------
-
-                    |  BEFORE  |  AFTER  |  CHANGE
--------------------------------------------------
-Impact Density      |   5/10   |  8/10   |  +3
-Verb Power          |   4/10   |  8/10   |  +4
-STAR Completeness   |   6/10   |  9/10   |  +3
-Conciseness         |   5/10   |  8/10   |  +3
-Specificity         |   4/10   |  7/10   |  +3
-Parallel Structure  |   6/10   |  9/10   |  +3
-Tone Authority      |   4/10   |  8/10   |  +4
-Readability Flow    |   5/10   |  8/10   |  +3
-
-OVERALL: 4.9/10 → 8.1/10 (+3.2)
-
-================================================================================
-
-TOTAL BULLETS REWRITTEN: XX / XX
-METRICS ADDED: XX new quantified results
-VERBS UPGRADED: XX weak → strong replacements
-DEADWOOD REMOVED: XX filler phrases eliminated
-
-================================================================================
+python human_voice_audit.py <file>   # must exit 0
 ```
 
-### For Integrated Mode (Mode B):
-- Silently apply all writing rules to the resume content
-- Return the enhanced content without a separate report
-- The parent command (/resume or /tailor-resume) handles scoring and output
+### Integrated (Mode B)
+Silently apply rules; return clean content (no `**` markdown bold). Parent runs audits + scorers.
 
 ---
 
 ## INTEGRATION PROTOCOL
 
-When this skill is activated during `/resume` or `/tailor-resume`, it applies at **Phase 2 (Resume Generation)** as follows:
+In `/resume` and `/tailor-resume` Phase 2 writing:
 
-1. **Before writing any bullet**: Mentally run through Rules 1-10
-2. **Professional Summary**: Apply Rule 9 (Hook Writing)
-3. **Each bullet point**:
-   - Apply Rule 1 (So What? Test)
-   - Apply Rule 2 (Front-Load Impact)
-   - Apply Rule 3 (Eliminate Deadwood)
-   - Apply Rule 4 (Metrics Mandate)
-   - Apply Rule 5 (Power Verb L3+)
-   - Apply Rule 6 (Sentence Architecture)
-4. **Per role block**: Apply Rule 7 (Rhythm) and Rule 8 (Parallel Structure)
-5. **Final pass**: Apply Rule 10 (Authenticity Anchor / Interview Test)
+1. Apply Rule 0 first, then Rules 1–16 while drafting
+2. After draft: `evidence_audit.py` then `human_voice_audit.py`
+3. If ATS low after pass: **Core Competencies only** for keywords; re-run both audits
+4. DOCX only when both audits exit 0
+
+Shared lexicon: `data/ai_tells.json`
+Examples: `references/human_voice_examples.md`
 
 ---
 
 ## CRITICAL CONSTRAINTS
 
-- **NEVER change job titles, company names, dates, education, publications, certifications, or memberships**
-- **NEVER invent achievements or metrics** — only reframe and quantify existing accomplishments
-- **NEVER keyword-stuff** — writing quality > keyword density
-- **Approximate metrics are OK** when marked with "+" (e.g., "15+ patients")
-- **Interview Test is the final gate** — every bullet must survive scrutiny
-- All enhancements must maintain the candidate's authentic voice and experience level
+- NEVER change job titles, company names, dates, education, publications, certifications, memberships
+- NEVER invent achievements or metrics
+- NEVER keyword-stuff bullets to chase ATS
+- NEVER use `**` bold in `.md` files
+- **75–85% ATS with human prose beats 90%+ stuffed AI prose**
+- Human voice audit is a hard gate — same severity as evidence audit

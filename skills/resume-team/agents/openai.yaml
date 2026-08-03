@@ -1,0 +1,4 @@
+interface:
+  display_name: "Resume Team"
+  short_description: "Publish a fact-checked Markdown resume draft"
+  default_prompt: "Use $resume-team to create an authorized, digest-verified resume.md draft for this job description."
