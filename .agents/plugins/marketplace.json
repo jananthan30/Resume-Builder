@@ -8,7 +8,7 @@
       "name": "resume-builder",
       "source": {
         "source": "local",
-        "path": "./plugins/resume-builder"
+        "path": "./"
       },
       "policy": {
         "installation": "AVAILABLE",

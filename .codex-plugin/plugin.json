@@ -4,7 +4,6 @@
   "description": "AI-powered resume builder with job discovery, dual ATS + HR scoring, cover letter generation, and Workday-compatible DOCX output.",
   "author": {
     "name": "Resume Builder Contributors",
-    "email": "",
     "url": "https://github.com/jananthan30"
   },
   "homepage": "https://github.com/jananthan30/Resume-Builder",
@@ -24,7 +23,21 @@
     "workday",
     "mcp"
   ],
-  "mcpServers": "./.codex.mcp.json",
+  "skills": "./skills/",
+  "mcpServers": {
+    "ai-resume-tuner": {
+      "command": "python",
+      "args": [
+        "mcp_scorer.py"
+      ],
+      "cwd": ".",
+      "env": {
+        "SCORER_CLOUD_URL": "https://resume-scorer.fly.dev"
+      },
+      "startup_timeout_sec": 20,
+      "tool_timeout_sec": 120
+    }
+  },
   "interface": {
     "displayName": "Resume Builder",
     "shortDescription": "Tailor resumes, write cover letters, score job fit, and generate DOCX applications",

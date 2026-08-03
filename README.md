@@ -32,14 +32,18 @@ Most resume tools only score the resume you bring to them. ResumeHQ goes further
 You paste a job description (or search for jobs). The system:
 
 1. **Discovers** matching jobs from live job boards — scored and ranked by fit with your resume
-2. **Analyzes** the JD — extracts keywords, required skills, domain, seniority level
-3. **Tailors** your master resume — rewrites bullets, reorders sections, matches terminology
-4. **Scores** the result with two independent engines (ATS + HR simulation)
-5. **Iterates** automatically until scores hit targets (ATS 75-85%, HR 70%+)
-6. **Generates** production-ready DOCX files (resume + cover letter)
-7. **Tracks** every application in an Excel spreadsheet
+2. **Gates candidate fit** — the configured master must score at least 70 against
+   the exact JD with zero hard knockouts before resume work begins
+3. **Analyzes** passing JDs — extracts keywords, required skills, domain, seniority level
+4. **Tailors** your master resume — rewrites bullets, reorders sections, matches terminology
+5. **Scores** the result with two independent advisory engines (ATS + HR simulation)
+6. **Iterates** automatically until scores hit targets (ATS 75-85%, HR 70%+)
+7. **Generates** production-ready DOCX files (resume + cover letter)
+8. **Tracks** every application in an Excel spreadsheet
 
-All of this runs in **parallel** — scoring happens in the background while the resume is being written, cover letters generate simultaneously, and DOCX files are created in parallel. ~50% faster than sequential execution.
+The candidate-fit gate always runs first and cannot be bypassed by ATS/HR scores.
+After it passes, safe read/scoring work may run concurrently while authorization,
+DOCX generation, and tracker mutation remain ordered.
 
 ---
 
@@ -64,7 +68,9 @@ codex plugin marketplace add .
 
 Then restart Codex and install **Resume Builder** from the **Resume Builder Local** marketplace.
 
-**Step 2: Run the setup wizard**
+**Step 2: Configure the runtime**
+
+Claude Code exposes the plugin setup command:
 
 ```
 /resume-builder:setup
@@ -77,11 +83,27 @@ This walks you through everything:
 - Optionally links a Pro account for unlimited cloud scoring
 - Optionally sets up the LLM scorer (Claude API key)
 
+For Codex, install Python 3.10+, run `python -m pip install -r requirements.txt`,
+and create `config.json` with a valid `master_resume_path`. The installed Codex
+surface exposes the Resume Team as `$resume-team`; it does not expose the
+Claude-style `/resume-builder:*` command namespace.
+
 **Step 3: Start building resumes**
+
+Claude Code:
 
 ```
 /resume-builder:resume [paste a job description here]
 ```
+
+Codex:
+
+```
+$resume-team [paste a job description here]
+```
+
+`$resume-team` publishes an authorized, digest-verified `resume.md` draft. It does
+not by itself create a DOCX or complete an application package.
 
 Or find jobs first:
 
@@ -91,38 +113,45 @@ Or find jobs first:
 
 ---
 
-## Slash Commands (8)
+## Claude Code Slash Commands (9)
 
 | Command | What It Does |
 |---------|-------------|
 | `/resume-builder:setup` | One-time setup wizard (installs Python deps, creates config, links Pro account) |
-| `/resume-builder:job-fit [JD]` | Quick GO/NO-GO job fit score before tailoring |
+| `/resume-builder:job-fit [JD]` | Deterministic master-vs-JD gate (>=70 and zero hard knockouts) before tailoring |
 | `/resume-builder:resume [JD]` | Full application: tailored resume + cover letter + scoring + DOCX + tracking |
 | `/resume-builder:tailor-resume [JD]` | Resume only (no cover letter) |
 | `/resume-builder:cover-letter [JD]` | Cover letter only |
 | `/resume-builder:find-jobs [title] [location]` | Discover and score matching jobs from live job boards |
 | `/resume-builder:batch-resume` | Process multiple job descriptions in parallel |
 | `/resume-builder:writing-coach [file]` | Audit and rewrite resume bullets using 10 writing rules |
+| `/resume-builder:resume-team [JD]` | Publish an authorized `resume.md` draft through the native Researcher → Writer → Auditor → Editor workflow |
 
-If running locally (cloned repo), use short names: `/resume`, `/tailor-resume`, `/find-jobs`, etc.
+If running Claude Code locally from the cloned repo, use short names: `/resume`,
+`/tailor-resume`, `/find-jobs`, etc. In Codex, invoke `$resume-team`.
 
 ### What Works Without Setup
 
-Even before running `/resume-builder:setup`, these commands work immediately (they're prompt-driven workflows — no Python needed):
+Some Claude Code commands can provide prompt-only previews before setup.
+Production resume generation through `/resume-builder:resume`,
+`/resume-builder:resume-team`, or Codex `$resume-team` requires Python,
+`config.json`, the deterministic candidate-fit preflight, and the evidence,
+human-voice, and canonical-integrity audit helpers; those gates are never skipped.
 
 | Command | Works immediately? | With setup? |
 |---------|-------------------|-------------|
-| `/resume-builder:job-fit` | Yes — heuristic fit analysis | + scorer-backed knockout detection |
-| `/resume-builder:resume` | Yes — the assistant writes the resume | + automated ATS/HR scoring and DOCX output |
+| `/resume-builder:job-fit` | No — requires the configured master and deterministic preflight | Digest-bound score, threshold, and hard-knockout decision |
+| `/resume-builder:resume` | No — the native team and deterministic audits require setup | Full audited resume + automated ATS/HR scoring and DOCX output |
+| `/resume-builder:resume-team` / `$resume-team` | No — requires macOS/Linux, the configured master resume, and Python audit helpers | Authorized, digest-verified `resume.md` draft; DOCX/tracker finalization is still pending |
 | `/resume-builder:cover-letter` | Yes — the assistant writes the letter | + DOCX output |
 | `/resume-builder:writing-coach` | Yes — full writing audit | Same |
 | `/resume-builder:find-jobs` | Yes — shows results (no score) | + ATS/HR fit scoring per job |
 | `/resume-builder:setup` | Yes — runs the setup wizard | N/A |
-| MCP scoring tools | No — needs Python | `score_resume`, `score_ats`, `score_hr`, `score_with_llm`, `rewrite_resume`, `explain_score`, `extract_text`, `discover_jobs` |
+| MCP scoring tools | No — needs Python | `score_resume`, `score_ats`, `score_hr`, `score_with_llm`, `explain_score`, `extract_text`, `discover_jobs` |
 
 ---
 
-## MCP Tools (8)
+## MCP Tools (7 production-supported surfaces)
 
 After running `/resume-builder:setup`, the MCP scorer auto-starts and provides these tools that Claude Code or Codex can call natively:
 
@@ -132,12 +161,11 @@ After running `/resume-builder:setup`, the MCP scorer auto-starts and provides t
 | `score_ats` | ATS keyword + semantic scoring (8 components) |
 | `score_hr` | HR recruiter simulation (6 factors + F-pattern) |
 | `score_with_llm` | LLM-augmented rubric scoring (requires ANTHROPIC_API_KEY) |
-| `rewrite_resume` | AI-powered resume tailoring to match a JD (requires ANTHROPIC_API_KEY) |
 | `explain_score` | Actionable improvement suggestions with missing keywords |
 | `extract_text` | Extract text from DOCX/PDF/MD/TXT files |
 | `discover_jobs` | Search live job boards and score each job against your resume |
 
-All MCP tools support **cloud-first scoring** — they try the cloud API first and fall back to local scoring automatically.
+All listed MCP tools support **cloud-first scoring** — they try the cloud API first and fall back to local scoring automatically. Legacy direct rewrite endpoints or functions are not production-authorized tailoring paths. The capability-isolated native Resume Team is the sole production rewrite and draft-publication path.
 
 ---
 
@@ -278,13 +306,15 @@ The MCP server operates in **thin client** mode: it tries the cloud API first fo
 5. /resume-builder:writing-coach    Optional — audit and improve writing quality
 ```
 
-Each command runs a multi-phase parallel workflow:
-- **Phase 1:** Parallel research (reads master resume, finds best match, sets up output folder)
-- **Phase 2:** Background scoring + resume writing (non-blocking)
-- **Phase 3:** Parallel scoring + cover letter generation
-- **Phase 4:** Auto-iteration if scores < threshold (max 2 rounds)
-- **Phase 5:** Parallel DOCX creation + tracker update
-- **Phase 6:** Cleanup + score report
+Each resume command follows a gated workflow:
+- **Phase 0:** Deterministic candidate-fit preflight against the configured master
+  and exact JD (>=70, zero hard knockouts). Rejected JDs create no output.
+- **Phase 1:** Read-only master/JD planning; prior tailored resumes are not inputs.
+- **Phase 2:** Native Researcher → Writer → Auditor → bounded Editor workflow.
+- **Phase 3:** Advisory ATS/HR scoring and cover-letter generation where requested.
+- **Phase 4:** Evidence, human-voice, and canonical-integrity authorization votes.
+- **Phase 5:** Ordered resume DOCX → cover-letter DOCX → tracker finalization.
+- **Phase 6:** Artifact verification, cleanup, and report.
 
 ---
 
@@ -535,26 +565,31 @@ The DOCX generator produces files optimized for Applicant Tracking Systems (Work
 
 ```
 Resume-Builder/
+├── agents/                     # Claude plugin-installed Researcher/Writer/Auditor/Editor definitions
+├── .codex/agents/              # Native Codex Researcher/Writer/Auditor/Editor definitions
+├── .claude/agents/             # Native Claude Code equivalents
 ├── .claude-plugin/             # Plugin manifest
 │   └── plugin.json             # Plugin metadata (name, version, author)
 ├── .codex-plugin/              # Codex plugin manifest
 │   └── plugin.json             # Codex metadata and install-surface copy
 ├── .agents/plugins/
 │   └── marketplace.json        # Local Codex marketplace entry
+├── skills/resume-team/         # Installable Codex Resume Team entrypoint
 ├── commands/                   # Slash commands (plugin format)
 │   ├── setup.md                # One-time setup wizard
-│   ├── job-fit.md              # Quick GO/NO-GO job fit pre-screen
-│   ├── resume.md               # Full application (Swarm v3.0)
+│   ├── job-fit.md              # Deterministic master-vs-JD candidate-fit gate
+│   ├── resume.md               # Full application (native four-role team)
+│   ├── resume-team.md          # Shared fail-closed coordinator protocol
 │   ├── tailor-resume.md        # Resume only
 │   ├── cover-letter.md         # Cover letter only
 │   ├── find-jobs.md            # Job discovery + scoring
 │   ├── batch-resume.md         # Batch processing
-│   └── writing-coach.md        # Writing enhancement (10 rules)
+│   └── writing-coach.md        # Human Voice + Impact rules (0-16)
 ├── hooks/                      # Plugin hooks
 │   └── hooks.json              # SessionStart: checks if scoring is ready
 ├── .mcp.json                   # MCP server config (auto-starts scorer)
 ├── .codex.mcp.json             # Codex MCP server config
-├── mcp_scorer.py               # MCP scoring server (8 tools, cloud-first thin client)
+├── mcp_scorer.py               # MCP scoring server (7 production-supported surfaces)
 ├── job_discovery.py            # Job search + two-tier scoring (Adzuna + Remotive)
 ├── data/                       # Reference databases for scoring
 │   ├── keywords_*.json         # Domain-specific keyword databases (6 domains)
@@ -570,8 +605,16 @@ Resume-Builder/
 ├── pii_redactor.py             # PII redaction via Presidio (pre-LLM API calls)
 ├── docx_generator.py           # ATS/Workday-compliant DOCX generator
 ├── orchestration_state.py      # Multi-agent state management (DAG)
+├── multi_agent_team.py         # Vendor-neutral, offline, fail-closed team controller
+├── candidate_fit_preflight.py  # Deterministic >=70/no-knockout first gate
+├── native_resume_team.py       # Hardened Codex/Claude CLI adapter and draft publisher
+├── schemas/
+│   ├── resume-team-handoff.schema.json # Strict public role handoff contract
+│   ├── resume-team-authorization.schema.json # Three-vote authorization contract
+│   ├── resume-team-final-receipt.schema.json # Durable draft-authorization sidecar contract
+│   └── resume-team-result.schema.json # Draft-stage runtime result contract
 ├── tracker_utils.py            # Excel application tracker utilities
-├── resume_builder.py           # CLI entry point
+├── resume_builder.py           # Retired direct-rewrite CLI; native-team migration guard
 ├── requirements.txt            # Python dependencies
 ├── config.example.json         # Config template
 ├── .env.example                # Environment variable template
@@ -583,11 +626,106 @@ Resume-Builder/
 
 ---
 
-## Writing Coach — 10 Rules Engine
+## Native Resume Team
 
-The `/writing-coach` command applies these writing rules to every bullet point:
+Codex and Claude Code use the same `resume-team/v2` control flow without API
+keys or a third-party orchestration framework. Project custom-agent role files
+omit model pins and follow their host's inheritance rules. The hardened runtime
+does not inherit transient parent-session or user configuration: by default its
+managed CLI model/reasoning selection is unknown and must not be described as a
+specific model, profile, or Ultra setting.
 
-1. **Power Verb Start** — Every bullet begins with a strong action verb (Led, Directed, Spearheaded)
+- In an installed Claude Code plugin, run `/resume-builder:resume-team [JD]`;
+  the four roles load from the plugin-root `agents/` directory.
+- In Codex, run `$resume-team [JD]`. The skill uses
+  `python native_resume_team.py --host codex` as the authoritative production
+  path; each role runs from an empty temporary working directory with tool
+  surfaces disabled. A project checkout also registers the four read-only
+  custom roles from `.codex/agents/` for interactive inspection, but those
+  manual roles are not the capability-isolated publication path.
+- The hardened production runtime requires macOS or Linux, Python 3.10+,
+  `config.json`, the configured master resume, `candidate_fit_preflight.py`, and
+  the local deterministic audit helpers. Windows preflight fails closed with
+  `POSIX_RUNTIME_REQUIRED`. No
+  external model API key is required for the role agents.
+- Codex model selection is unpinned by default. Only when the user explicitly
+  requests it may the runtime receive `--model <exact-model>` and/or
+  `--reasoning-effort ultra`; it has no profile option. These Codex-only flags
+  must not be passed to Claude.
+
+0. Before any role/team invocation or output creation, the coordinator runs
+   `candidate_fit_preflight.py` against the exact JD and only the configured
+   master resume—never a prior tailored resume. The canonical
+   `candidate-fit-policy-v2` report must score at least 70 with trustworthy
+   extraction, zero hard knockouts, `passed: true`, and no codes. Scores below 70
+   (including 60–69) or hard knockouts return `REJECTED:CANDIDATE_FIT`;
+   unavailable, malformed, stale, or mismatched reports return
+   `FAILED:CANDIDATE_FIT_PREFLIGHT`. No automatic or manual workflow bypass exists.
+1. The coordinator sends the Researcher only the job description.
+2. The coordinator sends the Writer only the master resume and validated research artifact.
+3. The read-only Auditor checks the exact Writer draft and cannot edit it.
+4. The Editor is invoked only for named failures, with at most two corrections
+   and a fresh audit after each edit.
+5. Draft-stage publication requires the final Auditor PASS plus independent
+   evidence, human-voice, and canonical-integrity votes on the same draft digest.
+
+Malformed, stale, replayed, ambiguous, timed-out, unavailable, side-effecting,
+or partially published runs fail closed. A runtime `resume-team-result/v2`
+`PUBLISHED` result means only
+that an authorized, digest-verified `resume.md` draft was atomically written and
+read back. It does not mean DOCX generation, tracker update, cleanup, or package
+completion. `/resume-builder:resume` and `/resume-builder:tailor-resume` must
+complete their ordered DOCX, tracker, artifact-verification, cleanup, and report
+gates before claiming package success; a score cannot override an authenticity
+gate.
+
+Every `PUBLISHED` result includes the independently reproducible
+`candidate_fit_report` and `candidate_fit_report_digest`, plus an inline
+`resume-team-final-receipt/v2` `authorization_receipt`, its canonical
+`authorization_receipt_digest`, and a durable `authorization_receipt_path`.
+The sidecar conforms to `schemas/resume-team-final-receipt.schema.json`.
+Downstream finalization resolves the path against the output directory when
+relative, requires its resolved parent to be that directory, reads only a regular
+non-symlink JSON sidecar, and matches its canonical digest, run/case IDs, exact
+passing candidate-fit report/digest, and draft and verified-target digests against
+the result, configured master, exact JD, and independently hashed `resume.md`.
+It also recomputes the master `source_digest` from `config.json`, recomputes
+`job_description_digest` from the fixed sibling `job_description.txt`, and requires
+a SHA-256 Researcher artifact plus distinct same-host native Researcher/Auditor IDs.
+The receipt must also carry a same-draft PASS `auditor_attestation` and the complete
+passing `authorization_report`: no codes, exactly three ordered named PASS votes on
+the same draft with distinct IDs, `canonical_digest(report) ==
+authorization_digest`, and an identical ordered `vote_invocation_ids` list. The
+same check is repeated immediately before DOCX generation. Cleanup preserves the
+receipt as durable audit evidence.
+
+Finalization is code-bound: callers retain the captured runtime result, invoke
+`final_receipt_verifier.py` with its exact receipt path, digest, and config, and use only
+`create_resume_from_md_authorized`, `create_cover_letter_from_md_authorized`, and
+`add_application_authorized`. Each wrapper revalidates authorization at the
+side-effect boundary; tracker success requires a literal `True` return.
+
+The constructive-provenance experiment established that a self-consistent
+model-supplied evidence ledger is not a trust root. Such a ledger is accepted only
+when its digest is independently attested. Production therefore anchors every
+changed line directly to coordinator-attested, same-role master-resume spans and
+applies the closed lexical verifier. `constructive_provenance.py` is a conditional
+checker and test artifact, not an alternative publication path.
+
+Claude role definitions and the native runtime use an explicit zero-tool allowlist, so they cannot
+actively inspect workspace files; Claude Code may still supply its normal
+project startup instructions and basic environment context. Codex custom agents
+use a read-only sandbox, which prevents writes but is not a filesystem-read
+isolation boundary. In both cases, scoped payloads describe coordinator data
+flow rather than every byte of host-provided context. Codex currently has no
+documented per-custom-agent built-in-tool denylist, so manual Codex role instructions
+prohibit unrelated reads and must not be represented as capability isolation.
+
+## Writing Coach — Rules 0-16
+
+The `/writing-coach` command applies human-voice and impact rules to every bullet point. Core rules include:
+
+1. **Plain Verb Start** — Use direct verbs such as Led, Built, Wrote, Cut, Reviewed, or Directed; AI-cliché openers are banned
 2. **Quantified Impact** — 40%+ of bullets must contain metrics (%, $, numbers)
 3. **So-What Test** — Every bullet answers "why does this matter?"
 4. **Jargon Calibration** — Match terminology level to the target role
