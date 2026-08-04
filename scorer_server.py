@@ -91,15 +91,21 @@ except ImportError:
 
 # ─── Run database migrations at startup (graceful on failure) ───
 if CLOUD_AVAILABLE:
+    _mig_conn = None
     try:
-        _mig_conn = db_get_conn()
+        _mig_conn = db_get_conn(cloud_settings.DB_PATH)
         _applied = run_migrations(_mig_conn)
         if _applied:
             print(f"Applied {len(_applied)} database migrations: {', '.join(_applied)}")
-        _mig_conn.close()
     except Exception as e:
         print(f"Warning: Database migrations failed (non-critical): {e}")
         print("Server will continue, but cloud features may be degraded.")
+    finally:
+        if _mig_conn is not None:
+            try:
+                _mig_conn.close()
+            except Exception:
+                pass
 
 # ─── App ───
 app = FastAPI(
