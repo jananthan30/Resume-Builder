@@ -38,6 +38,7 @@ if os.path.isfile(_env_path):
 import base64
 import tempfile
 import json
+import statistics
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from collections import defaultdict
@@ -219,6 +220,12 @@ class TrackerAddRequest(BaseModel):
     hr_score: float = Field(0.0, description="HR score")
     llm_score: float = Field(0.0, description="LLM score")
     notes: str = Field("", description="Notes")
+    applied_at: Optional[str] = Field(None, description="Date the application was submitted (ISO date/datetime)")
+    jd_ref: Optional[str] = Field(None, description="Reference/filename for the job description used")
+    target_tier: Optional[str] = Field(None, description="IC | Sr | Manager | AD | Director")
+    fit_label: Optional[str] = Field(None, description="MEETS | STRETCH | MISS (from job_fit_scorer)")
+    hard_reqs_missed: Optional[int] = Field(None, description="Count of hard-requirement knockouts at apply time")
+    referral_source: Optional[str] = Field(None, description="cold | alumni | recruiter | network | referral")
 
 
 class TrackerUpdateRequest(BaseModel):
@@ -227,6 +234,55 @@ class TrackerUpdateRequest(BaseModel):
     notes: Optional[str] = None
     resume_file: Optional[str] = None
     cover_letter_file: Optional[str] = None
+    applied_at: Optional[str] = None
+    jd_ref: Optional[str] = None
+    target_tier: Optional[str] = None
+    fit_label: Optional[str] = None
+    hard_reqs_missed: Optional[int] = None
+    referral_source: Optional[str] = None
+
+
+# Tracker classification whitelists. SQLite ALTER TABLE cannot add CHECK
+# constraints (see cloud/db.py migrations), so valid values are enforced
+# here, at the API boundary, instead.
+_VALID_TARGET_TIERS = {"IC", "Sr", "Manager", "AD", "Director"}
+_VALID_FIT_LABELS = {"MEETS", "STRETCH", "MISS"}
+_VALID_REJECTION_REASONS = {
+    "no_response", "auto_reject", "screen_reject",
+    "interview_reject", "offer_declined", "withdrawn",
+}
+
+
+def _validate_tracker_classification(target_tier, fit_label, hard_reqs_missed) -> None:
+    """Raise HTTP 422 with a clear detail if a tracker classification field is
+    invalid. None always passes for every field here — they're all optional."""
+    if target_tier is not None and target_tier not in _VALID_TARGET_TIERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"target_tier must be one of {sorted(_VALID_TARGET_TIERS)} or null; got {target_tier!r}.",
+        )
+    if fit_label is not None and fit_label not in _VALID_FIT_LABELS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"fit_label must be one of {sorted(_VALID_FIT_LABELS)} or null; got {fit_label!r}.",
+        )
+    if hard_reqs_missed is not None and hard_reqs_missed < 0:
+        raise HTTPException(
+            status_code=422,
+            detail=f"hard_reqs_missed must be an integer >= 0 or null; got {hard_reqs_missed!r}.",
+        )
+
+
+class TrackerOutcomeRequest(BaseModel):
+    """Record a terminal (or interview-stage) outcome for a tracker entry."""
+    rejection_reason: str = Field(..., description=(
+        "no_response | auto_reject | screen_reject | interview_reject | "
+        "offer_declined | withdrawn"
+    ))
+    interview_stage: Optional[int] = Field(
+        None, description="0=applied, 1=phone screen, 2=hiring mgr, 3=panel, 4=onsite, 5=offer"
+    )
+    detail: Optional[str] = Field(None, description="Free-text note about the outcome")
 
 
 class FetchJDRequest(BaseModel):
@@ -1778,16 +1834,20 @@ def tracker_add(req: TrackerAddRequest, auth=Depends(verify_api_key)):
         raise HTTPException(status_code=401, detail="Authentication required to use the tracker.")
     if not CLOUD_AVAILABLE:
         raise HTTPException(status_code=503, detail="Tracker unavailable — cloud auth not configured.")
+    _validate_tracker_classification(req.target_tier, req.fit_label, req.hard_reqs_missed)
     from cloud.auth import get_db
     with get_db() as conn:
         cur = conn.execute(
             """INSERT INTO job_applications
                (user_id, company, job_title, status, resume_file, cover_letter_file,
-                ats_score, hr_score, llm_score, notes)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ats_score, hr_score, llm_score, notes,
+                applied_at, jd_ref, target_tier, fit_label, hard_reqs_missed, referral_source)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user_id, req.company, req.job_title, req.status,
              req.resume_file, req.cover_letter_file,
-             req.ats_score, req.hr_score, req.llm_score, req.notes),
+             req.ats_score, req.hr_score, req.llm_score, req.notes,
+             req.applied_at, req.jd_ref, req.target_tier, req.fit_label,
+             req.hard_reqs_missed, req.referral_source),
         )
         return {"id": cur.lastrowid, "status": "added"}
 
@@ -1804,7 +1864,10 @@ def tracker_list(auth=Depends(verify_api_key)):
     with get_db() as conn:
         rows = conn.execute(
             """SELECT id, company, job_title, status, resume_file, cover_letter_file,
-                      ats_score, hr_score, llm_score, notes, created_at, updated_at
+                      ats_score, hr_score, llm_score, notes, created_at, updated_at,
+                      applied_at, jd_ref, target_tier, fit_label, hard_reqs_missed,
+                      referral_source, rejection_reason, rejection_detail,
+                      interview_stage, responded_at, closed_at
                FROM job_applications WHERE user_id = ?
                ORDER BY created_at DESC""",
             (user_id,),
@@ -1814,12 +1877,13 @@ def tracker_list(auth=Depends(verify_api_key)):
 
 @app.put("/tracker/{entry_id}")
 def tracker_update(entry_id: int, req: TrackerUpdateRequest, auth=Depends(verify_api_key)):
-    """Update status / notes for a tracker entry owned by the user."""
+    """Update status / notes / classification fields for a tracker entry owned by the user."""
     user_id = _get_user_id(auth)
     if user_id is None:
         raise HTTPException(status_code=401, detail="Authentication required.")
     if not CLOUD_AVAILABLE:
         raise HTTPException(status_code=503, detail="Tracker unavailable.")
+    _validate_tracker_classification(req.target_tier, req.fit_label, req.hard_reqs_missed)
     from cloud.auth import get_db
     updates = {}
     if req.status is not None:
@@ -1830,6 +1894,18 @@ def tracker_update(entry_id: int, req: TrackerUpdateRequest, auth=Depends(verify
         updates["resume_file"] = req.resume_file
     if req.cover_letter_file is not None:
         updates["cover_letter_file"] = req.cover_letter_file
+    if req.applied_at is not None:
+        updates["applied_at"] = req.applied_at
+    if req.jd_ref is not None:
+        updates["jd_ref"] = req.jd_ref
+    if req.target_tier is not None:
+        updates["target_tier"] = req.target_tier
+    if req.fit_label is not None:
+        updates["fit_label"] = req.fit_label
+    if req.hard_reqs_missed is not None:
+        updates["hard_reqs_missed"] = req.hard_reqs_missed
+    if req.referral_source is not None:
+        updates["referral_source"] = req.referral_source
     if not updates:
         return {"status": "no_change"}
     updates["updated_at"] = "datetime('now')"
@@ -1862,6 +1938,193 @@ def tracker_delete(entry_id: int, auth=Depends(verify_api_key)):
             (entry_id, user_id),
         )
     return {"status": "deleted"}
+
+
+@app.post("/tracker/{entry_id}/outcome")
+def tracker_outcome(entry_id: int, req: TrackerOutcomeRequest, auth=Depends(verify_api_key)):
+    """Record a rejection/withdrawal outcome for a tracker entry owned by the user.
+
+    Cross-user access returns 404 (never 403) so the endpoint never confirms
+    or denies that another user's entry_id exists.
+    """
+    user_id = _get_user_id(auth)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    if not CLOUD_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Tracker unavailable.")
+    if req.rejection_reason not in _VALID_REJECTION_REASONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"rejection_reason must be one of {sorted(_VALID_REJECTION_REASONS)}; got {req.rejection_reason!r}.",
+        )
+    if req.interview_stage is not None and not (0 <= req.interview_stage <= 5):
+        raise HTTPException(
+            status_code=422,
+            detail=f"interview_stage must be an integer between 0 and 5, or null; got {req.interview_stage!r}.",
+        )
+
+    new_status = "Withdrawn" if req.rejection_reason == "withdrawn" else "Rejected"
+
+    from cloud.auth import get_db
+    with get_db() as conn:
+        owned = conn.execute(
+            "SELECT id FROM job_applications WHERE id = ? AND user_id = ?",
+            (entry_id, user_id),
+        ).fetchone()
+        if owned is None:
+            raise HTTPException(status_code=404, detail="Tracker entry not found.")
+
+        conn.execute(
+            """UPDATE job_applications
+               SET rejection_reason = ?,
+                   rejection_detail = ?,
+                   interview_stage = ?,
+                   responded_at = COALESCE(responded_at, datetime('now')),
+                   closed_at = datetime('now'),
+                   status = ?,
+                   updated_at = datetime('now')
+               WHERE id = ? AND user_id = ?""",
+            (req.rejection_reason, req.detail, req.interview_stage, new_status, entry_id, user_id),
+        )
+        conn.execute(
+            """INSERT INTO events (user_id, application_id, kind, payload)
+               VALUES (?, ?, ?, ?)""",
+            (
+                user_id,
+                entry_id,
+                "outcome",
+                json.dumps({
+                    "rejection_reason": req.rejection_reason,
+                    "interview_stage": req.interview_stage,
+                    "detail": req.detail,
+                }),
+            ),
+        )
+
+    return {"id": entry_id, "status": "outcome_recorded", "new_status": new_status}
+
+
+# =============================================================================
+# PIPELINE INSIGHTS — deterministic SQL aggregates only, no LLM involved
+# =============================================================================
+
+_TRACKER_BREAKDOWN_COLUMNS = {"target_tier", "fit_label", "referral_source"}
+
+
+def _tracker_pipeline_breakdown(conn, user_id: int, column: str) -> Dict[str, Dict[str, Any]]:
+    """Group the caller's job_applications rows by one classification column.
+
+    `column` is never derived from request input — it is always one of the
+    three hardcoded literals in _TRACKER_BREAKDOWN_COLUMNS. SQLite has no way
+    to bind column/identifier names as query parameters (only values), so the
+    identifier has to be interpolated; the whitelist check below keeps that
+    safe by construction rather than by convention.
+    """
+    if column not in _TRACKER_BREAKDOWN_COLUMNS:
+        raise ValueError(f"unsupported breakdown column: {column!r}")
+    rows = conn.execute(
+        f"""SELECT {column} AS bucket,
+                   COUNT(*) AS cnt,
+                   SUM(CASE WHEN status = 'Rejected' THEN 1 ELSE 0 END) AS rejected_cnt,
+                   SUM(CASE WHEN responded_at IS NOT NULL THEN 1 ELSE 0 END) AS responded_cnt
+            FROM job_applications
+            WHERE user_id = ? AND {column} IS NOT NULL
+            GROUP BY {column}""",
+        (user_id,),
+    ).fetchall()
+    return {
+        r["bucket"]: {
+            "count": r["cnt"],
+            "rejected": r["rejected_cnt"],
+            "response_rate": round(r["responded_cnt"] / r["cnt"], 4) if r["cnt"] else 0.0,
+        }
+        for r in rows
+    }
+
+
+@app.get("/insights/pipeline")
+def insights_pipeline(auth=Depends(verify_api_key)):
+    """Deterministic SQL pipeline-health aggregates for the caller's tracker rows.
+
+    Pure aggregation, no LLM. Empty data returns zeros/nulls, never a crash.
+    """
+    user_id = _get_user_id(auth)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    if not CLOUD_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Insights unavailable.")
+
+    from cloud.auth import get_db
+    with get_db() as conn:
+        total = conn.execute(
+            "SELECT COUNT(*) AS c FROM job_applications WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()["c"]
+        rejected = conn.execute(
+            "SELECT COUNT(*) AS c FROM job_applications WHERE user_id = ? AND status = 'Rejected'",
+            (user_id,),
+        ).fetchone()["c"]
+        active = conn.execute(
+            "SELECT COUNT(*) AS c FROM job_applications WHERE user_id = ? AND closed_at IS NULL",
+            (user_id,),
+        ).fetchone()["c"]
+
+        by_tier = _tracker_pipeline_breakdown(conn, user_id, "target_tier")
+        by_fit = _tracker_pipeline_breakdown(conn, user_id, "fit_label")
+        by_source = _tracker_pipeline_breakdown(conn, user_id, "referral_source")
+
+        reason_rows = conn.execute(
+            """SELECT rejection_reason, COUNT(*) AS c
+               FROM job_applications
+               WHERE user_id = ? AND rejection_reason IS NOT NULL
+               GROUP BY rejection_reason""",
+            (user_id,),
+        ).fetchall()
+        by_rejection_reason = {r["rejection_reason"]: r["c"] for r in reason_rows}
+
+        day_rows = conn.execute(
+            """SELECT (julianday(responded_at) - julianday(applied_at)) AS days
+               FROM job_applications
+               WHERE user_id = ? AND applied_at IS NOT NULL AND responded_at IS NOT NULL""",
+            (user_id,),
+        ).fetchall()
+
+    day_values = [r["days"] for r in day_rows if r["days"] is not None]
+    median_days = statistics.median(day_values) if day_values else None
+
+    return {
+        "totals": {"applications": total, "rejected": rejected, "active": active},
+        "by_tier": by_tier,
+        "by_fit": by_fit,
+        "by_source": by_source,
+        "median_days_to_response": median_days,
+        "by_rejection_reason": by_rejection_reason,
+    }
+
+
+@app.get("/insights/application/{entry_id}")
+def insights_application(entry_id: int, auth=Depends(verify_api_key)):
+    """Per-application insight placeholder.
+
+    LLM post-mortems land in Phase 2; for now this just confirms ownership
+    (404 for other users' rows) and returns a clean null.
+    """
+    user_id = _get_user_id(auth)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    if not CLOUD_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Insights unavailable.")
+
+    from cloud.auth import get_db
+    with get_db() as conn:
+        owned = conn.execute(
+            "SELECT id FROM job_applications WHERE id = ? AND user_id = ?",
+            (entry_id, user_id),
+        ).fetchone()
+    if owned is None:
+        raise HTTPException(status_code=404, detail="Tracker entry not found.")
+
+    return {"postmortem": None}
 
 
 def _get_user_id(auth) -> Optional[int]:
