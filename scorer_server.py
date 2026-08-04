@@ -84,9 +84,22 @@ try:
         is_billing_configured, create_checkout_session,
         handle_webhook_event, create_portal_session,
     )
+    from cloud.db import get_conn as db_get_conn, run_migrations
     CLOUD_AVAILABLE = True
 except ImportError:
     CLOUD_AVAILABLE = False
+
+# ─── Run database migrations at startup (graceful on failure) ───
+if CLOUD_AVAILABLE:
+    try:
+        _mig_conn = db_get_conn()
+        _applied = run_migrations(_mig_conn)
+        if _applied:
+            print(f"Applied {len(_applied)} database migrations: {', '.join(_applied)}")
+        _mig_conn.close()
+    except Exception as e:
+        print(f"Warning: Database migrations failed (non-critical): {e}")
+        print("Server will continue, but cloud features may be degraded.")
 
 # ─── App ───
 app = FastAPI(
