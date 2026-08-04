@@ -1869,7 +1869,7 @@ def tracker_list(auth=Depends(verify_api_key)):
                       referral_source, rejection_reason, rejection_detail,
                       interview_stage, responded_at, closed_at
                FROM job_applications WHERE user_id = ?
-               ORDER BY created_at DESC""",
+               ORDER BY updated_at DESC, created_at DESC""",
             (user_id,),
         ).fetchall()
     return {"applications": [dict(r) for r in rows]}
@@ -1974,17 +1974,32 @@ def tracker_outcome(entry_id: int, req: TrackerOutcomeRequest, auth=Depends(veri
         if owned is None:
             raise HTTPException(status_code=404, detail="Tracker entry not found.")
 
+        # Partial-update idiom (matches tracker_update): only touch
+        # rejection_detail/interview_stage when this call actually supplied
+        # them, so a repeat call that omits one doesn't null out a value a
+        # prior call recorded. responded_at is skipped entirely for
+        # no_response -- the company never replied, so nothing should stamp
+        # a reply time (that would fabricate a 100% response_rate and a
+        # bogus days-to-response value in /insights/pipeline).
+        set_clauses = ["rejection_reason = ?"]
+        values = [req.rejection_reason]
+        if req.detail is not None:
+            set_clauses.append("rejection_detail = ?")
+            values.append(req.detail)
+        if req.interview_stage is not None:
+            set_clauses.append("interview_stage = ?")
+            values.append(req.interview_stage)
+        if req.rejection_reason != "no_response":
+            set_clauses.append("responded_at = COALESCE(responded_at, datetime('now'))")
+        set_clauses.append("closed_at = datetime('now')")
+        set_clauses.append("status = ?")
+        values.append(new_status)
+        set_clauses.append("updated_at = datetime('now')")
+        values += [entry_id, user_id]
+
         conn.execute(
-            """UPDATE job_applications
-               SET rejection_reason = ?,
-                   rejection_detail = ?,
-                   interview_stage = ?,
-                   responded_at = COALESCE(responded_at, datetime('now')),
-                   closed_at = datetime('now'),
-                   status = ?,
-                   updated_at = datetime('now')
-               WHERE id = ? AND user_id = ?""",
-            (req.rejection_reason, req.detail, req.interview_stage, new_status, entry_id, user_id),
+            f"UPDATE job_applications SET {', '.join(set_clauses)} WHERE id = ? AND user_id = ?",
+            values,
         )
         conn.execute(
             """INSERT INTO events (user_id, application_id, kind, payload)
