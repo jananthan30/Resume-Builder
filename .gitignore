@@ -142,3 +142,8 @@ pytest.ini
 .pytest_cache/
 .coverage
 htmlcov/
+
+# ========================
+# Product specs / plans (business docs — never public)
+# ========================
+docs/superpowers/
