@@ -390,6 +390,39 @@ def test_cross_host_researcher_identity_is_rejected(tmp_path):
     assert failure.value.code == "RESEARCHER_ATTESTATION_MISMATCH"
 
 
+def test_api_host_researcher_and_auditor_identity_is_accepted(tmp_path):
+    """The hosted product runtime ("api") is a first-class native host: a
+    receipt with distinct api: researcher/auditor identities must verify
+    cleanly through both the public schema and the manual cross-check."""
+    resume, receipt_path, receipt, _ = _authorized_artifacts(tmp_path)
+    receipt["researcher_agent_id"] = "api:researcher-guard"
+    receipt["auditor_attestation"]["agent_id"] = "api:auditor-guard"
+    receipt_path.write_text(_canonical_json(receipt), encoding="utf-8")
+    verified = verify_final_receipt(
+        resume_path=resume,
+        receipt_path=receipt_path,
+        expected_receipt_digest=canonical_digest(receipt),
+        config_path=tmp_path / "config.json",
+    )
+    assert verified == receipt
+
+
+def test_unrecognized_host_researcher_identity_is_rejected_by_schema(tmp_path):
+    """The host enum stays closed: an unrecognized "openai:" prefix must
+    still fail closed, at the public schema boundary."""
+    resume, receipt_path, receipt, _ = _authorized_artifacts(tmp_path)
+    receipt["researcher_agent_id"] = "openai:researcher-guard"
+    receipt_path.write_text(_canonical_json(receipt), encoding="utf-8")
+    with pytest.raises(FinalReceiptVerificationError) as failure:
+        verify_final_receipt(
+            resume_path=resume,
+            receipt_path=receipt_path,
+            expected_receipt_digest=canonical_digest(receipt),
+            config_path=tmp_path / "config.json",
+        )
+    assert failure.value.code == "RECEIPT_SCHEMA"
+
+
 def test_authorized_resume_docx_entrypoint_passes_bound_digest(tmp_path, monkeypatch):
     resume, receipt_path, receipt, expected_digest = _authorized_artifacts(tmp_path)
     observed = {}

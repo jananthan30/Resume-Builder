@@ -29,8 +29,9 @@ MAX_JOB_DESCRIPTION_BYTES = 2 * 1024 * 1024
 MAX_RECEIPT_BYTES = 1024 * 1024
 MAX_SCHEMA_BYTES = 1024 * 1024
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+# hosts: api = hosted product runtime; codex/claude = legacy local CLI hosts
 _NATIVE_AGENT_ID_RE = re.compile(
-    r"^(?:codex|claude):[A-Za-z0-9._:-]{1,128}$"
+    r"^(?:codex|claude|api):[A-Za-z0-9._:-]{1,128}$"
 )
 _RECEIPT_NAME_RE = re.compile(r"^resume-team-receipt\.([0-9a-f]{64})\.json$")
 _VOTE_NAMES = ("evidence", "human_voice", "canonical_integrity")

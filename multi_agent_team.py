@@ -160,8 +160,9 @@ _CLAIM_EVIDENCE_KEYS = {
 _RECEIPT_BASENAME_RE = re.compile(
     r"resume-team-receipt\.[0-9a-f]{64}\.json"
 )
+# hosts: api = hosted product runtime; codex/claude = legacy local CLI hosts
 _NATIVE_AGENT_ID_RE = re.compile(
-    r"^(?P<host>codex|claude):[A-Za-z0-9._:-]{1,128}$"
+    r"^(?P<host>codex|claude|api):[A-Za-z0-9._:-]{1,128}$"
 )
 _AGENT_INVOCATION_FAILURE_CODES = frozenset(
     {

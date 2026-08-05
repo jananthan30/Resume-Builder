@@ -283,7 +283,12 @@ independently validated preflight. Match draft/verified-target digests to the
 actual `resume.md`. Recompute `source_digest` from the current configured master
 and `job_description_digest` from the fixed sibling `job_description.txt`; require
 a SHA-256 Researcher artifact and distinct same-host native Researcher/Auditor
-identities. Require a same-draft PASS `auditor_attestation` and a complete
+identities. Native hosts are `api` (the hosted product runtime — roles run
+server-side via the Anthropic API) and the legacy local hosts `codex`/`claude`
+(local CLI/plugin flows); the host prefix is a provenance record of which
+runtime produced a role's output, so Researcher and Auditor must remain
+distinct identities on the same host regardless of which of the three hosts
+that is. Require a same-draft PASS `auditor_attestation` and a complete
 passing `authorization_report` with no codes and exactly three ordered named
 same-draft PASS votes with distinct IDs. Require `canonical_digest(report) ==
 authorization_digest` and the receipt vote-ID list to equal those IDs in order.

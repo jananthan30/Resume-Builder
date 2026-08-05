@@ -33,6 +33,7 @@ from multi_agent_team import (
     RUN_CLAIM_VERSION,
     SOURCE_ATTESTATION_VERSION,
     VOTE_VERSION,
+    _native_agent_host,
     build_context,
     build_handoff,
     canonical_digest,
@@ -1492,6 +1493,80 @@ def test_receipt_identities_must_be_native_and_same_host(role, agent_id):
     assert result["published"] is result["success_reported"] is False
     assert result["authorization_receipt"] is None
     assert not services.published
+
+
+def test_native_agent_host_recognizes_api_host():
+    """The hosted product runtime ("api") must be a first-class native host,
+    exactly like the legacy local CLI hosts "codex" and "claude"."""
+    assert _native_agent_host("api:researcher.run1.0") == "api"
+    assert _native_agent_host("codex:test-researcher-0") == "codex"
+    assert _native_agent_host("claude:test-researcher-0") == "claude"
+
+
+@pytest.mark.parametrize("agent_id", ["openai:x", "x", ""])
+def test_native_agent_host_rejects_unknown_or_absent_host(agent_id):
+    """The host enum stays closed: adding "api" must not open the gate to
+    an arbitrary or missing host prefix."""
+    assert _native_agent_host(agent_id) is None
+
+
+def test_api_host_researcher_and_auditor_with_distinct_ids_publishes():
+    class ApiHostAdapter(ScriptedAdapter):
+        def invoke(self, role, context, timeout_seconds):
+            response = super().invoke(role, context, timeout_seconds)
+            if role in {"researcher", "auditor"}:
+                response["agent_id"] = f"api:{role}-1"
+            return response
+
+    services = Services()
+    result = run_team(request(), ApiHostAdapter(), services)
+    assert result["terminal_class"] == "PUBLISHED"
+    assert result["published"] is result["success_reported"] is True
+    receipt = result["authorization_receipt"]
+    assert receipt["researcher_agent_id"] == "api:researcher-1"
+    assert receipt["auditor_attestation"]["agent_id"] == "api:auditor-1"
+    result_schema = json.loads(
+        (ROOT / "schemas" / "resume-team-result.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    Draft202012Validator(result_schema).validate(result)
+
+
+def test_api_researcher_with_claude_auditor_fails_role_separation():
+    """Distinct hosts must still fail even when one of them is the new
+    "api" host: role separation requires researcher and auditor to share
+    the SAME host family, not merely a recognized one."""
+
+    class MixedHostAdapter(ScriptedAdapter):
+        def invoke(self, role, context, timeout_seconds):
+            response = super().invoke(role, context, timeout_seconds)
+            if role == "researcher":
+                response["agent_id"] = "api:researcher-1"
+            elif role == "auditor":
+                response["agent_id"] = "claude:auditor-1"
+            return response
+
+    result = run_team(request(), MixedHostAdapter(), Services())
+    assert result["terminal_class"] == "FAILED:ROLE_SEPARATION"
+    assert result["published"] is result["success_reported"] is False
+
+
+def test_identical_agent_id_for_researcher_and_auditor_fails_role_separation():
+    """Regression guard: widening the host enum to include "api" must not
+    weaken the independent distinct-identity check between researcher and
+    auditor."""
+
+    class SameIdentityAdapter(ScriptedAdapter):
+        def invoke(self, role, context, timeout_seconds):
+            response = super().invoke(role, context, timeout_seconds)
+            if role in {"researcher", "auditor"}:
+                response["agent_id"] = "api:same-identity"
+            return response
+
+    result = run_team(request(), SameIdentityAdapter(), Services())
+    assert result["terminal_class"] == "FAILED:ROLE_SEPARATION"
+    assert result["published"] is result["success_reported"] is False
 
 
 def test_repeated_editor_draft_stops_correction_cycle():

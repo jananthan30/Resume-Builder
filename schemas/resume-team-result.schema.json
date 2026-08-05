@@ -239,7 +239,8 @@
     },
     "nativeAgentId": {
       "type": "string",
-      "pattern": "^(codex|claude):[A-Za-z0-9._:-]{1,128}$"
+      "description": "hosts: api = hosted product runtime; codex/claude = legacy local CLI hosts",
+      "pattern": "^(codex|claude|api):[A-Za-z0-9._:-]{1,128}$"
     },
     "auditorAttestation": {
       "description": "The final distinct native Auditor attestation, which must PASS the receipt draft digest.",
