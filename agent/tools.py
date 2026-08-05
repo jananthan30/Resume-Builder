@@ -522,7 +522,10 @@ def _default_team_adapter() -> AnthropicTeamAdapter:
 
 
 def run_resume_team(
-    ctx: ToolContext, jd_text: str, instruction: str | None = None
+    ctx: ToolContext,
+    jd_text: str,
+    instruction: str | None = None,
+    resume_text: str | None = None,
 ) -> dict:
     """Run the audited four-role Resume Team pipeline and return the draft.
 
@@ -532,6 +535,14 @@ def run_resume_team(
     "refund". A run that starts but does not reach PUBLISHED is recorded as
     status='failed', which cloud.quotas.month_usage excludes from its count
     -- that exclusion is the entire refund mechanism.
+
+    ``resume_text``, when a non-empty string, is a ONE-OFF source resume for
+    THIS RUN ONLY -- it is used to tailor this draft and is never written to
+    the account's saved resume. This is what lets a caller (e.g. POST
+    /rewrite with a request-provided resume_text) honor a one-off variant
+    without silently overwriting a carefully maintained saved resume. When
+    ``resume_text`` is ``None`` (the default) or blank, the saved resume is
+    loaded exactly as before.
 
     ``instruction`` is recorded on the agent_runs row for observability but
     is not yet wired into the pipeline itself: multi_agent_team.run_team()'s
@@ -547,14 +558,17 @@ def run_resume_team(
     if not isinstance(jd_text, str) or not jd_text.strip():
         raise ValueError("jd_text must be a non-empty string")
 
-    import cloud.auth
+    if isinstance(resume_text, str) and resume_text.strip():
+        master_resume = resume_text
+    else:
+        import cloud.auth
 
-    record = cloud.auth.get_resume(ctx.user_id)
-    if not record or not record.get("resume_text"):
-        raise ValueError(
-            "No resume on file. Upload a resume before requesting a tailored draft."
-        )
-    master_resume = record["resume_text"]
+        record = cloud.auth.get_resume(ctx.user_id)
+        if not record or not record.get("resume_text"):
+            raise ValueError(
+                "No resume on file. Upload a resume before requesting a tailored draft."
+            )
+        master_resume = record["resume_text"]
 
     run_id = ctx.run_id
     case_id = f"case:{run_id}"
@@ -661,6 +675,7 @@ def run_cover_letter(
     jd_text: str,
     company: str | None = None,
     title: str | None = None,
+    resume_text: str | None = None,
 ) -> dict:
     """Generate a tailored cover letter. Wraps llm_scorer.generate_cover_letter
     plus the human_voice_audit hard gate, quota-checked, run/event-recorded.
@@ -669,6 +684,11 @@ def run_cover_letter(
     four-role pipeline (see CLAUDE.md), so this tool -- unlike
     run_resume_team -- talks to the model directly through the existing
     single-shot generator rather than through AnthropicHost/run_team.
+
+    ``resume_text``, when a non-empty string, is a ONE-OFF source resume for
+    THIS RUN ONLY -- it is never written to the account's saved resume
+    (mirrors run_resume_team's identical parameter). When ``None`` (the
+    default) or blank, the saved resume is loaded exactly as before.
     """
     from cloud.quotas import check_quota
 
@@ -677,14 +697,17 @@ def run_cover_letter(
     if not isinstance(jd_text, str) or not jd_text.strip():
         raise ValueError("jd_text must be a non-empty string")
 
-    import cloud.auth
+    if isinstance(resume_text, str) and resume_text.strip():
+        source_resume_text = resume_text
+    else:
+        import cloud.auth
 
-    record = cloud.auth.get_resume(ctx.user_id)
-    if not record or not record.get("resume_text"):
-        raise ValueError(
-            "No resume on file. Upload a resume before requesting a cover letter."
-        )
-    resume_text = record["resume_text"]
+        record = cloud.auth.get_resume(ctx.user_id)
+        if not record or not record.get("resume_text"):
+            raise ValueError(
+                "No resume on file. Upload a resume before requesting a cover letter."
+            )
+        source_resume_text = record["resume_text"]
 
     run_id = ctx.run_id
     _insert_agent_run(
@@ -698,7 +721,7 @@ def run_cover_letter(
 
     try:
         generated = llm_scorer.generate_cover_letter(
-            resume_text=resume_text,
+            resume_text=source_resume_text,
             jd_text=jd_text,
             company_name=company or "",
             job_title=title or "",
@@ -1058,6 +1081,13 @@ TOOLS: dict[str, dict[str, Any]] = {
             {
                 "jd_text": {"type": "string"},
                 "instruction": {"type": "string"},
+                "resume_text": {
+                    "type": "string",
+                    "description": (
+                        "Optional one-off resume text to tailor from for "
+                        "this run only; does not change the saved resume."
+                    ),
+                },
             },
             ["jd_text"],
         ),
@@ -1069,6 +1099,13 @@ TOOLS: dict[str, dict[str, Any]] = {
                 "jd_text": {"type": "string"},
                 "company": {"type": "string"},
                 "title": {"type": "string"},
+                "resume_text": {
+                    "type": "string",
+                    "description": (
+                        "Optional one-off resume text to write from for "
+                        "this run only; does not change the saved resume."
+                    ),
+                },
             },
             ["jd_text"],
         ),

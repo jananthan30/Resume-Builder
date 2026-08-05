@@ -1696,11 +1696,12 @@ async def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key
 
     provided_resume = (req.resume_text or "").strip()
     if provided_resume:
-        # A resume_text in the request becomes the account's resume of
-        # record, mirroring /resume/upload -- run_resume_team always tailors
-        # from the saved resume (see agent/tools.py), so this is what makes
-        # "request resume_text if provided" actually take effect.
-        _save_resume_db(user_id, provided_resume)
+        # A resume_text in the request is a ONE-OFF source for this call
+        # only. It is passed straight through to run_resume_team, which
+        # tailors from it directly without ever touching the account's
+        # saved resume (see agent/tools.py) -- this is what makes "request
+        # resume_text if provided" take effect without silently clobbering
+        # a carefully maintained saved resume.
         source_resume_text = provided_resume
     else:
         record = _get_resume_db(user_id)
@@ -1720,7 +1721,12 @@ async def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key
             user_id=user_id, tier=tier, conn=conn, run_id=str(uuid.uuid4())
         )
         try:
-            result = agent_tools.dispatch("run_resume_team", ctx, jd_text=jd_text)
+            result = agent_tools.dispatch(
+                "run_resume_team",
+                ctx,
+                jd_text=jd_text,
+                resume_text=provided_resume or None,
+            )
         except QuotaExceeded as exc:
             raise HTTPException(status_code=402, detail=exc.detail)
         except HTTPException:
@@ -1787,16 +1793,14 @@ async def cover_letter_endpoint(req: CoverLetterRequest, auth=Depends(verify_api
         raise HTTPException(status_code=400, detail="Provide jd_text for the job description.")
 
     provided_resume = (req.resume_text or "").strip()
-    if provided_resume:
-        # Same rationale as /rewrite: run_cover_letter always tailors from
-        # the saved resume, so an explicitly-provided resume_text has to
-        # become the resume of record for it to take effect at all.
-        _save_resume_db(user_id, provided_resume)
-    elif not _get_resume_db(user_id):
+    if not provided_resume and not _get_resume_db(user_id):
         raise HTTPException(
             status_code=400,
             detail="Provide resume_text or upload a resume via POST /resume/upload.",
         )
+    # A resume_text in the request is a ONE-OFF source for this call only --
+    # passed straight through to run_cover_letter (mirrors /rewrite), which
+    # never touches the account's saved resume (see agent/tools.py).
 
     _log_score_usage(auth, "/cover-letter")
 
@@ -1809,6 +1813,7 @@ async def cover_letter_endpoint(req: CoverLetterRequest, auth=Depends(verify_api
             result = agent_tools.dispatch(
                 "run_cover_letter", ctx,
                 jd_text=jd_text, company=req.company_name, title=req.job_title,
+                resume_text=provided_resume or None,
             )
         except QuotaExceeded as exc:
             raise HTTPException(status_code=402, detail=exc.detail)
