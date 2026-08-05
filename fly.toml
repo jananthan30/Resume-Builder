@@ -1,0 +1,69 @@
+# fly.toml — resume-scorer (ResumeHQ backend)
+#
+# Reconstructed 2026-08-05 from `flyctl config show -a resume-scorer`, which
+# is the live app config Fly is actually running. The original fly.toml that
+# produced the current image (deployment-01KK08NG9YQGC1QD184RX4WT3T, last
+# deployed 2026-03-06) was never preserved anywhere — not in this repo, not
+# on this machine, not on the Fly host. See
+# docs/superpowers/plans/private-layer-notes.md (finding A) for the
+# investigation that established that.
+#
+# This file is a faithful transcription of that live config. Writing it does
+# NOT change the running app — nothing here is applied until a future
+# `fly deploy`, and per this task's rules that command was never run.
+#
+# DO NOT `fly deploy` with this file until the fly secrets checklist in
+# docs/superpowers/plans/private-layer-notes.md has been completed. The
+# currently-running image has its secrets (STRIPE_SECRET_KEY,
+# SCORER_JWT_SECRET, ANTHROPIC_API_KEY, etc.) baked in from its lost build
+# context, not registered as `fly secrets` — redeploying without setting
+# them first breaks Stripe billing and invalidates every session (see that
+# file's CRITICAL FINDINGS B/C, including a JWT-secret fallback-default risk).
+
+app = "resume-scorer"
+primary_region = "ewr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Non-secret app config only. Real secrets are never stored here — they are
+# set with `fly secrets set` and injected as env vars at runtime, invisible
+# to `flyctl config show` and to this file.
+[env]
+  SCORER_DB_PATH = "/data/scorer.db"
+  SCORER_ENV = "production"
+  SCORER_FREE_LIMIT = "5"
+  SCORER_HOST = "0.0.0.0"
+  SCORER_PORT = "8100"
+  SCORER_REQUIRE_AUTH = "true"
+
+[[mounts]]
+  source = "scorer_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8100
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 50
+    soft_limit = 25
+
+[checks]
+  [checks.health]
+    port = 8100
+    type = "http"
+    interval = "30s"
+    timeout = "10s"
+    grace_period = "2m0s"
+    path = "/health"
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1
