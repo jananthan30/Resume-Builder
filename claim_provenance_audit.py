@@ -131,8 +131,21 @@ def _token_signature(text: str) -> tuple[str, ...]:
     return tuple(tokens)
 
 
-def _metric_signature(tokens: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
-    """Bind each exact number to its nearby sign, operator, scale, and unit."""
+def _metric_signature(
+    tokens: tuple[str, ...], include_lexical_unit: bool = True
+) -> tuple[tuple[str, ...], ...]:
+    """Bind each exact number to its nearby sign, operator, scale, and unit.
+
+    ``include_lexical_unit=False`` keeps the value and its numeric decorations
+    (sign, comparator, ``%``, scale words) but drops the trailing plain word.
+    That word is captured as a unit so ``10 cases`` and ``10 reports`` stay
+    distinct, which is right for the identity rule -- but it also means simply
+    inserting a term next to a number changes the signature, since
+    ``100 % regulatory`` and ``100 % GCP`` no longer match. The additive rule
+    therefore compares the numeric core and relies on ordered containment to
+    prove the original unit word is still present and still in place; a claim
+    that swapped ``cases`` for ``reports`` fails containment, not this.
+    """
 
     events: list[tuple[str, ...]] = []
     for index, token in enumerate(tokens):
@@ -168,10 +181,102 @@ def _metric_signature(tokens: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
         # Preserve a count/duration/scale unit after the value or suffix.  A
         # maximum of one lexical unit avoids swallowing arbitrary prose while
         # still distinguishing ``10 cases`` from ``10 reports``.
-        if cursor < len(tokens) and tokens[cursor].isalpha():
+        if include_lexical_unit and cursor < len(tokens) and tokens[cursor].isalpha():
             suffix.append(tokens[cursor])
         events.append(tuple(prefix + [token] + suffix))
     return tuple(events)
+
+
+# Polarity-reversing tokens. Ordered containment alone would admit
+# "Never managed 8 sites" as supported by "Managed 8 sites" -- every source
+# token is still present, in order, with the number untouched. These may
+# therefore never be ADDED (a claim keeps any the source already had).
+#
+# Deliberately English function words, not domain vocabulary: negation works
+# the same way in a nursing resume, a software resume, and a welding resume,
+# so this list does not need to grow when the industry changes.
+_POLARITY_TOKENS: frozenset[str] = frozenset({
+    "not", "no", "never", "none", "nor", "without", "except", "excluding",
+    "excluded", "failed", "failing", "unable", "unsuccessful", "lacking",
+    "lacked", "denied", "rejected", "rarely", "seldom", "hardly", "barely",
+    "non", "un", "pending", "attempted", "partially", "almost", "nearly",
+})
+
+# How much a claim may grow, as a fraction of its source's token count.
+# Additive support exists so a line can absorb the job description's own
+# vocabulary -- a term or two, not a new clause. A proportional bound keeps
+# short lines from being swamped while leaving long ones room, and it is
+# unit-free, so no industry gets more or less latitude than another.
+_MAX_ADDED_TOKEN_RATIO = 0.40
+_MIN_ADDED_TOKENS = 2
+
+
+def _is_ordered_subsequence(
+    needle: tuple[str, ...], haystack: tuple[str, ...]
+) -> bool:
+    """True when every needle token appears in haystack, in the same order."""
+    cursor = iter(haystack)
+    return all(token in cursor for token in needle)
+
+
+def _additive_only(
+    source_signature: tuple[str, ...], claim_signature: tuple[str, ...]
+) -> bool:
+    """True when the claim is its source plus a bounded set of new words.
+
+    The identity rule this relaxes admitted only a byte-identical line, which
+    made tailoring impossible: incorporating a single term from the job
+    description -- the product's central promise -- was rejected as an
+    unsupported claim. Additive support restores that while keeping the
+    guarantee people actually rely on, that nothing is invented.
+
+    Three conditions, all structural rather than lexical, so the rule behaves
+    identically for any industry:
+
+    1. Every source token survives, in its original order. Nothing may be
+       dropped, reordered, or swapped, so a rewrite cannot quietly shed a
+       qualifier, a bound, or a scope word.
+    2. Nothing polarity-reversing is introduced (see _POLARITY_TOKENS) --
+       otherwise containment would happily admit "Never led the migration"
+       as supported by "Led the migration".
+    3. Additions stay proportionally small. Enough for the job description's
+       vocabulary, not enough for a fabricated clause.
+
+    4. Every figure survives untouched. The numeric cores must match exactly
+       -- same values, same signs, same scales, same order, none added and
+       none removed -- so no metric can be invented or quietly inflated. The
+       unit word beside each number is protected by condition 1 rather than
+       here, which is what lets a term sit next to a number without the
+       insertion reading as a changed unit.
+
+    What this does NOT prove is entailment. A bounded set of non-numeric words
+    could still read as a claim the source does not make; the Auditor role and
+    the downstream evidence audit exist to catch that. This is a closure rule,
+    deliberately conservative, not a truth oracle.
+    """
+    if not _is_ordered_subsequence(source_signature, claim_signature):
+        return False
+
+    if _metric_signature(source_signature, False) != _metric_signature(
+        claim_signature, False
+    ):
+        return False
+
+    added_count = len(claim_signature) - len(source_signature)
+    if added_count <= 0:
+        return False
+
+    budget = max(_MIN_ADDED_TOKENS, int(len(source_signature) * _MAX_ADDED_TOKEN_RATIO))
+    if added_count > budget:
+        return False
+
+    source_polarity = sum(
+        1 for token in source_signature if token.casefold() in _POLARITY_TOKENS
+    )
+    claim_polarity = sum(
+        1 for token in claim_signature if token.casefold() in _POLARITY_TOKENS
+    )
+    return claim_polarity <= source_polarity
 
 
 def claim_supported_by_source(claim: str, source: str) -> tuple[bool, str]:
@@ -192,6 +297,14 @@ def claim_supported_by_source(claim: str, source: str) -> tuple[bool, str]:
     source_signature = _token_signature(source)
     if claim_signature == source_signature:
         return True, "AUTHORIZED"
+
+    # Additive support is tried first. Its own numeric check is the stricter
+    # one for this purpose -- every figure must survive unchanged, in order,
+    # with nothing added -- while tolerating a term inserted beside a number,
+    # which the identity-oriented signature below would read as a changed unit.
+    if _additive_only(source_signature, claim_signature):
+        return True, "AUTHORIZED"
+
     if _metric_signature(claim_signature) != _metric_signature(source_signature):
         return False, "UNSUPPORTED_METRIC"
     return False, "UNSUPPORTED_CLAIM"
