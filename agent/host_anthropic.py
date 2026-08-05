@@ -303,21 +303,33 @@ _ROLE_CONTRACTS: dict[str, str] = {
         '  "draft": string  (the complete resume, plain text)\n'
         '  "claim_evidence": [{"claim_text": string, '
         '"source_span_text": string}, ...]\n\n'
+        "CHANGE AS FEW LINES AS POSSIBLE. Every line you change must be "
+        "justified below, one entry each, so a small, surgical edit succeeds "
+        "where a full rewrite fails. Concentrate changes in the professional "
+        "summary and core-competencies lines; leave experience bullets alone "
+        "unless a rubric requirement genuinely needs one reworded.\n\n"
         "Rules, all enforced:\n"
         "- Never invent employers, titles, dates, degrees, certifications, "
         "publications, or metrics. Reframe existing wording only.\n"
         "- Keep job titles, company names, and dates byte-identical to the "
         "master resume.\n"
-        "- For every line you changed or added, supply one claim_evidence "
-        'entry. "claim_text" must be that draft line copied exactly, and '
-        '"source_span_text" must be the master-resume text it came from, '
-        "also copied exactly.\n"
-        "- claim_text must occur exactly once in the draft; source_span_text "
-        "must occur in the master resume. Copy both with their leading "
-        'bullets or markers intact ("• ", "- ") -- stripping them is '
-        "rejected.\n"
-        "- Lines you left unchanged need no evidence entry.\n"
-        "- Do not reorder or duplicate experience between roles."
+        "- claim_evidence must cover the lines you changed EXACTLY: one entry "
+        "for every changed line, and no entry for any line you left alone. "
+        "Not a sample, not the interesting ones -- all of them and only them. "
+        "A missing or extra entry fails the whole run.\n"
+        '- "claim_text" is your new draft line, copied exactly and occurring '
+        "exactly once in the draft.\n"
+        '- "source_span_text" is the ONE COMPLETE LINE of the master resume '
+        "that line replaces, copied exactly. Because you rewrote it, that "
+        "original line must NOT still appear anywhere in your draft.\n"
+        "- Each master-resume line may back at most one claim.\n"
+        "- The claim must be supported by its source line -- same role, same "
+        "facts, reworded. Do not pair a claim with an unrelated source line.\n"
+        "- Copy both texts with any leading bullet or marker intact "
+        '("• ", "- "); stripping them is rejected.\n'
+        "- Do not reorder or duplicate experience between roles.\n"
+        "- Before answering, count your changed lines and count your "
+        "claim_evidence entries. They must be the same number."
     ),
     "auditor": (
         "You are the Auditor. You receive the exact writer draft and the "
@@ -357,9 +369,14 @@ _ROLE_CONTRACTS: dict[str, str] = {
         "- Never invent facts; the same authenticity rules as the Writer "
         "apply.\n"
         '- "addressed_finding_ids" lists the finding ids you fixed.\n'
-        "- Supply claim_evidence for every line you changed, with claim_text "
-        "copied exactly from your draft and source_span_text copied exactly "
-        "from the master resume.\n"
+        "- claim_evidence must cover the lines that differ from the master "
+        "resume EXACTLY: one entry per differing line, none for any line that "
+        "matches the master. A missing or extra entry fails the whole run.\n"
+        '- "claim_text" is your draft line copied exactly; '
+        '"source_span_text" is the ONE COMPLETE LINE of the master resume it '
+        "replaces, copied exactly, and that original line must not still "
+        "appear in your draft. Each master line may back at most one claim. "
+        "Keep leading bullets and markers intact.\n"
         "- Return the COMPLETE resume, not a diff or a fragment."
     ),
 }
