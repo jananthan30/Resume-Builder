@@ -894,9 +894,67 @@ def _get_penalty_mitigation(penalty_name: str) -> str:
 # ENDPOINTS — v2.0 (text input, caching, explanations)
 # =============================================================================
 
+_agent_key_state: Dict[str, Any] = {"checked": False, "status": "unchecked", "detail": None}
+
+
+def _agent_key_status() -> Dict[str, Any]:
+    """Report whether the Anthropic key is present AND actually accepted.
+
+    'Configured' is not the same as 'working'. A revoked key is a non-empty
+    string that passes every local check and fails only when the API is
+    finally called -- which, for this deployment, meant a key died in March
+    and nobody found out until August, because the endpoint that would have
+    used it was a 409 stub and nothing else ever touched it.
+
+    So this makes one real request (cheapest model, one output token,
+    a fraction of a cent) the first time it is asked, then caches the answer
+    for the life of the process. A deploy restarts the process, so every
+    deploy re-checks. Health checks poll this endpoint every 30s and must
+    stay fast, hence the cache.
+
+    A dead key is REPORTED, never fatal: the free tier, billing, tracker,
+    and job search do not touch Anthropic, and failing the health check
+    would have Fly kill a machine that is serving all of them correctly.
+    """
+    if _agent_key_state["checked"]:
+        return {"status": _agent_key_state["status"], "detail": _agent_key_state["detail"]}
+
+    key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+    if not key:
+        _agent_key_state.update(checked=True, status="missing",
+                                detail="ANTHROPIC_API_KEY is not set.")
+    else:
+        try:
+            import anthropic
+
+            anthropic.Anthropic(api_key=key).messages.create(
+                model="claude-haiku-4-5",
+                max_tokens=1,
+                messages=[{"role": "user", "content": "ping"}],
+            )
+            _agent_key_state.update(checked=True, status="ok", detail=None)
+        except ImportError:
+            _agent_key_state.update(checked=True, status="unavailable",
+                                    detail="anthropic SDK is not installed.")
+        except Exception as exc:  # noqa: BLE001 -- any failure is a report, not a crash
+            name = type(exc).__name__
+            if "Authentication" in name or "PermissionDenied" in name:
+                detail = "ANTHROPIC_API_KEY is rejected by the API (invalid or revoked)."
+            elif "RateLimit" in name:
+                # Transient: don't cache, so the next poll re-checks.
+                return {"status": "rate_limited",
+                        "detail": "Rate limited while checking; will retry."}
+            else:
+                detail = f"Anthropic API unreachable ({name})."
+            _agent_key_state.update(checked=True, status="invalid", detail=detail)
+
+    return {"status": _agent_key_state["status"], "detail": _agent_key_state["detail"]}
+
+
 @app.get("/health")
 def health():
     """Server status, model availability, and usage stats."""
+    agent_key = _agent_key_status()
     return {
         "status": "ok",
         "version": "3.0.0",
@@ -912,6 +970,13 @@ def health():
         },
         "job_discovery": {
             "adzuna_configured": bool(os.getenv("ADZUNA_APP_ID")) and bool(os.getenv("ADZUNA_APP_KEY")),
+        },
+        # Paid AI features (tailoring, cover letters). "ok" here means the key
+        # was actually accepted by Anthropic, not merely that it is non-empty.
+        "agent": {
+            "api_key": agent_key["status"],
+            "detail": agent_key["detail"],
+            "features_available": agent_key["status"] == "ok",
         },
         "cache_size": len(_score_cache),
         "auth_required": _config["require_auth"],

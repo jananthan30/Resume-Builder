@@ -34,6 +34,18 @@ HEALTH=$(curl -s -m 90 "$BASE/health")
 check "GET /health" "$(printf '%s' "$HEALTH" | grep -c '"status":"ok"')" "1"
 printf '        %s\n' "$(printf '%s' "$HEALTH" | cut -c1-160)"
 
+# A revoked Anthropic key is a non-empty, correctly-shaped string that fails
+# only when the API is called. That is exactly how the production key stayed
+# dead from March to August 2026 unnoticed -- so assert on the live verdict,
+# not on the key merely being configured.
+AGENT_KEY=$(printf '%s' "$HEALTH" | sed -n 's/.*"agent":{"api_key":"\([^"]*\)".*/\1/p')
+check "paid AI features are live" "${AGENT_KEY:-absent}" "ok"
+if [ "${AGENT_KEY:-absent}" != "ok" ]; then
+  printf '        %s\n' "$(printf '%s' "$HEALTH" | sed -n 's/.*"detail":"\([^"]*\)".*/-> \1/p')"
+  printf '        fix: create a key at console.anthropic.com, then\n'
+  printf '        flyctl secrets set ANTHROPIC_API_KEY="sk-ant-..." --app resume-scorer\n'
+fi
+
 # ------------------------------------------------------------------- auth
 say "Account lifecycle (throwaway user)"
 REG=$(curl -s -m 60 -X POST "$BASE/auth/register" \
