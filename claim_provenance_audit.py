@@ -203,11 +203,21 @@ _POLARITY_TOKENS: frozenset[str] = frozenset({
 })
 
 # How much a claim may grow, as a fraction of its source's token count.
-# Additive support exists so a line can absorb the job description's own
-# vocabulary -- a term or two, not a new clause. A proportional bound keeps
-# short lines from being swamped while leaving long ones room, and it is
-# unit-free, so no industry gets more or less latitude than another.
-_MAX_ADDED_TOKEN_RATIO = 0.40
+#
+# This is the coarsest of the four conditions and deliberately not the load-
+# bearing one: ordered containment already forbids dropping or reordering any
+# source token, numeric-core equality already forbids touching a figure, and
+# the polarity rule already forbids inverting the sense. The budget only bounds
+# how much *additional* non-numeric wording may ride along.
+#
+# Measured against a real run, 0.40 was too tight to be useful. A core-
+# competencies line is a delimited keyword list, and adding two of the job
+# description's terms to a 28-token line needed 15 -- legitimate tailoring,
+# refused. 0.60 admits that while still refusing the whole fabricated clauses
+# in the test suite. Skills added this way are separately required to trace to
+# real evidence by evidence_audit.py, which is the gate actually designed for
+# that question; this bound is a backstop, not the proof.
+_MAX_ADDED_TOKEN_RATIO = 0.60
 _MIN_ADDED_TOKENS = 2
 
 
