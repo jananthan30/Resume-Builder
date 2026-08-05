@@ -39,6 +39,7 @@ import base64
 import tempfile
 import json
 import statistics
+import uuid
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from collections import defaultdict
@@ -68,6 +69,14 @@ import hr_scorer
 _elapsed = time.time() - _start
 print(f"Models loaded in {_elapsed:.1f}s")
 
+# ─── Agent tool registry (cloud-hostable; imports cleanly with no cloud/
+# package present and no vendor SDK installed -- see agent/tools.py's own
+# module docstring). /rewrite and /cover-letter dispatch into this registry
+# instead of talking to the model or the four-role pipeline directly, so
+# every draft they can ever return is produced (and audited/recorded) by the
+# exact same code path Task 8's tests already cover. ───
+import agent.tools as agent_tools
+
 # ─── Cloud modules (graceful import — works locally without cloud deps) ───
 try:
     from cloud.config import settings as cloud_settings
@@ -86,6 +95,7 @@ try:
         handle_webhook_event, create_portal_session,
     )
     from cloud.db import get_conn as db_get_conn, run_migrations
+    from cloud.quotas import QuotaExceeded
     CLOUD_AVAILABLE = True
 except ImportError:
     CLOUD_AVAILABLE = False
@@ -1623,17 +1633,117 @@ async def coach_redflags(req: RedFlagCoachRequest):
 
 
 # =============================================================================
-# LEGACY RESUME REWRITING — DISABLED
+# RESUME REWRITE — thin wrapper around the audited agent pipeline
 # =============================================================================
 
+_TAILOR_UNAVAILABLE_DETAIL = (
+    "We couldn't finish tailoring your resume just now. Please try again in "
+    "a few minutes."
+)
+
+
+def _friendly_tier_required_detail(feature: str) -> str:
+    return f"{feature} requires a Pro ($12/month) or Ultra ($29/month) subscription."
+
+
+def _safe_agent_scores(ctx: "agent_tools.ToolContext", resume_text: str, jd_text: str):
+    """Best-effort ATS/HR score for a piece of resume text. Never raises --
+    a scoring hiccup must not take down an otherwise-successful rewrite."""
+    try:
+        scored = agent_tools.dispatch(
+            "score_resume", ctx, resume_text=resume_text, jd_text=jd_text
+        )
+        return scored.get("ats_score"), scored.get("hr_score")
+    except Exception:
+        return None, None
+
+
 @app.post("/rewrite")
-async def rewrite_resume_endpoint(req: ScoreRequest, request: Request):
+async def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
     """
-    Reject the legacy REST rewrite path before auth usage, input resolution,
-    scoring, model access, streaming, or output construction.
+    Tailor the caller's resume via the audited four-role Resume Team pipeline
+    (agent.tools.run_resume_team) and return it in the legacy REST shape the
+    deployed PWA's Ultra "Rewrite" feature already reads:
+    ``{"rewritten_resume": str, "ats_before", "ats_after", "hr_before",
+    "hr_after"}`` (scores are null when unavailable, but ``rewritten_resume``
+    is always present on a 200).
+
+    403 for free tier, 402 for an exhausted Pro/Ultra monthly quota, 400 when
+    no resume text is available from either the request or the account, and
+    a 5xx with no internal error codes if the pipeline runs but does not
+    publish a draft.
     """
-    del req, request
-    return JSONResponse(status_code=409, content=native_resume_team_required_response())
+    if not CLOUD_AVAILABLE or not isinstance(auth, dict):
+        raise HTTPException(
+            status_code=501, detail="Resume tailoring requires cloud authentication."
+        )
+
+    user_id = auth["user_id"]
+    tier = auth.get("tier", "free")
+
+    if tier not in ("pro", "ultra"):
+        raise HTTPException(
+            status_code=403,
+            detail=_friendly_tier_required_detail("Tailored resume rewriting"),
+        )
+
+    jd_text = (req.jd_text or "").strip()
+    if not jd_text:
+        raise HTTPException(
+            status_code=400,
+            detail="Include the job description you want this resume tailored for.",
+        )
+
+    provided_resume = (req.resume_text or "").strip()
+    if provided_resume:
+        # A resume_text in the request becomes the account's resume of
+        # record, mirroring /resume/upload -- run_resume_team always tailors
+        # from the saved resume (see agent/tools.py), so this is what makes
+        # "request resume_text if provided" actually take effect.
+        _save_resume_db(user_id, provided_resume)
+        source_resume_text = provided_resume
+    else:
+        record = _get_resume_db(user_id)
+        if not record or not record.get("resume_text"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "We don't have a resume on file for your account yet. "
+                    "Upload one, or include resume_text with this request."
+                ),
+            )
+        source_resume_text = record["resume_text"]
+
+    conn = db_get_conn(cloud_settings.DB_PATH)
+    try:
+        ctx = agent_tools.ToolContext(
+            user_id=user_id, tier=tier, conn=conn, run_id=str(uuid.uuid4())
+        )
+        try:
+            result = agent_tools.dispatch("run_resume_team", ctx, jd_text=jd_text)
+        except QuotaExceeded as exc:
+            raise HTTPException(status_code=402, detail=exc.detail)
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=502, detail=_TAILOR_UNAVAILABLE_DETAIL)
+
+        if result.get("status") != "succeeded" or not result.get("draft"):
+            raise HTTPException(status_code=502, detail=_TAILOR_UNAVAILABLE_DETAIL)
+
+        draft_text = result["draft"]
+        ats_before, hr_before = _safe_agent_scores(ctx, source_resume_text, jd_text)
+        ats_after, hr_after = _safe_agent_scores(ctx, draft_text, jd_text)
+    finally:
+        conn.close()
+
+    return JSONResponse(content={
+        "rewritten_resume": draft_text,
+        "ats_before": ats_before,
+        "ats_after": ats_after,
+        "hr_before": hr_before,
+        "hr_after": hr_after,
+    })
 
 
 # =============================================================================
@@ -1641,50 +1751,84 @@ async def rewrite_resume_endpoint(req: ScoreRequest, request: Request):
 # =============================================================================
 
 
+_COVER_LETTER_UNAVAILABLE_DETAIL = (
+    "We couldn't generate your cover letter just now. Please try again in a "
+    "few minutes."
+)
+
+
 @app.post("/cover-letter")
 async def cover_letter_endpoint(req: CoverLetterRequest, auth=Depends(verify_api_key_with_usage)):
-    """Generate a tailored cover letter. Requires Pro or Ultra tier."""
-    # Enforce tier
-    if CLOUD_AVAILABLE and isinstance(auth, dict):
-        tier = auth.get("tier", "free")
-        if tier not in ("pro", "ultra"):
-            raise HTTPException(
-                status_code=403,
-                detail="Cover letter generation requires a Pro ($12/month) or Ultra ($29/month) subscription.",
-            )
+    """Generate a tailored cover letter via agent.tools.run_cover_letter.
 
-    # Auto-fill saved resume if none provided
-    if not req.resume_text and CLOUD_AVAILABLE and isinstance(auth, dict):
-        record = _get_resume_db(auth["user_id"])
-        if record:
-            req = req.model_copy(update={"resume_text": record["resume_text"]})
+    Requires Pro or Ultra tier. Response shape is unchanged from the prior
+    direct-generation implementation (paragraphs/full_text/company/
+    job_title/word_count) -- only the path producing it changed, so both
+    the PWA and mcp_scorer.py's cloud fallback (which checks for
+    "paragraphs" in the response) keep working. Quota is now enforced (Pro:
+    30/month, Ultra: 1000/month -- see cloud/quotas.py) and every run is
+    recorded in agent_runs, matching /rewrite.
+    """
+    if not CLOUD_AVAILABLE or not isinstance(auth, dict):
+        raise HTTPException(
+            status_code=501, detail="Cover letter generation requires cloud authentication."
+        )
 
-    if not req.resume_text:
-        raise HTTPException(status_code=400, detail="Provide resume_text or upload a resume via POST /resume/upload.")
+    user_id = auth["user_id"]
+    tier = auth.get("tier", "free")
+    if tier not in ("pro", "ultra"):
+        raise HTTPException(
+            status_code=403,
+            detail=_friendly_tier_required_detail("Cover letter generation"),
+        )
+
+    jd_text = (req.jd_text or "").strip()
+    if not jd_text:
+        raise HTTPException(status_code=400, detail="Provide jd_text for the job description.")
+
+    provided_resume = (req.resume_text or "").strip()
+    if provided_resume:
+        # Same rationale as /rewrite: run_cover_letter always tailors from
+        # the saved resume, so an explicitly-provided resume_text has to
+        # become the resume of record for it to take effect at all.
+        _save_resume_db(user_id, provided_resume)
+    elif not _get_resume_db(user_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Provide resume_text or upload a resume via POST /resume/upload.",
+        )
 
     _log_score_usage(auth, "/cover-letter")
 
+    conn = db_get_conn(cloud_settings.DB_PATH)
     try:
-        from llm_scorer import generate_cover_letter, ANTHROPIC_AVAILABLE
-        if not ANTHROPIC_AVAILABLE:
-            raise HTTPException(status_code=503, detail="Cover letter generation unavailable — anthropic package not installed.")
-
-        result = generate_cover_letter(
-            resume_text=req.resume_text,
-            jd_text=req.jd_text,
-            company_name=req.company_name,
-            job_title=req.job_title,
+        ctx = agent_tools.ToolContext(
+            user_id=user_id, tier=tier, conn=conn, run_id=str(uuid.uuid4())
         )
+        try:
+            result = agent_tools.dispatch(
+                "run_cover_letter", ctx,
+                jd_text=jd_text, company=req.company_name, title=req.job_title,
+            )
+        except QuotaExceeded as exc:
+            raise HTTPException(status_code=402, detail=exc.detail)
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=502, detail=_COVER_LETTER_UNAVAILABLE_DETAIL)
+    finally:
+        conn.close()
 
-        if result.get("error"):
-            raise HTTPException(status_code=500, detail=result["error"])
+    if result.get("status") != "succeeded" or not result.get("full_text"):
+        raise HTTPException(status_code=502, detail=_COVER_LETTER_UNAVAILABLE_DETAIL)
 
-        return JSONResponse(content=result)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Cover letter generation failed: {str(e)}")
+    return JSONResponse(content={
+        "full_text": result["full_text"],
+        "paragraphs": result.get("paragraphs", []),
+        "company": result.get("company"),
+        "job_title": result.get("job_title"),
+        "word_count": result.get("word_count"),
+    })
 
 
 # =============================================================================
