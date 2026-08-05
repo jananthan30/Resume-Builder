@@ -72,6 +72,12 @@ class ToolContext:
     tier: str
     conn: Any
     run_id: str
+    # True when the caller already claimed this run's quota slot and wrote its
+    # agent_runs row (the async /agent/* enqueue path does this atomically, so
+    # a burst of concurrent requests cannot all read the same stale count).
+    # Re-checking here would then count the run against itself and refuse the
+    # very last slot the caller was legitimately granted.
+    slot_reserved: bool = False
 
 
 # =============================================================================
@@ -579,7 +585,8 @@ def run_resume_team(
     """
     from cloud.quotas import check_quota
 
-    check_quota(ctx.conn, ctx.user_id, ctx.tier, "tailor")
+    if not ctx.slot_reserved:
+        check_quota(ctx.conn, ctx.user_id, ctx.tier, "tailor")
 
     if not isinstance(jd_text, str) or not jd_text.strip():
         raise ValueError("jd_text must be a non-empty string")
@@ -599,14 +606,15 @@ def run_resume_team(
     run_id = ctx.run_id
     case_id = f"case:{run_id}"
 
-    _insert_agent_run(
-        ctx.conn,
-        ctx.user_id,
-        run_id,
-        "tailor",
-        input_ref=multi_agent_team.canonical_digest(jd_text),
-        instruction=instruction,
-    )
+    if not ctx.slot_reserved:
+        _insert_agent_run(
+            ctx.conn,
+            ctx.user_id,
+            run_id,
+            "tailor",
+            input_ref=multi_agent_team.canonical_digest(jd_text),
+            instruction=instruction,
+        )
 
     request = {
         "schema_version": multi_agent_team.PROTOCOL_VERSION,
@@ -718,7 +726,8 @@ def run_cover_letter(
     """
     from cloud.quotas import check_quota
 
-    check_quota(ctx.conn, ctx.user_id, ctx.tier, "cover_letter")
+    if not ctx.slot_reserved:
+        check_quota(ctx.conn, ctx.user_id, ctx.tier, "cover_letter")
 
     if not isinstance(jd_text, str) or not jd_text.strip():
         raise ValueError("jd_text must be a non-empty string")
@@ -736,14 +745,15 @@ def run_cover_letter(
         source_resume_text = record["resume_text"]
 
     run_id = ctx.run_id
-    _insert_agent_run(
-        ctx.conn,
-        ctx.user_id,
-        run_id,
-        "cover_letter",
-        input_ref=multi_agent_team.canonical_digest(jd_text),
-        instruction=json.dumps({"company": company, "title": title}),
-    )
+    if not ctx.slot_reserved:
+        _insert_agent_run(
+            ctx.conn,
+            ctx.user_id,
+            run_id,
+            "cover_letter",
+            input_ref=multi_agent_team.canonical_digest(jd_text),
+            instruction=json.dumps({"company": company, "title": title}),
+        )
 
     try:
         generated = llm_scorer.generate_cover_letter(

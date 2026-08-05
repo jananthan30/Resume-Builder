@@ -1896,6 +1896,11 @@ def _agent_enqueue_precheck(auth, feature: str) -> tuple:
         raise HTTPException(
             status_code=501, detail="This feature requires cloud authentication."
         )
+    # An anonymous caller can never be pro/ultra, so the tier gate below would
+    # refuse them anyway -- but 401 is the truthful answer ("sign in"), and it
+    # keeps the anonymous bucket from ever reaching a per-account code path.
+    if auth.get("anonymous"):
+        raise HTTPException(status_code=401, detail="Sign in to use this feature.")
     user_id = auth["user_id"]
     tier = auth.get("tier", "free")
     if tier not in ("pro", "ultra"):
@@ -1939,19 +1944,46 @@ def _resolve_agent_jd_text(user_id: int, jd_text: Optional[str], application_id:
     return stored
 
 
-def _check_quota_at_enqueue(user_id: int, tier: str, action: str) -> None:
-    """Read-only quota check performed BEFORE any agent_runs row exists.
+def _reserve_agent_run_slot(
+    user_id: int, tier: str, action: str, run_id: str,
+    jd_text: str, instruction: Optional[str],
+) -> None:
+    """Atomically verify quota AND claim the slot, in one write transaction.
 
-    Raises a 402 naming the limit (via QuotaExceeded's own friendly detail).
-    This duplicates the check run_resume_team/run_cover_letter make again
-    for real once the background task starts (see agent/tools.py) -- both
-    calls are pure reads with no side effects, so checking twice is safe,
-    and THIS check is what keeps a refused enqueue from ever creating a
-    queued row.
+    Checking the quota without claiming anything is not enough. month_usage()
+    counts agent_runs rows, and on the async path the row was previously not
+    written until the BackgroundTasks callable ran -- i.e. after the 202 had
+    already been sent. Every request that arrived inside that window read the
+    same stale count and was admitted, so a burst bought far more paid runs
+    than the plan allows (measured: 25 accepted against a limit of 10).
+
+    BEGIN IMMEDIATE takes SQLite's RESERVED lock up front, so concurrent
+    enqueues serialize here: each one sees the rows its predecessors claimed.
+    The row is written as 'queued', which also means GET /agent/runs/{run_id}
+    can answer honestly the instant the caller gets its run_id, instead of
+    404ing until the background task happened to reach its own insert.
+
+    Raises 402 (naming the limit via QuotaExceeded's own friendly detail)
+    without leaving a row behind.
     """
+    import multi_agent_team  # local: keeps the heavy pipeline import off startup
+
+    input_ref = multi_agent_team.canonical_digest(jd_text)
     conn = db_get_conn(cloud_settings.DB_PATH)
     try:
-        check_quota(conn, user_id, tier, action)
+        conn.commit()  # ensure no implicit transaction is already open
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            check_quota(conn, user_id, tier, action)
+            agent_tools._insert_agent_run(
+                conn, user_id, run_id, action,
+                input_ref=input_ref,
+                instruction=instruction,
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
     except QuotaExceeded as exc:
         raise HTTPException(status_code=402, detail=exc.detail)
     finally:
@@ -1987,7 +2019,11 @@ def _run_tailor_in_background(
     """
     conn = db_get_conn(cloud_settings.DB_PATH)
     try:
-        ctx = agent_tools.ToolContext(user_id=user_id, tier=tier, conn=conn, run_id=run_id)
+        # slot_reserved: the enqueue handler already claimed this run's quota
+        # slot and wrote its agent_runs row atomically.
+        ctx = agent_tools.ToolContext(
+            user_id=user_id, tier=tier, conn=conn, run_id=run_id, slot_reserved=True,
+        )
         agent_tools.dispatch(
             "run_resume_team", ctx,
             jd_text=jd_text, instruction=instruction, resume_text=resume_text,
@@ -2013,7 +2049,11 @@ def _run_cover_letter_in_background(
     no-double-record rules apply."""
     conn = db_get_conn(cloud_settings.DB_PATH)
     try:
-        ctx = agent_tools.ToolContext(user_id=user_id, tier=tier, conn=conn, run_id=run_id)
+        # slot_reserved: the enqueue handler already claimed this run's quota
+        # slot and wrote its agent_runs row atomically.
+        ctx = agent_tools.ToolContext(
+            user_id=user_id, tier=tier, conn=conn, run_id=run_id, slot_reserved=True,
+        )
         agent_tools.dispatch(
             "run_cover_letter", ctx,
             jd_text=jd_text, company=company, title=title, resume_text=resume_text,
@@ -2032,9 +2072,11 @@ def agent_tailor_enqueue(
 
     Returns immediately with a run_id to poll via GET /agent/runs/{run_id};
     the audited four-role pipeline (agent.tools.run_resume_team) executes
-    afterward in a FastAPI background task. 403 for free tier, 402 for an
-    exhausted Pro/Ultra monthly quota, 400 for missing input -- none of
-    these create an agent_runs row.
+    afterward in a FastAPI background task. 401 unauthenticated, 403 for free
+    tier, 402 for an exhausted Pro/Ultra monthly quota, 400 for missing input
+    -- none of these create an agent_runs row. A successful enqueue claims its
+    quota slot before returning (see _reserve_agent_run_slot), so the run is
+    immediately pollable as 'queued'.
     """
     user_id, tier = _agent_enqueue_precheck(auth, "Tailored resume rewriting")
     jd_text = _resolve_agent_jd_text(user_id, req.jd_text, req.application_id)
@@ -2049,9 +2091,9 @@ def agent_tailor_enqueue(
             ),
         )
 
-    _check_quota_at_enqueue(user_id, tier, "tailor")
-
     run_id = agent_runner.new_run_id()
+    _reserve_agent_run_slot(user_id, tier, "tailor", run_id, jd_text, req.instruction)
+
     background_tasks.add_task(
         _run_tailor_in_background,
         run_id, user_id, tier, jd_text, req.instruction, provided_resume or None,
@@ -2078,10 +2120,10 @@ def agent_cover_letter_enqueue(
             detail="Provide resume_text or upload a resume via POST /resume/upload.",
         )
 
-    _check_quota_at_enqueue(user_id, tier, "cover_letter")
+    run_id = agent_runner.new_run_id()
+    _reserve_agent_run_slot(user_id, tier, "cover_letter", run_id, jd_text, None)
     _log_score_usage(auth, "/agent/cover-letter")
 
-    run_id = agent_runner.new_run_id()
     background_tasks.add_task(
         _run_cover_letter_in_background,
         run_id, user_id, tier, jd_text, provided_resume or None,
@@ -2579,8 +2621,20 @@ def insights_application(entry_id: int, auth=Depends(verify_api_key)):
 
 
 def _get_user_id(auth) -> Optional[int]:
-    """Extract integer user_id from auth dict (JWT/API-key result)."""
+    """Extract the integer user_id of a REAL, authenticated account.
+
+    Returns None for anonymous callers even though verify_api_key mints them
+    a usable user_id. That anonymous identity is keyed on the caller-supplied
+    X-Client-Fingerprint header (falling back to client IP), so it is a
+    shared, spoofable bucket -- fine for metering free scores, never an
+    account. Every caller of this helper owns per-account data (tracker rows,
+    pipeline insights, agent runs); treating the anonymous bucket as an
+    account would let two callers who send the same fingerprint -- or who sit
+    behind one NAT address -- read and write each other's applications.
+    """
     if not isinstance(auth, dict):
+        return None
+    if auth.get("anonymous"):
         return None
     uid = auth.get("user_id")
     try:
