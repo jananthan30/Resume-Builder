@@ -73,6 +73,7 @@ place that ever touches the ``anthropic`` package, and only lazily.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -88,6 +89,22 @@ from multi_agent_team import (
 __all__ = ["AnthropicTeamAdapter"]
 
 _log = logging.getLogger(__name__)
+
+# Cap on the model's own reply replayed back to it during a repair. Long
+# enough to carry a full draft plus its evidence, bounded so one malformed
+# reply cannot blow the next request's context.
+_MAX_REPLAY_CHARS = 60_000
+
+
+def _compact_json(payload: Any) -> str | None:
+    """Serialize a role's own previous reply for replay, or None if it cannot
+    be represented. Best effort: a failure here just costs the repair its
+    context, it never fails the run."""
+    try:
+        text = json.dumps(payload, sort_keys=True, ensure_ascii=True)
+    except (TypeError, ValueError):
+        return None
+    return text if len(text) <= _MAX_REPLAY_CHARS else None
 
 
 class AnthropicTeamAdapter:
@@ -143,49 +160,75 @@ class AnthropicTeamAdapter:
         if not isinstance(payload, dict):
             raise ValueError("invalid role context")
 
-        try:
-            raw_payload = self.host.run_role(
-                role, payload, case_id=case_id, run_id=run_id
+        def call_host(**extra: Any) -> Any:
+            try:
+                return self.host.run_role(
+                    role, payload, case_id=case_id, run_id=run_id, **extra
+                )
+            except (HostRefusal, BudgetExceeded) as error:
+                raise ConnectionError(
+                    f"Anthropic host unavailable for role {role!r}: {error}"
+                ) from error
+
+        def build_envelope(candidate: Any, identity: str) -> dict[str, Any]:
+            normalized = normalize_native_payload(role, candidate, context)
+            envelope = build_handoff(
+                context=context, role=role, agent_id=identity, payload=normalized
             )
-        except (HostRefusal, BudgetExceeded) as error:
-            raise ConnectionError(
-                f"Anthropic host unavailable for role {role!r}: {error}"
-            ) from error
+            if validate_handoff(role, envelope, context).get("valid") is not True:
+                raise ValueError("invalid normalized api handoff")
+            return envelope
+
+        raw_payload = call_host()
 
         agent_id = f"api:{role}.{run_id}.{attempt}"
         if agent_id in self._seen_invocations:
             raise LookupError("reused api invocation identity")
 
         try:
-            normalized = normalize_native_payload(role, raw_payload, context)
-            envelope = build_handoff(
-                context=context,
-                role=role,
-                agent_id=agent_id,
-                payload=normalized,
-            )
-            if validate_handoff(role, envelope, context).get("valid") is not True:
-                raise ValueError("invalid normalized api handoff")
+            envelope = build_envelope(raw_payload, agent_id)
         except AgentInvocationFailure:
             raise
-        except Exception as error:
-            # The code stays a fixed token -- it is part of the fail-closed
-            # contract and appears in the receipt schemas -- and the caller
-            # still sees only generic copy. But swallowing WHICH role failed
-            # and WHY made a production outage undiagnosable: agent_runs.error
-            # read 'FAILED:AGENT_PAYLOAD_SCHEMA' with no way to tell a
-            # malformed rubric from a mis-anchored draft.
+        except Exception as first_error:
+            # One repair attempt, then fail closed. A role must satisfy eight
+            # exact-text constraints simultaneously on its first try with no
+            # feedback -- complete-line anchors, uniqueness, one-for-one
+            # evidence coverage, source-line disappearance, one claim per
+            # source line, same-section pairing, ordered containment, numeric
+            # identity. Measured across nine production runs, it lands any
+            # individual rule once told and still misses on a first pass. The
+            # local CLI flow never hit this because an interactive agent reads
+            # the error and fixes it; that feedback was doing invisible work.
             #
-            # These messages come from our own validators ("invalid researcher
-            # evidence", "auditor did not bind the exact draft", ...), never
-            # from model output, so nothing user-supplied is logged. The
-            # payload itself is deliberately never logged -- it carries the
-            # user's resume.
+            # Nothing is loosened: the same validator judges the retry, the
+            # coordinator's context and digest binding are untouched, and a
+            # second failure raises exactly as before. The retry carries its
+            # own identity so the reuse guard keeps working and the receipt
+            # still shows one distinct id per invocation.
             _log.warning(
-                "role payload rejected: role=%s attempt=%s run_id=%s reason=%s: %s",
-                role, attempt, run_id, type(error).__name__, error,
+                "role payload rejected (retrying once): role=%s attempt=%s "
+                "run_id=%s reason=%s: %s",
+                role, attempt, run_id, type(first_error).__name__, first_error,
             )
-            raise AgentInvocationFailure("AGENT_PAYLOAD_SCHEMA") from error
+            repair_id = f"{agent_id}.repair"
+            if repair_id in self._seen_invocations:
+                raise LookupError("reused api invocation identity")
+            try:
+                repaired = call_host(
+                    rejection=str(first_error),
+                    previous_reply=_compact_json(raw_payload),
+                )
+                envelope = build_envelope(repaired, repair_id)
+            except (AgentInvocationFailure, ConnectionError, LookupError):
+                raise
+            except Exception as retry_error:
+                _log.warning(
+                    "role payload rejected after repair: role=%s attempt=%s "
+                    "run_id=%s reason=%s: %s",
+                    role, attempt, run_id, type(retry_error).__name__, retry_error,
+                )
+                raise AgentInvocationFailure("AGENT_PAYLOAD_SCHEMA") from retry_error
+            agent_id = repair_id
 
         self._seen_invocations.add(agent_id)
         return envelope

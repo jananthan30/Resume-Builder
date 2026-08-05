@@ -93,6 +93,37 @@ _REPAIR_INSTRUCTION = (
     "code fences, and no text before or after the JSON."
 )
 
+def _rejection_instruction(reason: str) -> str:
+    """Hand a role the coordinator's verdict on its own last reply.
+
+    The JSON repair above exists because a model occasionally returns
+    unparseable text. This is the same idea one layer up: the reply parsed
+    fine but broke a rule the coordinator enforces -- an anchor that was not a
+    complete line, evidence that missed a changed line, a claim paired with a
+    source from another section.
+
+    A role has to satisfy eight exact-text constraints at once, first try,
+    with no feedback. Measured across nine production runs, it lands any
+    individual rule once told and still misses on a first attempt. The local
+    CLI flow never had this problem because an interactive agent simply reads
+    the error and fixes it; that feedback was doing invisible work the hosted
+    path had no equivalent for.
+
+    Nothing is loosened by showing the model why it failed: the same validator
+    judges the retry, and a second failure is still a hard rejection.
+    """
+    return (
+        "Your previous reply was REJECTED by the coordinator's validator.\n\n"
+        f"Reason: {reason}\n\n"
+        "The task and its input are unchanged. Return the same kind of JSON "
+        "object again, corrected so that this specific rule is satisfied. Copy "
+        "anchor text character-for-character from the source you were given -- "
+        "including leading bullets or markers -- rather than retyping it from "
+        "memory. Change nothing else about your answer. Return only the JSON "
+        "object."
+    )
+
+
 _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?```$", re.DOTALL)
 
 
@@ -488,6 +519,8 @@ class AnthropicHost:
         *,
         case_id: str,
         run_id: str,
+        rejection: str | None = None,
+        previous_reply: str | None = None,
     ) -> dict[str, Any]:
         """Call one role's model with ``payload`` and return its parsed reply.
 
@@ -522,6 +555,17 @@ class AnthropicHost:
         system = _default_system_prompt(role)
         payload_text = json.dumps(payload, sort_keys=True, ensure_ascii=True)
         messages: list[dict[str, Any]] = [{"role": "user", "content": payload_text}]
+
+        # Coordinator-supplied rejection: replay the model's own reply and the
+        # validator's verdict so it can correct one specific violation. The
+        # payload above is unchanged, so this is a second look at the same
+        # task, not a different one. See AnthropicTeamAdapter.invoke.
+        if rejection:
+            if previous_reply:
+                messages.append({"role": "assistant", "content": previous_reply})
+            messages.append(
+                {"role": "user", "content": _rejection_instruction(rejection)}
+            )
 
         response = self._call_once(model=model, system=system, messages=messages)
         text = _first_text_block(response)
