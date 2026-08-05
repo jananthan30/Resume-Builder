@@ -47,7 +47,7 @@ from datetime import datetime
 
 import asyncio
 
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import FastAPI, HTTPException, Request, Depends, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -77,6 +77,11 @@ print(f"Models loaded in {_elapsed:.1f}s")
 # exact same code path Task 8's tests already cover. ───
 import agent.tools as agent_tools
 
+# ─── Async run bookkeeping for POST /agent/tailor + /agent/cover-letter
+# (Task 10; see agent/runner.py's own module docstring). Imports cleanly
+# without cloud/ present, same as agent.tools above. ───
+import agent.runner as agent_runner
+
 # ─── Cloud modules (graceful import — works locally without cloud deps) ───
 try:
     from cloud.config import settings as cloud_settings
@@ -94,8 +99,8 @@ try:
         is_billing_configured, create_checkout_session,
         handle_webhook_event, create_portal_session,
     )
-    from cloud.db import get_conn as db_get_conn, run_migrations
-    from cloud.quotas import QuotaExceeded
+    from cloud.db import get_conn as db_get_conn, run_migrations, scoped
+    from cloud.quotas import QuotaExceeded, check_quota
     CLOUD_AVAILABLE = True
 except ImportError:
     CLOUD_AVAILABLE = False
@@ -307,6 +312,34 @@ class ResumeUploadRequest(BaseModel):
     resume_text: Optional[str] = Field(None, description="Plain text resume content")
     resume_file: Optional[str] = Field(None, description="Base64-encoded file (PDF/DOCX/TXT)")
     resume_filename: Optional[str] = Field(None, description="Original filename for format detection")
+
+
+class AgentTailorRequest(BaseModel):
+    """Enqueue an async tailored-resume run (POST /agent/tailor)."""
+    jd_text: Optional[str] = Field(None, description="Job description text")
+    application_id: Optional[int] = Field(
+        None, description="Tracker entry to read a stored job description from, if jd_text is omitted"
+    )
+    instruction: Optional[str] = Field(None, description="Optional free-text guidance for this run")
+    resume_text: Optional[str] = Field(
+        None, description="Optional one-off resume text for this run only; never saved to the account"
+    )
+
+
+class AgentCoverLetterRequest(BaseModel):
+    """Enqueue an async cover-letter run (POST /agent/cover-letter)."""
+    jd_text: Optional[str] = Field(None, description="Job description text")
+    application_id: Optional[int] = Field(
+        None, description="Tracker entry to read a stored job description from, if jd_text is omitted"
+    )
+    instruction: Optional[str] = Field(
+        None, description="Accepted for shape parity with /agent/tailor; not yet wired into generation"
+    )
+    resume_text: Optional[str] = Field(
+        None, description="Optional one-off resume text for this run only; never saved to the account"
+    )
+    company_name: str = Field("", description="Company name (auto-detected if empty)")
+    job_title: str = Field("", description="Job title (auto-detected if empty)")
 
 
 class APIKeyRequest(BaseModel):
@@ -1837,6 +1870,260 @@ async def cover_letter_endpoint(req: CoverLetterRequest, auth=Depends(verify_api
 
 
 # =============================================================================
+# ASYNC AGENT RUNS — POST /agent/tailor, /agent/cover-letter; GET /agent/runs/{id}
+#
+# Task 10: queue-and-poll twins of /rewrite and /cover-letter above. The
+# enqueue handlers do the auth/tier/quota checks synchronously (so a refused
+# request never creates an agent_runs row) and then hand the actual work to
+# a FastAPI background task, which calls the exact same agent.tools
+# functions /rewrite and /cover-letter already use. See agent/runner.py's
+# module docstring for why the background helpers below call
+# agent_tools.dispatch(...) directly rather than agent_runner.create_run()/
+# finish_run() -- those tool functions already own the full agent_runs
+# bookkeeping for this run_id; wrapping them in agent_runner's primitives
+# too would insert/update the same primary key twice.
+# =============================================================================
+
+
+def _agent_enqueue_precheck(auth, feature: str) -> tuple:
+    """Shared auth/tier gate for the two POST /agent/* enqueue handlers.
+
+    Mirrors /rewrite and /cover-letter's own checks exactly, so a free or
+    anonymous caller sees the identical 501/403 behavior whether they hit
+    the sync or the async entry point.
+    """
+    if not CLOUD_AVAILABLE or not isinstance(auth, dict):
+        raise HTTPException(
+            status_code=501, detail="This feature requires cloud authentication."
+        )
+    user_id = auth["user_id"]
+    tier = auth.get("tier", "free")
+    if tier not in ("pro", "ultra"):
+        raise HTTPException(status_code=403, detail=_friendly_tier_required_detail(feature))
+    return user_id, tier
+
+
+def _resolve_agent_jd_text(user_id: int, jd_text: Optional[str], application_id: Optional[int]) -> str:
+    """Resolve the job description text for an async /agent/* enqueue call.
+
+    Prefers an explicit ``jd_text``. Falls back to ``application_id``, read
+    scoped to the caller from job_applications.jd_ref -- the only
+    per-application job-description reference the schema stores today (see
+    cloud/db.py's job_applications table). This is a known v1
+    simplification: jd_ref is documented elsewhere as a bare
+    filename/reference rather than guaranteed full JD text, so this path
+    only helps a caller that has actually stored real text there itself.
+    """
+    text = (jd_text or "").strip()
+    if text:
+        return text
+    if application_id is None:
+        raise HTTPException(status_code=400, detail="Provide jd_text or application_id.")
+
+    conn = db_get_conn(cloud_settings.DB_PATH)
+    try:
+        row = scoped(conn, user_id).q(
+            "SELECT jd_ref FROM job_applications WHERE id = :application_id AND user_id = :user_id",
+            {"application_id": application_id},
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Application not found.")
+    stored = (row["jd_ref"] or "").strip()
+    if not stored:
+        raise HTTPException(
+            status_code=400,
+            detail="No job description is stored for this application. Provide jd_text.",
+        )
+    return stored
+
+
+def _check_quota_at_enqueue(user_id: int, tier: str, action: str) -> None:
+    """Read-only quota check performed BEFORE any agent_runs row exists.
+
+    Raises a 402 naming the limit (via QuotaExceeded's own friendly detail).
+    This duplicates the check run_resume_team/run_cover_letter make again
+    for real once the background task starts (see agent/tools.py) -- both
+    calls are pure reads with no side effects, so checking twice is safe,
+    and THIS check is what keeps a refused enqueue from ever creating a
+    queued row.
+    """
+    conn = db_get_conn(cloud_settings.DB_PATH)
+    try:
+        check_quota(conn, user_id, tier, action)
+    except QuotaExceeded as exc:
+        raise HTTPException(status_code=402, detail=exc.detail)
+    finally:
+        conn.close()
+
+
+def _friendly_agent_error(kind: str) -> str:
+    """Translate ANY internal agent_runs.error code into fixed, jargon-free
+    copy -- mirrors the fixed 502 detail /rewrite and /cover-letter already
+    return for every pipeline failure, regardless of which internal
+    terminal class produced it (see _TAILOR_UNAVAILABLE_DETAIL /
+    _COVER_LETTER_UNAVAILABLE_DETAIL). The raw code (e.g.
+    'FAILED:AGENT_UNAVAILABLE', 'HUMAN_VOICE_AUDIT_FAILED') is never
+    surfaced to the caller -- it names tokens/model/pipeline internals that
+    are meaningless to an end user.
+    """
+    if kind == "cover_letter":
+        return _COVER_LETTER_UNAVAILABLE_DETAIL
+    return _TAILOR_UNAVAILABLE_DETAIL
+
+
+def _run_tailor_in_background(
+    run_id: str, user_id: int, tier: str, jd_text: str,
+    instruction: Optional[str], resume_text: Optional[str],
+) -> None:
+    """Background execution for POST /agent/tailor.
+
+    Opens its OWN fresh connection -- a request-scoped connection must never
+    cross into a BackgroundTasks callable. Starlette runs a plain ``def``
+    background callable via a worker thread pool, and cloud.db.get_conn()
+    does not pass ``check_same_thread=False``, so a connection created on
+    the request's thread would raise the moment this thread touched it.
+    """
+    conn = db_get_conn(cloud_settings.DB_PATH)
+    try:
+        ctx = agent_tools.ToolContext(user_id=user_id, tier=tier, conn=conn, run_id=run_id)
+        agent_tools.dispatch(
+            "run_resume_team", ctx,
+            jd_text=jd_text, instruction=instruction, resume_text=resume_text,
+        )
+    except Exception as exc:  # noqa: BLE001 -- fire-and-forget background task
+        # run_resume_team already converts every internal failure into a
+        # recorded 'failed' agent_runs row and returns normally rather than
+        # raising. Anything that still escapes here (e.g. a DB error before
+        # any row was written) has no HTTP response left to report to, and
+        # no row to mark failed -- there is nothing to roll back, so it is
+        # safe to drop after logging for operability.
+        print(f"[/agent/tailor background] run {run_id} did not record a result: {exc}")
+    finally:
+        conn.close()
+
+
+def _run_cover_letter_in_background(
+    run_id: str, user_id: int, tier: str, jd_text: str,
+    resume_text: Optional[str], company: Optional[str], title: Optional[str],
+) -> None:
+    """Background execution for POST /agent/cover-letter. See
+    _run_tailor_in_background's docstring -- same fresh-connection and
+    no-double-record rules apply."""
+    conn = db_get_conn(cloud_settings.DB_PATH)
+    try:
+        ctx = agent_tools.ToolContext(user_id=user_id, tier=tier, conn=conn, run_id=run_id)
+        agent_tools.dispatch(
+            "run_cover_letter", ctx,
+            jd_text=jd_text, company=company, title=title, resume_text=resume_text,
+        )
+    except Exception as exc:  # noqa: BLE001 -- fire-and-forget background task
+        print(f"[/agent/cover-letter background] run {run_id} did not record a result: {exc}")
+    finally:
+        conn.close()
+
+
+@app.post("/agent/tailor")
+def agent_tailor_enqueue(
+    req: AgentTailorRequest, background_tasks: BackgroundTasks, auth=Depends(verify_api_key)
+):
+    """Enqueue an async tailored-resume run.
+
+    Returns immediately with a run_id to poll via GET /agent/runs/{run_id};
+    the audited four-role pipeline (agent.tools.run_resume_team) executes
+    afterward in a FastAPI background task. 403 for free tier, 402 for an
+    exhausted Pro/Ultra monthly quota, 400 for missing input -- none of
+    these create an agent_runs row.
+    """
+    user_id, tier = _agent_enqueue_precheck(auth, "Tailored resume rewriting")
+    jd_text = _resolve_agent_jd_text(user_id, req.jd_text, req.application_id)
+
+    provided_resume = (req.resume_text or "").strip()
+    if not provided_resume and not _get_resume_db(user_id):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "We don't have a resume on file for your account yet. "
+                "Upload one, or include resume_text with this request."
+            ),
+        )
+
+    _check_quota_at_enqueue(user_id, tier, "tailor")
+
+    run_id = agent_runner.new_run_id()
+    background_tasks.add_task(
+        _run_tailor_in_background,
+        run_id, user_id, tier, jd_text, req.instruction, provided_resume or None,
+    )
+    return JSONResponse(status_code=202, content={"run_id": run_id})
+
+
+@app.post("/agent/cover-letter")
+def agent_cover_letter_enqueue(
+    req: AgentCoverLetterRequest, background_tasks: BackgroundTasks,
+    auth=Depends(verify_api_key_with_usage),
+):
+    """Enqueue an async cover-letter run. See agent_tailor_enqueue above --
+    identical enqueue-time gating, executing agent.tools.run_cover_letter in
+    the background instead.
+    """
+    user_id, tier = _agent_enqueue_precheck(auth, "Cover letter generation")
+    jd_text = _resolve_agent_jd_text(user_id, req.jd_text, req.application_id)
+
+    provided_resume = (req.resume_text or "").strip()
+    if not provided_resume and not _get_resume_db(user_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Provide resume_text or upload a resume via POST /resume/upload.",
+        )
+
+    _check_quota_at_enqueue(user_id, tier, "cover_letter")
+    _log_score_usage(auth, "/agent/cover-letter")
+
+    run_id = agent_runner.new_run_id()
+    background_tasks.add_task(
+        _run_cover_letter_in_background,
+        run_id, user_id, tier, jd_text, provided_resume or None,
+        req.company_name or None, req.job_title or None,
+    )
+    return JSONResponse(status_code=202, content={"run_id": run_id})
+
+
+@app.get("/agent/runs/{run_id}")
+def agent_run_status(run_id: str, auth=Depends(verify_api_key)):
+    """Poll the status of an async /agent/* run.
+
+    Returns ``{"status", "result", "error"}``. 404s for both an unknown
+    run_id and a run_id owned by a different user -- this endpoint must
+    never reveal whether a foreign run_id exists. ``error`` is always fixed,
+    jargon-free copy (see _friendly_agent_error) -- the internal terminal
+    class stored on the row is never echoed back to the caller.
+    """
+    user_id = _get_user_id(auth)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    if not CLOUD_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Agent runs are unavailable.")
+
+    conn = db_get_conn(cloud_settings.DB_PATH)
+    try:
+        row = agent_runner.get_run(conn, user_id, run_id)
+    finally:
+        conn.close()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Run not found.")
+
+    status = row["status"]
+    return {
+        "status": status,
+        "result": row["result"] if status == "succeeded" else None,
+        "error": _friendly_agent_error(row["kind"]) if status == "failed" else None,
+    }
+
+
+# =============================================================================
 # JOB DISCOVERY ENDPOINT
 # =============================================================================
 
@@ -2351,6 +2638,10 @@ if __name__ == "__main__":
     print(f"  POST /explain        — Score explanation")
     print(f"  POST /cover-letter   — Cover letter generation (Pro/Ultra)")
     print(f"  POST /jobs/discover  — Job discovery + scoring")
+    print(f"\n  Async Agent Endpoints:")
+    print(f"  POST /agent/tailor        — Enqueue a tailored-resume run (Pro/Ultra)")
+    print(f"  POST /agent/cover-letter  — Enqueue a cover-letter run (Pro/Ultra)")
+    print(f"  GET  /agent/runs/{{run_id}} — Poll an async agent run")
     print(f"\n  Auth & Billing Endpoints:")
     print(f"  POST /auth/register  — Create account")
     print(f"  POST /auth/login     — Login (returns JWT)")
