@@ -31,6 +31,7 @@ no *resume* text reaches a user except through the fully audited path.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -553,6 +554,44 @@ def _default_team_adapter() -> AnthropicTeamAdapter:
     return AnthropicTeamAdapter(host=AnthropicHost())
 
 
+# Leading list markers: "- ", "* ", "• ", "1. ", "2) ", en/em dashes.
+_LIST_MARKER_RE = re.compile(r"^[ \t]*(?:[-*•·–—]|\(?\d{1,2}[.)])[ \t]+")
+
+
+def _flatten_list_markers(jd_text: str) -> str:
+    """Remove leading bullet/number markers from every job-description line.
+
+    The pipeline anchors each requirement to a complete line of the source
+    text, and the coordinator compares those anchors byte-for-byte. That makes
+    the model responsible for reproducing a line exactly -- including a leading
+    "- " that carries no meaning. Models tidy such markers away by reflex, and
+    they do it inconsistently: the same job description would anchor cleanly on
+    one run and fail with "researcher evidence must use one complete JD line"
+    on the next, taking the whole run down with it.
+
+    Prompting could not fix that reliably; an explicit rule plus a worked
+    example still left it a coin flip. So the marker is removed before the
+    pipeline ever sees the text. The model has nothing to strip, and its
+    natural output matches. This removes a failure mode rather than asking the
+    model to avoid one.
+
+    Only leading markers go. Wording, order, blank lines, and internal
+    punctuation are untouched, so the requirements a user reads are unchanged
+    and every downstream digest stays computed over one consistent source.
+
+    If flattening would make two previously distinct lines identical, the text
+    is returned unchanged: the uniqueness rule protecting anchor resolution
+    matters more than the convenience, and it fails closed either way.
+    """
+    lines = jd_text.split("\n")
+    flattened = [_LIST_MARKER_RE.sub("", line).rstrip() for line in lines]
+
+    significant = [line.strip() for line in flattened if line.strip()]
+    if len(significant) != len(set(significant)):
+        return jd_text
+    return "\n".join(flattened)
+
+
 def run_resume_team(
     ctx: ToolContext,
     jd_text: str,
@@ -590,6 +629,7 @@ def run_resume_team(
 
     if not isinstance(jd_text, str) or not jd_text.strip():
         raise ValueError("jd_text must be a non-empty string")
+    jd_text = _flatten_list_markers(jd_text)
 
     if isinstance(resume_text, str) and resume_text.strip():
         master_resume = resume_text
@@ -731,6 +771,7 @@ def run_cover_letter(
 
     if not isinstance(jd_text, str) or not jd_text.strip():
         raise ValueError("jd_text must be a non-empty string")
+    jd_text = _flatten_list_markers(jd_text)
 
     if isinstance(resume_text, str) and resume_text.strip():
         source_resume_text = resume_text
