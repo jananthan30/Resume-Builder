@@ -2055,16 +2055,33 @@ def _reserve_agent_run_slot(
         conn.close()
 
 
-def _friendly_agent_error(kind: str) -> str:
-    """Translate ANY internal agent_runs.error code into fixed, jargon-free
-    copy -- mirrors the fixed 502 detail /rewrite and /cover-letter already
-    return for every pipeline failure, regardless of which internal
-    terminal class produced it (see _TAILOR_UNAVAILABLE_DETAIL /
-    _COVER_LETTER_UNAVAILABLE_DETAIL). The raw code (e.g.
-    'FAILED:AGENT_UNAVAILABLE', 'HUMAN_VOICE_AUDIT_FAILED') is never
-    surfaced to the caller -- it names tokens/model/pipeline internals that
-    are meaningless to an end user.
+_FIT_REJECTED_DETAIL = (
+    "This role asks for more than your saved resume shows, so we stopped "
+    "rather than stretch your experience to fit it. Nothing was used from "
+    "your monthly allowance. Try a role that lines up more closely with your "
+    "background, or update your saved resume if it is out of date."
+)
+
+
+def _friendly_agent_error(kind: str, error_code: Optional[str] = None) -> str:
+    """Translate an internal agent_runs.error code into jargon-free copy.
+
+    Raw codes are never surfaced -- 'FAILED:AGENT_UNAVAILABLE',
+    'HUMAN_VOICE_AUDIT_FAILED' and friends name model and pipeline internals
+    that mean nothing to an end user.
+
+    But one internal outcome is not an error at all, and hiding it behind the
+    generic copy actively misled people: REJECTED:CANDIDATE_FIT means the
+    deterministic preflight judged the candidate too far from the role. Told
+    'please try again in a few minutes', a user retries and gets the byte-for-
+    byte identical refusal, because nothing about that verdict is transient.
+    They conclude the product is broken rather than learning what it decided.
+
+    So a fit rejection gets its own honest message. Everything else keeps the
+    generic transient copy, which for those codes is accurate.
     """
+    if error_code and str(error_code).startswith("REJECTED:CANDIDATE_FIT"):
+        return _FIT_REJECTED_DETAIL
     if kind == "cover_letter":
         return _COVER_LETTER_UNAVAILABLE_DETAIL
     return _TAILOR_UNAVAILABLE_DETAIL
@@ -2226,7 +2243,11 @@ def agent_run_status(run_id: str, auth=Depends(verify_api_key)):
     return {
         "status": status,
         "result": row["result"] if status == "succeeded" else None,
-        "error": _friendly_agent_error(row["kind"]) if status == "failed" else None,
+        "error": (
+            _friendly_agent_error(row["kind"], row["error"])
+            if status == "failed"
+            else None
+        ),
     }
 
 

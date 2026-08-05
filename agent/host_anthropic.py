@@ -270,8 +270,18 @@ _ROLE_CONTRACTS: dict[str, str] = {
         '  "jd_evidence_spans": [{"evidence_text": string}, ...]\n\n'
         "Rules, all enforced:\n"
         "- Every requirement string must be ONE COMPLETE LINE copied "
-        "character-for-character from the job description. Do not paraphrase, "
-        "truncate, merge lines, join with commas, or strip bullet markers.\n"
+        "character-for-character from the job description, from the first "
+        "non-space character of that line to its last. Do not paraphrase, "
+        "truncate, merge lines, or join with commas.\n"
+        "- KEEP the line's leading marker. Bullets, dashes, asterisks, and "
+        "numbering are part of the line. Removing them is the single most "
+        "common way this fails.\n"
+        "  If the job description contains this line:\n"
+        "      - 3+ years of clinical trial experience required\n"
+        "  then the requirement must be exactly:\n"
+        '      "- 3+ years of clinical trial experience required"\n'
+        '  Writing "3+ years of clinical trial experience required" without '
+        'the leading "- " is REJECTED and the whole run fails.\n'
         "- That line must occur exactly ONCE in the job description. If a line "
         "appears more than once, choose a different requirement.\n"
         "- jd_evidence_spans must have exactly one entry per requirement, in "
@@ -303,7 +313,9 @@ _ROLE_CONTRACTS: dict[str, str] = {
         '"source_span_text" must be the master-resume text it came from, '
         "also copied exactly.\n"
         "- claim_text must occur exactly once in the draft; source_span_text "
-        "must occur in the master resume.\n"
+        "must occur in the master resume. Copy both with their leading "
+        'bullets or markers intact ("• ", "- ") -- stripping them is '
+        "rejected.\n"
         "- Lines you left unchanged need no evidence entry.\n"
         "- Do not reorder or duplicate experience between roles."
     ),
@@ -321,7 +333,10 @@ _ROLE_CONTRACTS: dict[str, str] = {
         '- "verdict" is "PASS" if and only if findings is empty. "FAIL" '
         "requires at least one finding, and any finding requires FAIL.\n"
         '- Each finding\'s "evidence_text" must be ONE COMPLETE LINE copied '
-        "exactly from the draft, occurring exactly once in it.\n"
+        "exactly from the draft, occurring exactly once in it. Keep the "
+        "line's leading bullet or marker -- a resume bullet line starts with "
+        '"• " or "- " and that prefix is part of the line. Dropping it '
+        "is rejected.\n"
         '- "id" is a short unique identifier you assign (e.g. "F1"). "code" '
         "names the problem class (e.g. UNSUPPORTED_CLAIM, TITLE_ALTERED, "
         "DATE_ALTERED, FABRICATED_METRIC, RUBRIC_UNMET).\n"
