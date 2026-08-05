@@ -47,6 +47,7 @@ import multi_agent_team
 import resume_integrity_audit
 from agent.adapter import AnthropicTeamAdapter
 from agent.host_anthropic import AnthropicHost
+import agent.skills_loader as skills_loader
 
 __all__ = ["ToolContext", "TOOLS", "dispatch", "CloudTrustedServices"]
 
@@ -245,6 +246,31 @@ def fetch_jd(ctx: ToolContext, url: str, use_ai: bool = True) -> dict:
     if use_ai and len(raw_text) > 400:
         jd_text = jd_fetcher.extract_jd_with_ai(raw_text)
     return {"ok": True, "jd_text": jd_text, "char_count": len(jd_text)}
+
+
+def read_skill(ctx: ToolContext, skill_name: str) -> dict:
+    """Return the full guidance text for one server-side skill. Wraps
+    agent.skills_loader.read_skill (Task 11); ``ctx`` is unused -- this is a
+    pure, quota-free, DB-free read of a small bundled file.
+
+    The parameter is ``skill_name``, not ``name`` -- ``dispatch(name, ctx,
+    **kwargs)``'s own first parameter is called ``name`` (the TOOL's name),
+    so a tool argument also called ``name`` cannot be passed as a keyword
+    through ``dispatch()`` without colliding with it.
+
+    Raises ``ValueError`` (not the loader's own ``KeyError``) for an unknown
+    ``skill_name`` -- ``dispatch()`` itself already uses ``KeyError`` to mean
+    "no such TOOL is registered", so a bad skill name (a normal, expected
+    input a caller might get wrong) is translated to the input-validation
+    exception class every other tool in this file already raises for bad
+    arguments (see e.g. run_resume_team's "jd_text must be a non-empty
+    string"), keeping the two failure modes distinguishable.
+    """
+    try:
+        content = skills_loader.read_skill(skill_name)
+    except KeyError:
+        raise ValueError(f"unknown skill: {skill_name!r}") from None
+    return {"name": skill_name, "content": content}
 
 
 # =============================================================================
@@ -1075,6 +1101,21 @@ TOOLS: dict[str, dict[str, Any]] = {
             ["url"],
         ),
         "fn": fetch_jd,
+    },
+    "read_skill": {
+        "schema": _schema(
+            {
+                "skill_name": {
+                    "type": "string",
+                    "description": (
+                        "Skill slug to read, e.g. 'tailor-resume', "
+                        "'cover-letter', 'job-fit', or 'writing-coach'."
+                    ),
+                },
+            },
+            ["skill_name"],
+        ),
+        "fn": read_skill,
     },
     "run_resume_team": {
         "schema": _schema(
