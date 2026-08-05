@@ -73,6 +73,7 @@ place that ever touches the ``anthropic`` package, and only lazily.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from agent.host_anthropic import AnthropicHost, BudgetExceeded, HostRefusal
@@ -85,6 +86,8 @@ from multi_agent_team import (
 )
 
 __all__ = ["AnthropicTeamAdapter"]
+
+_log = logging.getLogger(__name__)
 
 
 class AnthropicTeamAdapter:
@@ -166,6 +169,22 @@ class AnthropicTeamAdapter:
         except AgentInvocationFailure:
             raise
         except Exception as error:
+            # The code stays a fixed token -- it is part of the fail-closed
+            # contract and appears in the receipt schemas -- and the caller
+            # still sees only generic copy. But swallowing WHICH role failed
+            # and WHY made a production outage undiagnosable: agent_runs.error
+            # read 'FAILED:AGENT_PAYLOAD_SCHEMA' with no way to tell a
+            # malformed rubric from a mis-anchored draft.
+            #
+            # These messages come from our own validators ("invalid researcher
+            # evidence", "auditor did not bind the exact draft", ...), never
+            # from model output, so nothing user-supplied is logged. The
+            # payload itself is deliberately never logged -- it carries the
+            # user's resume.
+            _log.warning(
+                "role payload rejected: role=%s attempt=%s run_id=%s reason=%s: %s",
+                role, attempt, run_id, type(error).__name__, error,
+            )
             raise AgentInvocationFailure("AGENT_PAYLOAD_SCHEMA") from error
 
         self._seen_invocations.add(agent_id)
