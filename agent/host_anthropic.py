@@ -245,12 +245,119 @@ def _usage_tokens(response: Any) -> tuple[int, int]:
     return int(input_tokens or 0), int(output_tokens or 0)
 
 
+_JSON_ONLY = (
+    "Respond with a single strict JSON object only -- no prose, no markdown "
+    "code fences, and no text before or after the JSON."
+)
+
+# Each role's exact output contract, mirroring what
+# multi_agent_team.normalize_native_payload accepts. These are not style
+# guidance: the coordinator recomputes every offset and digest itself and
+# fails closed on any deviation, so a payload that is merely reasonable is
+# still rejected. Without these, a role receives only "you are the
+# <role>" and produces the generically sensible thing -- the researcher,
+# for instance, returns a job-description field extraction (job_title,
+# company, key_skills, ...) instead of an evidence-anchored rubric, and the
+# whole run dies at FAILED:AGENT_PAYLOAD_SCHEMA before writing a word.
+_ROLE_CONTRACTS: dict[str, str] = {
+    "researcher": (
+        "You are the Researcher. You receive only a job description. Convert "
+        "it into a requirement rubric where every requirement is quoted "
+        "verbatim from that job description.\n\n"
+        "Return exactly these two top-level keys and no others:\n"
+        '  "rubric": {"hard_requirements": [string, ...], '
+        '"soft_requirements": [string, ...]}\n'
+        '  "jd_evidence_spans": [{"evidence_text": string}, ...]\n\n'
+        "Rules, all enforced:\n"
+        "- Every requirement string must be ONE COMPLETE LINE copied "
+        "character-for-character from the job description. Do not paraphrase, "
+        "truncate, merge lines, join with commas, or strip bullet markers.\n"
+        "- That line must occur exactly ONCE in the job description. If a line "
+        "appears more than once, choose a different requirement.\n"
+        "- jd_evidence_spans must have exactly one entry per requirement, in "
+        "the same order: all hard_requirements first, then all "
+        "soft_requirements.\n"
+        '- Each entry\'s "evidence_text" must EQUAL its requirement string '
+        "exactly. They are the same string, repeated.\n"
+        "- Hard requirements are stated as mandatory (required, must have, "
+        "minimum). Soft requirements are stated as preferred, desired, or a "
+        "plus. Include at least one requirement.\n"
+        "- Emit no offsets, indexes, hashes, or scores. The coordinator "
+        "computes those."
+    ),
+    "writer": (
+        "You are the Writer. You receive a master resume and a validated "
+        "requirement rubric. Produce one complete tailored resume draft that "
+        "reuses only facts already present in the master resume.\n\n"
+        "Return exactly these two top-level keys and no others:\n"
+        '  "draft": string  (the complete resume, plain text)\n'
+        '  "claim_evidence": [{"claim_text": string, '
+        '"source_span_text": string}, ...]\n\n'
+        "Rules, all enforced:\n"
+        "- Never invent employers, titles, dates, degrees, certifications, "
+        "publications, or metrics. Reframe existing wording only.\n"
+        "- Keep job titles, company names, and dates byte-identical to the "
+        "master resume.\n"
+        "- For every line you changed or added, supply one claim_evidence "
+        'entry. "claim_text" must be that draft line copied exactly, and '
+        '"source_span_text" must be the master-resume text it came from, '
+        "also copied exactly.\n"
+        "- claim_text must occur exactly once in the draft; source_span_text "
+        "must occur in the master resume.\n"
+        "- Lines you left unchanged need no evidence entry.\n"
+        "- Do not reorder or duplicate experience between roles."
+    ),
+    "auditor": (
+        "You are the Auditor. You receive the exact writer draft and the "
+        "rubric. Judge the draft. You have no authority to edit it.\n\n"
+        "Return exactly these three top-level keys and no others:\n"
+        '  "verdict": "PASS" or "FAIL"\n'
+        '  "findings": [{"id": string, "code": string, '
+        '"evidence_text": string}, ...]\n'
+        '  "audited_draft": string\n\n'
+        "Rules, all enforced:\n"
+        '- "audited_draft" must be the draft you received, reproduced '
+        "byte-for-byte. Do not fix, reformat, or improve it.\n"
+        '- "verdict" is "PASS" if and only if findings is empty. "FAIL" '
+        "requires at least one finding, and any finding requires FAIL.\n"
+        '- Each finding\'s "evidence_text" must be ONE COMPLETE LINE copied '
+        "exactly from the draft, occurring exactly once in it.\n"
+        '- "id" is a short unique identifier you assign (e.g. "F1"). "code" '
+        "names the problem class (e.g. UNSUPPORTED_CLAIM, TITLE_ALTERED, "
+        "DATE_ALTERED, FABRICATED_METRIC, RUBRIC_UNMET).\n"
+        "- Report a finding only where the draft contradicts the master "
+        "resume or asserts something it does not support."
+    ),
+    "editor": (
+        "You are the Editor. You receive the draft, the master resume, and "
+        "the auditor's findings. Correct only what the findings name.\n\n"
+        "Return exactly these three top-level keys and no others:\n"
+        '  "draft": string  (the complete corrected resume)\n'
+        '  "addressed_finding_ids": [string, ...]\n'
+        '  "claim_evidence": [{"claim_text": string, '
+        '"source_span_text": string}, ...]\n\n'
+        "Rules, all enforced:\n"
+        "- Change only the lines the findings identify. Leave every other "
+        "line byte-identical.\n"
+        "- Never invent facts; the same authenticity rules as the Writer "
+        "apply.\n"
+        '- "addressed_finding_ids" lists the finding ids you fixed.\n'
+        "- Supply claim_evidence for every line you changed, with claim_text "
+        "copied exactly from your draft and source_span_text copied exactly "
+        "from the master resume.\n"
+        "- Return the COMPLETE resume, not a diff or a fragment."
+    ),
+}
+
+
 def _default_system_prompt(role: str) -> str:
-    return (
-        f"You are the {role} in an automated resume-writing team. "
-        "Respond with a single strict JSON object only -- no prose, no "
-        "markdown code fences, and no text before or after the JSON."
-    )
+    contract = _ROLE_CONTRACTS.get(role)
+    if contract is None:
+        return (
+            f"You are the {role} in an automated resume-writing team. "
+            f"{_JSON_ONLY}"
+        )
+    return f"{contract}\n\n{_JSON_ONLY}"
 
 
 class AnthropicHost:
