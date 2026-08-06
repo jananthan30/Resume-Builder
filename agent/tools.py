@@ -1004,6 +1004,7 @@ _LOG_APPLICATION_OPTIONAL_FIELDS = (
     "notes",
     "applied_at",
     "jd_ref",
+    "jd_text",
     "target_tier",
     "fit_label",
     "hard_reqs_missed",
@@ -1017,6 +1018,7 @@ _UPDATE_APPLICATION_FIELDS = (
     "cover_letter_file",
     "applied_at",
     "jd_ref",
+    "jd_text",
     "target_tier",
     "fit_label",
     "hard_reqs_missed",
@@ -1054,6 +1056,7 @@ def log_application(ctx: ToolContext, company: str, title: str, **optional: Any)
         "notes": optional.get("notes", ""),
         "applied_at": optional.get("applied_at"),
         "jd_ref": optional.get("jd_ref"),
+        "jd_text": optional.get("jd_text"),
         "target_tier": optional.get("target_tier"),
         "fit_label": optional.get("fit_label"),
         "hard_reqs_missed": optional.get("hard_reqs_missed"),
@@ -1063,11 +1066,11 @@ def log_application(ctx: ToolContext, company: str, title: str, **optional: Any)
         """
         INSERT INTO job_applications
             (user_id, company, job_title, status, resume_file, cover_letter_file,
-             ats_score, hr_score, llm_score, notes, applied_at, jd_ref,
+             ats_score, hr_score, llm_score, notes, applied_at, jd_ref, jd_text,
              target_tier, fit_label, hard_reqs_missed, referral_source)
         VALUES
             (:user_id, :company, :job_title, :status, :resume_file, :cover_letter_file,
-             :ats_score, :hr_score, :llm_score, :notes, :applied_at, :jd_ref,
+             :ats_score, :hr_score, :llm_score, :notes, :applied_at, :jd_ref, :jd_text,
              :target_tier, :fit_label, :hard_reqs_missed, :referral_source)
         """,
         params,
@@ -1359,6 +1362,10 @@ TOOLS: dict[str, dict[str, Any]] = {
                 "notes": {"type": "string"},
                 "applied_at": {"type": "string"},
                 "jd_ref": {"type": "string"},
+                "jd_text": {
+                    "type": "string",
+                    "description": "Full job description text — required later by run-by-application_id tailoring",
+                },
                 "target_tier": {"type": "string", "enum": sorted(_VALID_TARGET_TIERS)},
                 "fit_label": {"type": "string", "enum": sorted(_VALID_FIT_LABELS)},
                 "hard_reqs_missed": {"type": "integer"},
@@ -1378,6 +1385,10 @@ TOOLS: dict[str, dict[str, Any]] = {
                 "cover_letter_file": {"type": "string"},
                 "applied_at": {"type": "string"},
                 "jd_ref": {"type": "string"},
+                "jd_text": {
+                    "type": "string",
+                    "description": "Full job description text — backfill to enable run-by-application_id tailoring",
+                },
                 "target_tier": {"type": "string", "enum": sorted(_VALID_TARGET_TIERS)},
                 "fit_label": {"type": "string", "enum": sorted(_VALID_FIT_LABELS)},
                 "hard_reqs_missed": {"type": "integer"},

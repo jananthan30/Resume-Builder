@@ -237,6 +237,7 @@ class TrackerAddRequest(BaseModel):
     notes: str = Field("", description="Notes")
     applied_at: Optional[str] = Field(None, description="Date the application was submitted (ISO date/datetime)")
     jd_ref: Optional[str] = Field(None, description="Reference/filename for the job description used")
+    jd_text: Optional[str] = Field(None, description="Full job description text — feeds /agent/tailor's application_id path")
     target_tier: Optional[str] = Field(None, description="IC | Sr | Manager | AD | Director")
     fit_label: Optional[str] = Field(None, description="MEETS | STRETCH | MISS (from job_fit_scorer)")
     hard_reqs_missed: Optional[int] = Field(None, description="Count of hard-requirement knockouts at apply time")
@@ -251,6 +252,7 @@ class TrackerUpdateRequest(BaseModel):
     cover_letter_file: Optional[str] = None
     applied_at: Optional[str] = None
     jd_ref: Optional[str] = None
+    jd_text: Optional[str] = None
     target_tier: Optional[str] = None
     fit_label: Optional[str] = None
     hard_reqs_missed: Optional[int] = None
@@ -1977,12 +1979,11 @@ def _resolve_agent_jd_text(user_id: int, jd_text: Optional[str], application_id:
     """Resolve the job description text for an async /agent/* enqueue call.
 
     Prefers an explicit ``jd_text``. Falls back to ``application_id``, read
-    scoped to the caller from job_applications.jd_ref -- the only
-    per-application job-description reference the schema stores today (see
-    cloud/db.py's job_applications table). This is a known v1
-    simplification: jd_ref is documented elsewhere as a bare
-    filename/reference rather than guaranteed full JD text, so this path
-    only helps a caller that has actually stored real text there itself.
+    scoped to the caller from job_applications.jd_text — the full stored JD
+    text. ``jd_ref`` is never used here: it is a bare filename/reference
+    ("job_description.txt"), and tailoring against it would burn a quota
+    slot producing garbage, so a row without stored text is refused with a
+    clear 400 instead.
     """
     text = (jd_text or "").strip()
     if text:
@@ -1993,18 +1994,22 @@ def _resolve_agent_jd_text(user_id: int, jd_text: Optional[str], application_id:
     conn = db_get_conn(cloud_settings.DB_PATH)
     try:
         row = scoped(conn, user_id).q(
-            "SELECT jd_ref FROM job_applications WHERE id = :application_id AND user_id = :user_id",
+            "SELECT jd_text FROM job_applications WHERE id = :application_id AND user_id = :user_id",
             {"application_id": application_id},
         ).fetchone()
     finally:
         conn.close()
     if row is None:
         raise HTTPException(status_code=404, detail="Application not found.")
-    stored = (row["jd_ref"] or "").strip()
+    stored = (row["jd_text"] or "").strip()
     if not stored:
         raise HTTPException(
             status_code=400,
-            detail="No job description is stored for this application. Provide jd_text.",
+            detail=(
+                "No job description text is stored for this application "
+                "(only a filename reference, if anything). Provide jd_text, "
+                "or update the application with the full text first."
+            ),
         )
     return stored
 
@@ -2407,12 +2412,12 @@ def tracker_add(req: TrackerAddRequest, auth=Depends(verify_api_key)):
             """INSERT INTO job_applications
                (user_id, company, job_title, status, resume_file, cover_letter_file,
                 ats_score, hr_score, llm_score, notes,
-                applied_at, jd_ref, target_tier, fit_label, hard_reqs_missed, referral_source)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                applied_at, jd_ref, jd_text, target_tier, fit_label, hard_reqs_missed, referral_source)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user_id, req.company, req.job_title, req.status,
              req.resume_file, req.cover_letter_file,
              req.ats_score, req.hr_score, req.llm_score, req.notes,
-             req.applied_at, req.jd_ref, req.target_tier, req.fit_label,
+             req.applied_at, req.jd_ref, req.jd_text, req.target_tier, req.fit_label,
              req.hard_reqs_missed, req.referral_source),
         )
         return {"id": cur.lastrowid, "status": "added"}
@@ -2464,6 +2469,8 @@ def tracker_update(entry_id: int, req: TrackerUpdateRequest, auth=Depends(verify
         updates["applied_at"] = req.applied_at
     if req.jd_ref is not None:
         updates["jd_ref"] = req.jd_ref
+    if req.jd_text is not None:
+        updates["jd_text"] = req.jd_text
     if req.target_tier is not None:
         updates["target_tier"] = req.target_tier
     if req.fit_label is not None:
