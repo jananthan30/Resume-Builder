@@ -43,7 +43,7 @@ import uuid
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 
 import asyncio
 
@@ -257,6 +257,34 @@ class TrackerUpdateRequest(BaseModel):
     fit_label: Optional[str] = None
     hard_reqs_missed: Optional[int] = None
     referral_source: Optional[str] = None
+
+
+_PROFILE_TEXT_FIELDS = (
+    "full_name", "email", "phone", "city", "state", "postcode", "country",
+    "linkedin_url", "portfolio_url", "work_authorization", "notice_period",
+    "desired_salary",
+)
+
+
+class ProfileUpdateRequest(BaseModel):
+    """Application-assist profile: what job forms ask for, stored once.
+
+    PUT semantics are full-replace: omitted fields reset to their defaults.
+    Never add government IDs, date of birth, or anything sensitive here.
+    """
+    full_name: str = Field("", max_length=1000)
+    email: str = Field("", max_length=1000)
+    phone: str = Field("", max_length=1000)
+    city: str = Field("", max_length=1000)
+    state: str = Field("", max_length=1000)
+    postcode: str = Field("", max_length=1000)
+    country: str = Field("", max_length=1000)
+    linkedin_url: str = Field("", max_length=1000)
+    portfolio_url: str = Field("", max_length=1000)
+    work_authorization: str = Field("", max_length=1000)
+    notice_period: str = Field("", max_length=1000)
+    desired_salary: str = Field("", max_length=1000)
+    references_on_request: bool = False
 
 
 # Tracker classification whitelists. SQLite ALTER TABLE cannot add CHECK
@@ -2590,6 +2618,65 @@ def tracker_outcome(entry_id: int, req: TrackerOutcomeRequest, auth=Depends(veri
         )
 
     return {"id": entry_id, "status": "outcome_recorded", "new_status": new_status}
+
+
+# =============================================================================
+# APPLICATION-ASSIST PROFILE
+# =============================================================================
+
+@app.get("/profile")
+def profile_get(auth=Depends(verify_api_key)):
+    """The caller's application profile, or {"profile": null} if never saved."""
+    user_id = _get_user_id(auth)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    if not CLOUD_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Profile unavailable — cloud auth not configured.")
+    conn = db_get_conn(cloud_settings.DB_PATH)
+    try:
+        row = scoped(conn, user_id).q(
+            "SELECT * FROM user_profile WHERE user_id = :user_id", {}
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return {"profile": None}
+    profile = {k: row[k] for k in _PROFILE_TEXT_FIELDS}
+    profile["references_on_request"] = bool(row["references_on_request"])
+    profile["updated_at"] = row["updated_at"]
+    return {"profile": profile}
+
+
+@app.put("/profile")
+def profile_put(req: ProfileUpdateRequest, auth=Depends(verify_api_key)):
+    """Full-replace upsert of the caller's application profile."""
+    user_id = _get_user_id(auth)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    if not CLOUD_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Profile unavailable — cloud auth not configured.")
+    params = {f: getattr(req, f) for f in _PROFILE_TEXT_FIELDS}
+    params["references_on_request"] = int(req.references_on_request)
+    params["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    conn = db_get_conn(cloud_settings.DB_PATH)
+    try:
+        scoped(conn, user_id).q(
+            """
+            INSERT OR REPLACE INTO user_profile
+                (user_id, full_name, email, phone, city, state, postcode, country,
+                 linkedin_url, portfolio_url, work_authorization, notice_period,
+                 desired_salary, references_on_request, updated_at)
+            VALUES
+                (:user_id, :full_name, :email, :phone, :city, :state, :postcode, :country,
+                 :linkedin_url, :portfolio_url, :work_authorization, :notice_period,
+                 :desired_salary, :references_on_request, :updated_at)
+            """,
+            params,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"status": "saved"}
 
 
 # =============================================================================
