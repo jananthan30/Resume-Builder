@@ -416,7 +416,26 @@ class CloudTrustedServices:
 
         findings: list[dict[str, Any]] = []
         if not passed:
+            # human_voice_audit already returns findings in exactly the shape
+            # the coordinator's editor loop consumes: actionable=True plus
+            # locations carrying line_number, the verbatim source_line, and a
+            # line_digest that agrees with multi_agent_team._digest. Synthesizing
+            # placeholders instead -- actionable=False, locations=[] -- made
+            # every prose failure unfixable by construction, so a draft that
+            # merely opened a bullet with "Spearheaded" terminated the whole run
+            # as REJECTED:NONACTIONABLE_HUMAN_VOICE with nothing for the Editor
+            # to act on.
+            findings.extend(_actionable_voice_findings(voice_report))
+
+            # The other two audits have no per-line data to give. evidence_audit
+            # reports unsupported ITEMS and resume_integrity_audit reports
+            # document-level difference codes; neither can point at a draft line,
+            # so their failures stay non-actionable and still stop the run. That
+            # is correct rather than lazy: a finding the Editor cannot locate
+            # must not be presented as one it can fix.
             for vote in votes:
+                if vote["name"] == "human_voice":
+                    continue
                 for code in vote["codes"]:
                     findings.append(
                         {
@@ -556,6 +575,60 @@ def _default_team_adapter() -> AnthropicTeamAdapter:
 
 # Leading list markers: "- ", "* ", "• ", "1. ", "2) ", en/em dashes.
 _LIST_MARKER_RE = re.compile(r"^[ \t]*(?:[-*•·–—]|\(?\d{1,2}[.)])[ \t]+")
+
+
+def _actionable_voice_findings(voice_report: Any) -> list[dict[str, Any]]:
+    """Convert human_voice_audit failures into editor-actionable findings.
+
+    The audit already emits what the coordinator wants, so this is a filter and
+    a rename rather than a translation: keep the failures that declare
+    themselves actionable and carry at least one well-formed location, and give
+    each a unique id.
+
+    Anything malformed is dropped rather than repaired. A location whose
+    line_number, source_line, or line_digest disagrees with the draft is
+    rejected by the coordinator as UNEDITABLE_DETERMINISTIC_AUDIT, which fails
+    the entire run -- so one bad location would cost more than the finding is
+    worth. Dropping it leaves the vote failing and the run stopping, which is
+    the same outcome as before this function existed.
+    """
+    if not isinstance(voice_report, dict):
+        return []
+
+    findings: list[dict[str, Any]] = []
+    for failure in voice_report.get("failures") or []:
+        if not isinstance(failure, dict) or failure.get("actionable") is not True:
+            continue
+        code = failure.get("code")
+        if not isinstance(code, str) or not code:
+            continue
+
+        locations = [
+            {
+                "line_number": location["line_number"],
+                "source_line": location["source_line"],
+                "line_digest": location["line_digest"],
+            }
+            for location in (failure.get("locations") or [])
+            if isinstance(location, dict)
+            and type(location.get("line_number")) is int
+            and location["line_number"] > 0
+            and isinstance(location.get("source_line"), str)
+            and isinstance(location.get("line_digest"), str)
+        ]
+        if not locations:
+            continue
+
+        findings.append(
+            {
+                "id": f"human_voice-{uuid.uuid4()}",
+                "vote_name": "human_voice",
+                "code": code,
+                "actionable": True,
+                "locations": locations,
+            }
+        )
+    return findings
 
 
 def _flatten_list_markers(jd_text: str) -> str:
