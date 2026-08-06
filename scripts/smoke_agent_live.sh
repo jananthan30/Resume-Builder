@@ -78,6 +78,17 @@ if [ -n "$APP_ID" ]; then
 fi
 check "GET /insights/pipeline" "$(code -H "$AUTH" "$BASE/insights/pipeline")" "200"
 
+# --------------------------------------------------------------- profile
+say "Application profile (application-assist)"
+check "unauthenticated /profile is refused" \
+  "$([ "$(code "$BASE/profile")" = "200" ] && echo leaked || echo refused)" "refused"
+check "PUT /profile" \
+  "$(code -X PUT -H "$AUTH" -H 'Content-Type: application/json' \
+     -d '{"full_name":"Smoke Tester","city":"Toronto","references_on_request":true}' \
+     "$BASE/profile")" "200"
+PROF=$(curl -s -m 60 -H "$AUTH" "$BASE/profile")
+check "GET /profile roundtrips" "$(printf '%s' "$PROF" | grep -c '"full_name":"Smoke Tester"')" "1"
+
 # --------------------------------------------------------- tier gating
 say "Tier gating (this account is free — paid features must refuse)"
 check "POST /rewrite refuses free tier" \
