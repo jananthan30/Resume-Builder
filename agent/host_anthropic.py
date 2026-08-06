@@ -73,11 +73,32 @@ __all__ = [
 
 # Default per-role model routing. These are real, active Anthropic model IDs
 # (verified against the current model catalog) -- not placeholders.
+# Per-role model routing. Matched to what each role actually has to do, not
+# assigned uniformly, because the roles differ enormously in difficulty.
+#
+# The Writer and Editor carry the whole precision burden: one evidence entry
+# per changed line and no others, every anchor copied byte-exactly, each source
+# line used once and gone from the draft, claim and source in the same section,
+# ordered containment, numeric identity. Measured across eleven production
+# runs on Sonnet 4.6, they satisfied any individual rule once told and still
+# missed intermittently -- run 665925eb repaired and completed all four roles,
+# run fcc6dfaa failed both its first attempt and its repair on identical
+# input. That is a capability gap, and a retry only papers over it.
+#
+# The Researcher extracts and quotes lines from a job description and has been
+# reliable on Haiku since it was given a real contract. The Auditor reproduces
+# a draft verbatim and reports what it finds -- exacting but far narrower than
+# writing. Sonnet 5 is the current Sonnet and no more expensive than the 4.6 it
+# replaces.
+#
+# Cost: about $0.17 -> $0.20 per run at measured token volumes, against $12/mo
+# for ten Pro runs. Roughly 83% margin instead of 86% -- worth paying for a
+# feature that otherwise fails intermittently.
 DEFAULT_MODEL_MAP: dict[str, str] = {
     "researcher": "claude-haiku-4-5",
-    "writer": "claude-sonnet-4-6",
-    "auditor": "claude-sonnet-4-6",
-    "editor": "claude-sonnet-4-6",
+    "writer": "claude-opus-5",
+    "auditor": "claude-sonnet-5",
+    "editor": "claude-opus-5",
 }
 
 DEFAULT_MAX_INPUT_TOKENS = 120_000
