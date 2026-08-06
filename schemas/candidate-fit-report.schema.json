@@ -24,17 +24,51 @@
     "codes"
   ],
   "properties": {
-    "schema_version": {"const": "1.0.0"},
-    "policy_version": {"const": "candidate-fit-policy-v2"},
-    "scorer_version": {"const": "deterministic-job-fit-v1"},
-    "run_id": {"type": "string", "minLength": 1, "maxLength": 256},
-    "case_id": {"type": "string", "minLength": 1, "maxLength": 256},
-    "as_of_date": {"type": "string", "format": "date"},
-    "threshold": {"const": 70.0},
-    "semantic_mode": {"const": "disabled"},
-    "resume_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "job_description_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "score": {"type": "number", "minimum": 0, "maximum": 100},
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "policy_version": {
+      "const": "candidate-fit-policy-v2"
+    },
+    "scorer_version": {
+      "const": "deterministic-job-fit-v1"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "case_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "as_of_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "threshold": {
+      "type": "number",
+      "minimum": 40,
+      "maximum": 95,
+      "description": "The score bar this report was decided under. Validated as a shape, not pinned to a value: the policy number belongs in code, and hardcoding it here made the bar impossible to calibrate without a wire-contract change."
+    },
+    "semantic_mode": {
+      "const": "disabled"
+    },
+    "resume_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "job_description_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
     "component_scores": {
       "type": "object",
       "additionalProperties": false,
@@ -48,32 +82,86 @@
         "seniority_match"
       ],
       "properties": {
-        "experience_match": {"type": "number", "minimum": 0, "maximum": 100},
-        "skills_match": {"type": "number", "minimum": 0, "maximum": 100},
-        "title_alignment": {"type": "number", "minimum": 0, "maximum": 100},
-        "domain_match": {"type": "number", "minimum": 0, "maximum": 100},
-        "education_match": {"type": "number", "minimum": 0, "maximum": 100},
-        "certification_match": {"type": "number", "minimum": 0, "maximum": 100},
-        "seniority_match": {"type": "number", "minimum": 0, "maximum": 100}
+        "experience_match": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "skills_match": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "title_alignment": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "domain_match": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "education_match": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "certification_match": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "seniority_match": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
       }
     },
-    "recommendation": {"enum": ["PROCEED", "REJECT"]},
+    "recommendation": {
+      "enum": [
+        "PROCEED",
+        "REJECT"
+      ]
+    },
     "hard_knockouts": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["code", "category", "requirement", "candidate_has"],
+        "required": [
+          "code",
+          "category",
+          "requirement",
+          "candidate_has"
+        ],
         "properties": {
-          "code": {"type": "string", "minLength": 1},
-          "category": {"type": "string", "minLength": 1},
-          "requirement": {"type": "string", "minLength": 1},
-          "candidate_has": {"type": "string", "minLength": 1}
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requirement": {
+            "type": "string",
+            "minLength": 1
+          },
+          "candidate_has": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
-    "extraction_trustworthy": {"type": "boolean"},
-    "passed": {"type": "boolean"},
+    "extraction_trustworthy": {
+      "type": "boolean"
+    },
+    "passed": {
+      "type": "boolean"
+    },
     "codes": {
       "type": "array",
       "uniqueItems": true,
@@ -88,17 +176,39 @@
   },
   "allOf": [
     {
-      "if": {"properties": {"passed": {"const": true}}},
-      "then": {
+      "if": {
         "properties": {
-          "recommendation": {"const": "PROCEED"},
-          "extraction_trustworthy": {"const": true},
-          "score": {"minimum": 70.0},
-          "hard_knockouts": {"maxItems": 0},
-          "codes": {"maxItems": 0}
+          "passed": {
+            "const": true
+          }
         }
       },
-      "else": {"properties": {"recommendation": {"const": "REJECT"}}}
+      "then": {
+        "properties": {
+          "recommendation": {
+            "const": "PROCEED"
+          },
+          "extraction_trustworthy": {
+            "const": true
+          },
+          "score": {
+            "minimum": 70.0
+          },
+          "hard_knockouts": {
+            "maxItems": 0
+          },
+          "codes": {
+            "maxItems": 0
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "recommendation": {
+            "const": "REJECT"
+          }
+        }
+      }
     }
   ]
 }

@@ -20,7 +20,23 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-CANDIDATE_FIT_THRESHOLD = 70.0
+# Calibrated 2026-08-06 against 61 real job descriptions the owner had
+# actually applied to -- a self-selected set, not random postings.
+#
+#   15 carried hard knockouts and fail at any bar, correctly.
+#   Of the 46 clean-floor jobs: median 68.5, mean 68.3, range 43.5-78.8.
+#
+# The previous default of 70 sat ABOVE that median, so by construction more
+# than half of deliberately-chosen applications were refused -- 41% passed. A
+# gate that rejects the typical job its user picked is measuring the wrong
+# thing. 65 sits just under the median, admits about two thirds, and still
+# refuses the bottom of the distribution, which is where the genuine
+# mismatches are.
+#
+# This is a starting bar, not a verdict: applicants set their own (see
+# resolve_threshold), and the authenticity guarantees live downstream in the
+# claim validator, the Auditor, and the evidence audit -- not here.
+CANDIDATE_FIT_THRESHOLD = 65.0
 
 # A user-chosen score bar is allowed inside these bounds. The floor exists so
 # "any job at all" cannot be selected: below it the tailoring has nothing
@@ -737,9 +753,9 @@ def assess_candidate_fit(
     """Assess unmodified master-resume fit against a job description.
 
     This audited report keeps a FIXED policy bar on purpose.
-    candidate-fit-report/v1 pins "threshold" to const 70.0 and the report is
-    digest-bound into the authorization receipt, so a per-user bar cannot be
-    recorded here without versioning that contract.
+    The report is digest-bound into the authorization receipt, and every
+    receipt for one run must agree on the bar that was applied, so this is not
+    the place for a per-request preference.
 
     An applicant's own bar is applied one layer up, by
     ``agent.tools.candidate_fit``, which evaluates this report's score against

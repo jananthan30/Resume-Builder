@@ -2590,6 +2590,35 @@ def tracker_outcome(entry_id: int, req: TrackerOutcomeRequest, auth=Depends(veri
 _TRACKER_BREAKDOWN_COLUMNS = {"target_tier", "fit_label", "referral_source"}
 
 
+# --- what "rejected", "closed", and "responded" actually mean -----------------
+# Three aggregates were measuring things they did not claim to measure.
+#
+# rejected matched the literal string 'Rejected', but CLAUDE.md documents
+# "Rejected after phone screen" as a legitimate status and the Excel importer
+# copies whatever the spreadsheet said, so real rejections went uncounted. The
+# typed rejection_reason is the reliable signal; status is free text.
+#
+# closed/active keyed on closed_at, which is written by exactly one endpoint
+# (POST /tracker/{id}/outcome). Anything closed by any other path -- an
+# imported row, a status edit -- stayed "active" forever, so active could
+# exceed the total.
+#
+# responded counted responded_at, which is only ever set alongside a rejection.
+# The metric therefore could not exceed the rejection rate: a user with a 100%
+# interview rate and no rejections was shown 0%. What a job seeker means by
+# "they got back to me" is that the employer engaged at all -- an interview
+# stage reached, or any outcome other than silence.
+_REJECTED_SQL = (
+    "rejection_reason IN ('auto_reject', 'screen_reject', 'interview_reject')"
+)
+_CLOSED_SQL = "(closed_at IS NOT NULL OR rejection_reason IS NOT NULL)"
+_RESPONDED_SQL = (
+    "(responded_at IS NOT NULL"
+    " OR COALESCE(interview_stage, 0) > 0"
+    " OR (rejection_reason IS NOT NULL AND rejection_reason != 'no_response'))"
+)
+
+
 def _tracker_pipeline_breakdown(conn, user_id: int, column: str) -> Dict[str, Dict[str, Any]]:
     """Group the caller's job_applications rows by one classification column.
 
@@ -2604,8 +2633,8 @@ def _tracker_pipeline_breakdown(conn, user_id: int, column: str) -> Dict[str, Di
     rows = conn.execute(
         f"""SELECT {column} AS bucket,
                    COUNT(*) AS cnt,
-                   SUM(CASE WHEN status = 'Rejected' THEN 1 ELSE 0 END) AS rejected_cnt,
-                   SUM(CASE WHEN responded_at IS NOT NULL THEN 1 ELSE 0 END) AS responded_cnt
+                   SUM(CASE WHEN {_REJECTED_SQL} THEN 1 ELSE 0 END) AS rejected_cnt,
+                   SUM(CASE WHEN {_RESPONDED_SQL} THEN 1 ELSE 0 END) AS responded_cnt
             FROM job_applications
             WHERE user_id = ? AND {column} IS NOT NULL
             GROUP BY {column}""",
@@ -2640,11 +2669,11 @@ def insights_pipeline(auth=Depends(verify_api_key)):
             (user_id,),
         ).fetchone()["c"]
         rejected = conn.execute(
-            "SELECT COUNT(*) AS c FROM job_applications WHERE user_id = ? AND status = 'Rejected'",
+            f"SELECT COUNT(*) AS c FROM job_applications WHERE user_id = ? AND {_REJECTED_SQL}",
             (user_id,),
         ).fetchone()["c"]
         active = conn.execute(
-            "SELECT COUNT(*) AS c FROM job_applications WHERE user_id = ? AND closed_at IS NULL",
+            f"SELECT COUNT(*) AS c FROM job_applications WHERE user_id = ? AND NOT {_CLOSED_SQL}",
             (user_id,),
         ).fetchone()["c"]
 

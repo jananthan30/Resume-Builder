@@ -1112,13 +1112,29 @@ def _breakdown(conn: Any, user_id: int, column: str) -> dict[str, dict[str, Any]
         f"""
         SELECT {column} AS bucket,
                COUNT(*) AS cnt,
-               SUM(CASE WHEN status = :rejected_status THEN 1 ELSE 0 END) AS rejected_cnt,
-               SUM(CASE WHEN responded_at IS NOT NULL THEN 1 ELSE 0 END) AS responded_cnt
+               SUM(CASE WHEN rejection_reason IN (:auto, :screen, :interview)
+                        THEN 1 ELSE 0 END) AS rejected_cnt,
+               SUM(CASE WHEN responded_at IS NOT NULL
+                          OR COALESCE(interview_stage, 0) > 0
+                          OR (rejection_reason IS NOT NULL
+                              AND rejection_reason != :silence)
+                        THEN 1 ELSE 0 END) AS responded_cnt
         FROM job_applications
         WHERE user_id = :user_id AND {column} IS NOT NULL
         GROUP BY {column}
         """,
-        {"rejected_status": "Rejected"},
+        # Bound, not inlined: scoped() rejects any quoted literal in the SQL it
+        # runs. Mirrors the definitions in scorer_server -- rejected keys on the
+        # typed reason rather than free-text status, and a response means the
+        # employer engaged at all, which the old responded_at-only rule could
+        # not see (it was set solely alongside a rejection, capping the metric
+        # at the rejection rate).
+        {
+            "auto": "auto_reject",
+            "screen": "screen_reject",
+            "interview": "interview_reject",
+            "silence": "no_response",
+        },
     ).fetchall()
     return {
         row["bucket"]: {
