@@ -213,22 +213,63 @@ def score_resume(ctx: ToolContext, resume_text: str, jd_text: str) -> dict:
     }
 
 
-def candidate_fit(ctx: ToolContext, resume_text: str, jd_text: str) -> dict:
+def candidate_fit(
+    ctx: ToolContext,
+    resume_text: str,
+    jd_text: str,
+    threshold: float | None = None,
+) -> dict:
     """Deterministic candidate-fit gate. Wraps candidate_fit_preflight.
 
     Advisory for the calling agent -- this does NOT gate run_resume_team;
     multi_agent_team.run_team() independently recomputes and enforces the
     same gate as a hard control before any role is invoked.
+
+    ``threshold`` is the applicant's own score bar. 70 was never defensible as
+    a universal number -- how much of a stretch a role may be is a risk
+    preference, and it belongs to the person applying. Measured on a real
+    corpus, the fixed bar rejected roughly two of every three genuine job
+    descriptions, including a Clinical Research Associate II role scoring 68.1
+    with zero knockouts against a clinical-research resume.
+
+    The applicant's bar is applied HERE rather than inside the report, because
+    candidate-fit-report/v1 pins "threshold" to const 70.0 and is digest-bound
+    into the authorization receipt. Keeping the audited standard fixed and
+    provable while letting the advice adapt is the point: this returns the
+    unmodified report plus a ``user_bar`` block carrying the chosen bar, the
+    verdict against it, and the shortfall, so a caller can say "this role
+    scores 68 against your resume, 2 below your bar" instead of refusing
+    without explanation.
+
+    Only the score bar moves. Hard knockouts and untrusted extraction still
+    refuse at every setting -- those are facts about the application, not
+    preferences, and no bar should let a missing licence through.
     """
     run_id = f"fit:{uuid.uuid4()}"
     case_id = f"case:{uuid.uuid4()}"
-    return candidate_fit_preflight.assess_candidate_fit(
+    report = candidate_fit_preflight.assess_candidate_fit(
         resume_text,
         jd_text,
         run_id=run_id,
         case_id=case_id,
         as_of_date=date.today().isoformat(),
     )
+
+    bar = candidate_fit_preflight.resolve_threshold(threshold)
+    score = report.get("score") or 0.0
+    blocked = bool(report.get("hard_knockouts")) or not report.get(
+        "extraction_trustworthy", True
+    )
+    return {
+        **report,
+        "user_bar": {
+            "threshold": bar,
+            "is_default": bar == candidate_fit_preflight.CANDIDATE_FIT_THRESHOLD,
+            "meets_bar": (not blocked) and score >= bar,
+            "points_short": round(max(0.0, bar - score), 1),
+            "blocked_by_hard_requirement": blocked,
+        },
+    }
 
 
 def fetch_jd(ctx: ToolContext, url: str, use_ai: bool = True) -> dict:
@@ -1211,6 +1252,15 @@ TOOLS: dict[str, dict[str, Any]] = {
             {
                 "resume_text": {"type": "string"},
                 "jd_text": {"type": "string"},
+                "threshold": {
+                    "type": "number",
+                    "description": (
+                        "The applicant's own score bar, 40-95. Omit for the "
+                        "default policy. Only the score bar moves -- hard "
+                        "knockouts such as a missing licence stay "
+                        "non-negotiable at every setting."
+                    ),
+                },
             },
             ["resume_text", "jd_text"],
         ),

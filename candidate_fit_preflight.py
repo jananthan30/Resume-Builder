@@ -21,6 +21,37 @@ from typing import Any, Iterable
 
 
 CANDIDATE_FIT_THRESHOLD = 70.0
+
+# A user-chosen score bar is allowed inside these bounds. The floor exists so
+# "any job at all" cannot be selected: below it the tailoring has nothing
+# genuine to work with and the result would embarrass the applicant. The
+# ceiling exists so the bar cannot be set somewhere nothing ever qualifies.
+#
+# Only the SCORE is selectable. Hard knockouts stay non-negotiable at every
+# setting -- a missing licence or degree is a fact about the applicant, not a
+# risk preference, and no slider should let one through.
+CANDIDATE_FIT_THRESHOLD_MIN = 40.0
+CANDIDATE_FIT_THRESHOLD_MAX = 95.0
+
+
+def resolve_threshold(requested: object) -> float:
+    """Return the score bar to apply, falling back to the default policy.
+
+    Anything unusable -- None, a bool, a non-number, NaN, out of bounds --
+    yields the default rather than raising. A malformed preference is a
+    reason to apply the standard bar, not to fail someone's run.
+    """
+    if requested is None or isinstance(requested, bool):
+        return CANDIDATE_FIT_THRESHOLD
+    try:
+        value = float(requested)
+    except (TypeError, ValueError):
+        return CANDIDATE_FIT_THRESHOLD
+    if value != value:  # NaN
+        return CANDIDATE_FIT_THRESHOLD
+    if not (CANDIDATE_FIT_THRESHOLD_MIN <= value <= CANDIDATE_FIT_THRESHOLD_MAX):
+        return CANDIDATE_FIT_THRESHOLD
+    return value
 CANDIDATE_FIT_SCHEMA_VERSION = "1.0.0"
 CANDIDATE_FIT_POLICY_VERSION = "candidate-fit-policy-v2"
 CANDIDATE_FIT_SCORER_VERSION = "deterministic-job-fit-v1"
@@ -705,8 +736,18 @@ def assess_candidate_fit(
 ) -> dict[str, Any]:
     """Assess unmodified master-resume fit against a job description.
 
-    The fixed policy has no threshold override.  Semantic scoring, embedding
-    caches, network access, and mutable profile caches are all disabled.
+    This audited report keeps a FIXED policy bar on purpose.
+    candidate-fit-report/v1 pins "threshold" to const 70.0 and the report is
+    digest-bound into the authorization receipt, so a per-user bar cannot be
+    recorded here without versioning that contract.
+
+    An applicant's own bar is applied one layer up, by
+    ``agent.tools.candidate_fit``, which evaluates this report's score against
+    resolve_threshold(...). The provable standard therefore stays fixed while
+    the advice adapts to the person asking.
+
+    Semantic scoring, embedding caches, network access, and mutable profile
+    caches remain disabled.
     """
     if not isinstance(resume_text, str) or not isinstance(job_description_text, str):
         raise ValueError("resume_text and job_description_text must be strings")
