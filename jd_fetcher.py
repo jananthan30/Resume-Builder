@@ -12,10 +12,21 @@ raw page dump (useful when the page has a lot of surrounding nav/footer noise).
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
+import socket
 from typing import Optional
-from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
+from urllib.parse import urlparse, urlencode, parse_qs, urlunparse, urljoin
+
+
+class BlockedURLError(ValueError):
+    """URL refused by the SSRF policy — never fetched."""
+
+
+_ALLOWED_SCHEMES = {"http", "https"}
+_MAX_REDIRECTS = 5
+_BLOCKED_MSG = "This URL points to a private or internal address and cannot be fetched."
 
 # Realistic browser headers — mimic Chrome more completely to reduce bot detection
 _HEADERS = {
@@ -82,40 +93,107 @@ def _strip_tracking_params(url: str) -> str:
         return url
 
 
+def _host_resolves_public(host: str) -> bool:
+    """True only when *host* resolves and every resolved address is global.
+
+    Fail closed: unresolvable hosts are treated as non-public. All addresses
+    must pass because an attacker-controlled name can mix public and private
+    records in one answer.
+    """
+    try:
+        infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, OSError):
+        return False
+    ips = [info[4][0] for info in infos]
+    if not ips:
+        return False
+    for ip_str in ips:
+        try:
+            addr = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return False
+        if not addr.is_global or addr.is_multicast:
+            return False
+    return True
+
+
+def validate_public_url(url: str) -> str:
+    """Raise BlockedURLError unless *url* is http(s) to a public address."""
+    parsed = urlparse(url)
+    if parsed.scheme not in _ALLOWED_SCHEMES or not parsed.hostname:
+        raise BlockedURLError(_BLOCKED_MSG)
+    if not _host_resolves_public(parsed.hostname):
+        raise BlockedURLError(_BLOCKED_MSG)
+    return url
+
+
+def _safe_get(url: str, timeout: int):
+    """The one guarded fetch path: redirects followed manually so every hop
+    is re-validated before it is requested (a public URL may 302 internal).
+    Residual risk: DNS answers can change between validation and connect
+    (rebinding); closing that fully needs connection-time IP pinning.
+    """
+    import requests
+
+    current = url
+    for _ in range(_MAX_REDIRECTS + 1):
+        validate_public_url(current)
+        resp = requests.get(
+            current, headers=_HEADERS, timeout=timeout, allow_redirects=False
+        )
+        if resp.status_code in (301, 302, 303, 307, 308):
+            location = resp.headers.get("Location")
+            if not location:
+                return resp
+            current = urljoin(current, location)
+            continue
+        return resp
+    raise BlockedURLError("Too many redirects while fetching this URL.")
+
+
 def fetch_jd_from_url(url: str, timeout: int = 15) -> Optional[str]:
-    """Return plain-text job description scraped from *url*, or None on failure."""
+    """Return plain-text job description scraped from *url*, or None on failure.
+
+    Raises BlockedURLError (never fetches) for non-http(s) schemes and hosts
+    that resolve to private, loopback, link-local, or otherwise non-global
+    addresses — including any redirect hop that lands on one.
+    """
     # Strip tracking params — reduces bot-detection likelihood
     url = _strip_tracking_params(url)
 
-    # ── 1. trafilatura (best quality) ──────────────────────────────────────
+    try:
+        resp = _safe_get(url, timeout)
+    except BlockedURLError:
+        raise
+    except Exception:
+        return None
+    if resp.status_code != 200 or not resp.text:
+        return None
+    html = resp.text
+
+    # ── 1. trafilatura extraction (best quality) — on HTML we already
+    #        fetched; its own fetch_url would bypass the guard above ────────
     try:
         import trafilatura
 
-        downloaded = trafilatura.fetch_url(url)
-        if downloaded:
-            text = trafilatura.extract(
-                downloaded,
-                include_tables=False,
-                favor_recall=True,
-                no_fallback=False,
-            )
-            if text and len(text) > 300:
-                return _clean(text)
+        text = trafilatura.extract(
+            html,
+            include_tables=False,
+            favor_recall=True,
+            no_fallback=False,
+        )
+        if text and len(text) > 300:
+            return _clean(text)
     except ImportError:
         pass
     except Exception:
         pass
 
-    # ── 2. requests + BeautifulSoup ────────────────────────────────────────
+    # ── 2. BeautifulSoup selector fallback ─────────────────────────────────
     try:
-        import requests
         from bs4 import BeautifulSoup
 
-        resp = requests.get(url, headers=_HEADERS, timeout=timeout, allow_redirects=True)
-        if resp.status_code != 200:
-            return None
-
-        soup = BeautifulSoup(resp.text, "lxml")
+        soup = BeautifulSoup(html, "lxml")
 
         # Strip navigation noise
         for tag in soup(["script", "style", "nav", "header", "footer",

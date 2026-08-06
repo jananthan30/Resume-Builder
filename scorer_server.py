@@ -2361,6 +2361,8 @@ def fetch_jd_endpoint(req: FetchJDRequest, api_key=Depends(verify_api_key)):
 
     try:
         raw_text = jd_fetcher.fetch_jd_from_url(req.url)
+    except jd_fetcher.BlockedURLError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Scraping failed: {str(e)}")
 

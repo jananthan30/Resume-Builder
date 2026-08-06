@@ -280,7 +280,10 @@ def fetch_jd(ctx: ToolContext, url: str, use_ai: bool = True) -> dict:
     strip surrounding page noise -- that helper already no-ops safely (falls
     back to the raw text) when no key is present.
     """
-    raw_text = jd_fetcher.fetch_jd_from_url(url)
+    try:
+        raw_text = jd_fetcher.fetch_jd_from_url(url)
+    except jd_fetcher.BlockedURLError as exc:
+        return {"ok": False, "jd_text": "", "error": str(exc)}
     if not raw_text:
         return {
             "ok": False,
