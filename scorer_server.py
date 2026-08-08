@@ -39,7 +39,9 @@ import base64
 import tempfile
 import json
 import statistics
+import threading
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from collections import defaultdict
@@ -124,6 +126,29 @@ if CLOUD_AVAILABLE:
             except Exception:
                 pass
 
+# ─── Reap agent runs orphaned by the previous process ───
+# Runs execute in-process via BackgroundTasks, so any row still 'queued' or
+# 'running' at boot belonged to the process this one replaced and will never
+# advance. Left alone it polls as "queued" forever AND keeps occupying a paid
+# monthly slot, because quota counts every row that is not 'failed'. Separate
+# from the migration block above: different concern, different failure mode.
+# See agent.runner.reap_orphaned_runs for the single-owner assumption.
+if CLOUD_AVAILABLE:
+    _reap_conn = None
+    try:
+        _reap_conn = db_get_conn(cloud_settings.DB_PATH)
+        _reaped = agent_runner.reap_orphaned_runs(_reap_conn)
+        if _reaped:
+            print(f"Failed {_reaped} agent run(s) orphaned by the previous process.")
+    except Exception as e:
+        print(f"Warning: could not reap orphaned agent runs: {e}")
+    finally:
+        if _reap_conn is not None:
+            try:
+                _reap_conn.close()
+            except Exception:
+                pass
+
 # ─── App ───
 app = FastAPI(
     title="Resume Scorer API",
@@ -155,6 +180,55 @@ else:
 _api_keys: Dict[str, Dict[str, Any]] = {}  # key -> {tier, daily_count, last_reset}
 _rate_limits: Dict[str, List[float]] = defaultdict(list)  # key -> [timestamps]
 _score_cache: Dict[str, Dict[str, Any]] = {}  # hash -> {result, timestamp}
+
+# ─── Concurrency bound for the agent pipeline ───
+# A tailoring run occupies one worker thread for minutes at a time. FastAPI
+# serves every sync handler AND every background task from one threadpool of
+# 40, so without a bound, ~40 simultaneous runs starve everything else --
+# including /health, whose failure has Fly restart the machine and kill every
+# run in flight. Admitting only a few at a time and refusing the rest with a
+# retryable 429 keeps the server answering while it is busy.
+#
+# Sized for the deployed shape (1 shared CPU, 1GB): the work is network-bound
+# on the Anthropic API, so the limit is about memory and leaving threads free,
+# not parallelism.
+MAX_CONCURRENT_AGENT_RUNS = int(os.getenv("SCORER_MAX_CONCURRENT_AGENT_RUNS", "8"))
+_agent_run_slots = threading.BoundedSemaphore(MAX_CONCURRENT_AGENT_RUNS)
+
+_AGENT_BUSY_DETAIL = (
+    "We're finishing a lot of resumes right now. Please try again in a minute."
+)
+
+
+def _acquire_agent_slot() -> None:
+    """Claim a run slot or refuse with 429. Never blocks: a caller made to wait
+    would hold the very thread this bound exists to protect."""
+    if not _agent_run_slots.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail=_AGENT_BUSY_DETAIL)
+
+
+@contextmanager
+def _agent_slot():
+    """Bound one synchronous pipeline call (/rewrite, /cover-letter)."""
+    _acquire_agent_slot()
+    try:
+        yield
+    finally:
+        _agent_run_slots.release()
+
+
+def _in_agent_slot(worker, *args) -> None:
+    """Run a background agent callable, then release its slot.
+
+    The slot is released HERE rather than inside the worker so its lifetime
+    belongs to the scheduling layer, not to one particular worker function.
+    A worker that is replaced, returns early, or raises still gives the slot
+    back; a leak here is permanent, since a BoundedSemaphore never refills.
+    """
+    try:
+        worker(*args)
+    finally:
+        _agent_run_slots.release()
 
 
 # =============================================================================
@@ -1899,33 +1973,36 @@ def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
             )
         source_resume_text = record["resume_text"]
 
-    conn = db_get_conn(cloud_settings.DB_PATH)
-    try:
-        ctx = agent_tools.ToolContext(
-            user_id=user_id, tier=tier, conn=conn, run_id=str(uuid.uuid4())
-        )
+    # Bound before opening a connection or claiming quota: a request refused
+    # for load must cost the caller nothing.
+    with _agent_slot():
+        conn = db_get_conn(cloud_settings.DB_PATH)
         try:
-            result = agent_tools.dispatch(
-                "run_resume_team",
-                ctx,
-                jd_text=jd_text,
-                resume_text=provided_resume or None,
+            ctx = agent_tools.ToolContext(
+                user_id=user_id, tier=tier, conn=conn, run_id=str(uuid.uuid4())
             )
-        except QuotaExceeded as exc:
-            raise HTTPException(status_code=402, detail=exc.detail)
-        except HTTPException:
-            raise
-        except Exception:
-            raise HTTPException(status_code=502, detail=_TAILOR_UNAVAILABLE_DETAIL)
+            try:
+                result = agent_tools.dispatch(
+                    "run_resume_team",
+                    ctx,
+                    jd_text=jd_text,
+                    resume_text=provided_resume or None,
+                )
+            except QuotaExceeded as exc:
+                raise HTTPException(status_code=402, detail=exc.detail)
+            except HTTPException:
+                raise
+            except Exception:
+                raise HTTPException(status_code=502, detail=_TAILOR_UNAVAILABLE_DETAIL)
 
-        if result.get("status") != "succeeded" or not result.get("draft"):
-            raise HTTPException(status_code=502, detail=_TAILOR_UNAVAILABLE_DETAIL)
+            if result.get("status") != "succeeded" or not result.get("draft"):
+                raise HTTPException(status_code=502, detail=_TAILOR_UNAVAILABLE_DETAIL)
 
-        draft_text = result["draft"]
-        ats_before, hr_before = _safe_agent_scores(ctx, source_resume_text, jd_text)
-        ats_after, hr_after = _safe_agent_scores(ctx, draft_text, jd_text)
-    finally:
-        conn.close()
+            draft_text = result["draft"]
+            ats_before, hr_before = _safe_agent_scores(ctx, source_resume_text, jd_text)
+            ats_after, hr_after = _safe_agent_scores(ctx, draft_text, jd_text)
+        finally:
+            conn.close()
 
     return JSONResponse(content={
         "rewritten_resume": draft_text,
@@ -1991,25 +2068,26 @@ def cover_letter_endpoint(req: CoverLetterRequest, auth=Depends(verify_api_key_w
 
     _log_score_usage(auth, "/cover-letter")
 
-    conn = db_get_conn(cloud_settings.DB_PATH)
-    try:
-        ctx = agent_tools.ToolContext(
-            user_id=user_id, tier=tier, conn=conn, run_id=str(uuid.uuid4())
-        )
+    with _agent_slot():
+        conn = db_get_conn(cloud_settings.DB_PATH)
         try:
-            result = agent_tools.dispatch(
-                "run_cover_letter", ctx,
-                jd_text=jd_text, company=req.company_name, title=req.job_title,
-                resume_text=provided_resume or None,
+            ctx = agent_tools.ToolContext(
+                user_id=user_id, tier=tier, conn=conn, run_id=str(uuid.uuid4())
             )
-        except QuotaExceeded as exc:
-            raise HTTPException(status_code=402, detail=exc.detail)
-        except HTTPException:
-            raise
-        except Exception:
-            raise HTTPException(status_code=502, detail=_COVER_LETTER_UNAVAILABLE_DETAIL)
-    finally:
-        conn.close()
+            try:
+                result = agent_tools.dispatch(
+                    "run_cover_letter", ctx,
+                    jd_text=jd_text, company=req.company_name, title=req.job_title,
+                    resume_text=provided_resume or None,
+                )
+            except QuotaExceeded as exc:
+                raise HTTPException(status_code=402, detail=exc.detail)
+            except HTTPException:
+                raise
+            except Exception:
+                raise HTTPException(status_code=502, detail=_COVER_LETTER_UNAVAILABLE_DETAIL)
+        finally:
+            conn.close()
 
     if result.get("status") != "succeeded" or not result.get("full_text"):
         raise HTTPException(status_code=502, detail=_COVER_LETTER_UNAVAILABLE_DETAIL)
@@ -2266,12 +2344,19 @@ def agent_tailor_enqueue(
         )
 
     run_id = agent_runner.new_run_id()
-    _reserve_agent_run_slot(user_id, tier, "tailor", run_id, jd_text, req.instruction)
-
-    background_tasks.add_task(
-        _run_tailor_in_background,
-        run_id, user_id, tier, jd_text, req.instruction, provided_resume or None,
-    )
+    # Claim a concurrency slot BEFORE the quota slot, so a request refused for
+    # load is free: no agent_runs row, nothing counted against the plan. The
+    # background task releases it in its finally.
+    _acquire_agent_slot()
+    try:
+        _reserve_agent_run_slot(user_id, tier, "tailor", run_id, jd_text, req.instruction)
+        background_tasks.add_task(
+            _in_agent_slot, _run_tailor_in_background,
+            run_id, user_id, tier, jd_text, req.instruction, provided_resume or None,
+        )
+    except BaseException:
+        _agent_run_slots.release()  # nothing will run, so nothing will release it
+        raise
     return JSONResponse(status_code=202, content={"run_id": run_id})
 
 
@@ -2295,14 +2380,19 @@ def agent_cover_letter_enqueue(
         )
 
     run_id = agent_runner.new_run_id()
-    _reserve_agent_run_slot(user_id, tier, "cover_letter", run_id, jd_text, None)
-    _log_score_usage(auth, "/agent/cover-letter")
+    _acquire_agent_slot()  # see agent_tailor_enqueue: refuse-for-load costs nothing
+    try:
+        _reserve_agent_run_slot(user_id, tier, "cover_letter", run_id, jd_text, None)
+        _log_score_usage(auth, "/agent/cover-letter")
 
-    background_tasks.add_task(
-        _run_cover_letter_in_background,
-        run_id, user_id, tier, jd_text, provided_resume or None,
-        req.company_name or None, req.job_title or None,
-    )
+        background_tasks.add_task(
+            _in_agent_slot, _run_cover_letter_in_background,
+            run_id, user_id, tier, jd_text, provided_resume or None,
+            req.company_name or None, req.job_title or None,
+        )
+    except BaseException:
+        _agent_run_slots.release()
+        raise
     return JSONResponse(status_code=202, content={"run_id": run_id})
 
 
