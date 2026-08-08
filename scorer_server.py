@@ -108,6 +108,26 @@ try:
 except ImportError:
     CLOUD_AVAILABLE = False
 
+# ─── Refuse to serve production traffic on development defaults ───
+# Every default in cloud/config.py is chosen for local development, and each
+# one fails INVISIBLY in production: the server boots and looks healthy while
+# signing forgeable session tokens or writing accounts to a disk the next
+# deploy discards. A smoke test passes either way, which is exactly why this
+# has to be checked at boot rather than noticed later.
+if CLOUD_AVAILABLE:
+    from cloud.config import UnsafeProductionConfig, validate_production
+
+    _config_problems = validate_production(cloud_settings)
+    if _config_problems:
+        print("\nREFUSING TO START — SCORER_ENV=production with unsafe configuration:")
+        for _problem in _config_problems:
+            print(f"  - {_problem}")
+        print(
+            "\nSet the named variables (fly secrets set ...) and redeploy. "
+            "See the owner checklist in docs/superpowers/plans/private-layer-notes.md.\n"
+        )
+        raise UnsafeProductionConfig("; ".join(_config_problems))
+
 # ─── Run database migrations at startup (graceful on failure) ───
 if CLOUD_AVAILABLE:
     _mig_conn = None
