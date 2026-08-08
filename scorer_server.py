@@ -98,6 +98,7 @@ try:
     from cloud.billing import (
         is_billing_configured, create_checkout_session,
         handle_webhook_event, create_portal_session,
+        get_subscription_status,
     )
     from cloud.db import get_conn as db_get_conn, run_migrations, scoped
     from cloud.quotas import QuotaExceeded, check_quota
@@ -550,12 +551,25 @@ async def verify_api_key(request: Request):
             raise HTTPException(status_code=401, detail="Invalid or expired JWT token.")
 
         user_id = payload["sub"]
-        tier = payload.get("tier", "free")
+
+        # The token's own "tier" claim is NOT trusted. Tokens live 30 days
+        # (SCORER_JWT_EXPIRE_HOURS defaults to 720) and there is no refresh or
+        # revocation, so a claim minted at login goes stale in both directions:
+        # a canceled subscriber kept paid access for the rest of the month, and
+        # someone who had just paid stayed locked out until they happened to log
+        # in again -- and, because /billing/checkout read the same stale claim,
+        # could be sold a second concurrent subscription. The users row is the
+        # single source of truth for entitlement; this is one indexed primary-key
+        # read against a local SQLite file.
+        user = get_user_by_id(user_id)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid or expired JWT token.")
+        tier = user["tier"]
 
         if not _check_rate_limit(str(user_id)):
             raise HTTPException(status_code=429, detail="Rate limit exceeded. Try again in 60 seconds.")
 
-        return {"user_id": user_id, "tier": tier, "email": payload.get("email", "")}
+        return {"user_id": user_id, "tier": tier, "email": user["email"]}
 
     # Try API key (cloud SQLite-backed)
     api_key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
@@ -1465,13 +1479,21 @@ def admin_set_tier(req: SetTierRequest, request: Request):
     """Update a user's tier. Protected by admin secret."""
     _verify_admin_secret(request)
     from cloud.auth import get_db
-    db = get_db()
-    row = db.execute("SELECT id, email, tier FROM users WHERE email = ?", (req.email.lower().strip(),)).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail=f"User {req.email} not found.")
-    old_tier = row["tier"]
-    db.execute("UPDATE users SET tier = ?, updated_at = datetime('now') WHERE id = ?", (req.tier, row["id"]))
-    db.commit()
+    # get_db is a @contextmanager -- it must be entered. Called bare it returns
+    # the context manager itself, whose .execute() raises AttributeError, so
+    # this endpoint 500'd on every call and its remediation path did not exist.
+    with get_db() as db:
+        row = db.execute(
+            "SELECT id, email, tier FROM users WHERE email = ?",
+            (req.email.lower().strip(),),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"User {req.email} not found.")
+        old_tier = row["tier"]
+        db.execute(
+            "UPDATE users SET tier = ?, updated_at = datetime('now') WHERE id = ?",
+            (req.tier, row["id"]),
+        )
     return {"email": row["email"], "old_tier": old_tier, "new_tier": req.tier}
 
 
@@ -1555,7 +1577,28 @@ def billing_checkout(req: CheckoutRequest = None, auth=Depends(verify_api_key)):
     if tier_rank.get(current_tier, 0) >= tier_rank.get(target_tier, 0):
         return {"message": f"Already on {current_tier.title()} tier."}
 
-    result = create_checkout_session(auth["user_id"], auth["email"], tier=target_tier)
+    # Bind the session to the existing Stripe customer when there is one, so a
+    # second checkout reuses that customer instead of creating a duplicate.
+    # Stripe itself is the authority on whether they are already paying: if the
+    # tier check above passed on a stale local row (an upgrade webhook that
+    # never landed), selling another subscription would double-bill them.
+    user = get_user_by_id(auth["user_id"])
+    existing_customer = (user or {}).get("stripe_customer_id") or ""
+    if existing_customer:
+        status = get_subscription_status(existing_customer)
+        if status and status.get("status") == "active":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "You already have an active subscription. Manage it from "
+                    "your account instead of starting a new one."
+                ),
+            )
+
+    result = create_checkout_session(
+        auth["user_id"], auth["email"], tier=target_tier,
+        stripe_customer_id=existing_customer,
+    )
     if not result or "error" in result:
         raise HTTPException(status_code=500, detail=result.get("error", "Failed to create checkout session."))
     return result
@@ -1611,8 +1654,15 @@ def billing_portal(auth=Depends(verify_api_key)):
 # =============================================================================
 
 @app.post("/score/llm")
-async def score_llm(req: ScoreRequest, api_key: str = Depends(verify_api_key_with_usage)):
-    """Score resume using LLM-augmented scorer (Claude)."""
+def score_llm(req: ScoreRequest, api_key: str = Depends(verify_api_key_with_usage)):
+    """Score resume using LLM-augmented scorer (Claude).
+
+    Deliberately a plain ``def``: score_with_llm below is a blocking network
+    call. Declared ``async``, it would run on the event loop and stall every
+    other request -- including /health, whose failure has Fly restart the
+    machine -- for the length of the call. FastAPI runs a sync handler in its
+    worker threadpool instead.
+    """
     try:
         from llm_scorer import score_with_llm, ANTHROPIC_AVAILABLE
     except ImportError:
@@ -1787,7 +1837,7 @@ def _safe_agent_scores(ctx: "agent_tools.ToolContext", resume_text: str, jd_text
 
 
 @app.post("/rewrite")
-async def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
+def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
     """
     Tailor the caller's resume via the audited four-role Resume Team pipeline
     (agent.tools.run_resume_team) and return it in the legacy REST shape the
@@ -1800,6 +1850,12 @@ async def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key
     no resume text is available from either the request or the account, and
     a 5xx with no internal error codes if the pipeline runs but does not
     publish a draft.
+
+    Deliberately a plain ``def``: run_resume_team blocks for minutes on
+    synchronous API calls. Declared ``async``, it would run on the event loop
+    and freeze every other request -- including /health, whose failure has Fly
+    restart the machine mid-run. FastAPI runs a sync handler in its worker
+    threadpool instead.
     """
     if not CLOUD_AVAILABLE or not isinstance(auth, dict):
         raise HTTPException(
@@ -1892,7 +1948,7 @@ _COVER_LETTER_UNAVAILABLE_DETAIL = (
 
 
 @app.post("/cover-letter")
-async def cover_letter_endpoint(req: CoverLetterRequest, auth=Depends(verify_api_key_with_usage)):
+def cover_letter_endpoint(req: CoverLetterRequest, auth=Depends(verify_api_key_with_usage)):
     """Generate a tailored cover letter via agent.tools.run_cover_letter.
 
     Requires Pro or Ultra tier. Response shape is unchanged from the prior
@@ -1902,6 +1958,9 @@ async def cover_letter_endpoint(req: CoverLetterRequest, auth=Depends(verify_api
     "paragraphs" in the response) keep working. Quota is now enforced (Pro:
     30/month, Ultra: 1000/month -- see cloud/quotas.py) and every run is
     recorded in agent_runs, matching /rewrite.
+
+    Plain ``def`` for the same reason as /rewrite above: the work below blocks
+    on synchronous API calls and must not occupy the event loop.
     """
     if not CLOUD_AVAILABLE or not isinstance(auth, dict):
         raise HTTPException(
