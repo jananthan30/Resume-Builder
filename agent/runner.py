@@ -47,10 +47,57 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-__all__ = ["new_run_id", "create_run", "mark_running", "finish_run", "get_run"]
+__all__ = [
+    "new_run_id", "create_run", "mark_running", "finish_run", "get_run",
+    "reap_orphaned_runs", "INTERRUPTED_ERROR",
+]
 
 _VALID_KINDS = ("tailor", "cover_letter")
 _VALID_FINISH_STATUSES = ("succeeded", "failed")
+
+# Terminal class recorded for a run that was still in flight when the process
+# died. Kept in the internal FAILED: namespace so _friendly_agent_error's
+# generic transient copy ("try again in a few minutes") applies -- which for
+# this cause is exactly true.
+INTERRUPTED_ERROR = "FAILED:INTERRUPTED"
+
+
+def reap_orphaned_runs(conn: Any) -> int:
+    """Fail every run left 'queued' or 'running', and report how many.
+
+    Runs execute in-process via FastAPI BackgroundTasks, so a row in a
+    non-terminal state has exactly one owner: the process that enqueued it.
+    Once that process is gone -- a deploy, an OOM, a health-check restart, all
+    routine on Fly -- nothing will ever advance the row again. It would poll as
+    "queued" forever, and because cloud.quotas.month_usage counts every row
+    whose status is not 'failed', it would keep occupying a paid slot for the
+    rest of the calendar month.
+
+    Marking these failed at startup is therefore both the honest answer to the
+    caller and the refund: the quota exclusion is the refund mechanism (see
+    cloud/quotas.py). Failing an already-dead run cannot lose work, because
+    no in-flight run can survive the restart that triggers this sweep.
+
+    Deliberately NOT scoped to a user_id: this is a cross-tenant maintenance
+    sweep at boot, not a request-scoped read, so cloud.db.scoped() -- which
+    exists to force per-caller isolation on request paths -- does not apply.
+
+    ASSUMPTION: one process owns this database. That holds for the current
+    single-machine deployment (Fly volumes attach to a single machine, and
+    min_machines_running is 1). If this ever runs multi-process against shared
+    storage, this sweep would kill a peer's live runs and must instead key on
+    an owner/heartbeat column.
+    """
+    cursor = conn.execute(
+        """
+        UPDATE agent_runs
+        SET status = ?, error = ?, finished_at = ?
+        WHERE status IN ('queued', 'running')
+        """,
+        ("failed", INTERRUPTED_ERROR, _now_utc_sql()),
+    )
+    conn.commit()
+    return cursor.rowcount or 0
 
 
 def new_run_id() -> str:

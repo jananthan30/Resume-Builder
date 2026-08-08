@@ -106,7 +106,41 @@ DEFAULT_MAX_OUTPUT_TOKENS = 25_000
 
 _MAX_TOKENS_PER_CALL = 8_000
 _MAX_API_ATTEMPTS = 3  # one initial attempt plus two retries
-_API_RETRY_BACKOFF_SECONDS = (0.05, 0.1)
+# Backoff between this host's own attempts. Seconds, not milliseconds: the
+# previous 50/100ms values retried inside the window the server was still
+# overloaded in, which amplifies a rate limit instead of shedding it.
+_API_RETRY_BACKOFF_SECONDS = (1.0, 4.0)
+
+# Per-HTTP-request ceiling, and how many times the SDK may retry beneath one
+# of this host's attempts. Worst case per role call is therefore
+# _MAX_API_ATTEMPTS * (1 + _SDK_MAX_RETRIES) requests, each capped at the
+# timeout below -- a bounded number with a bounded wall clock, which the
+# SDK's own defaults (600s, 2 retries) do not give us.
+_API_REQUEST_TIMEOUT_SECONDS = 120.0
+_SDK_MAX_RETRIES = 1
+
+
+def _is_retryable_api_error(error: BaseException) -> bool:
+    """True when re-sending the identical request could plausibly succeed.
+
+    Retrying everything wasted two extra calls and two backoffs on failures
+    that are deterministic in the request itself -- a malformed request, a
+    rejected key, a revoked permission. Those must surface immediately: the
+    caller's fail-closed path is the correct answer, and burning the attempt
+    budget only delays it.
+
+    Anything unrecognized is treated as retryable, so an SDK version that
+    introduces a new transient class keeps the old resilience rather than
+    failing fast on a hiccup.
+    """
+    name = type(error).__name__
+    if name in ("AuthenticationError", "PermissionDeniedError", "NotFoundError",
+                "BadRequestError", "UnprocessableEntityError"):
+        return False
+    status = getattr(error, "status_code", None)
+    if isinstance(status, int) and 400 <= status < 500 and status != 429:
+        return False
+    return True
 
 _REPAIR_INSTRUCTION = (
     "Your previous reply could not be parsed as JSON. Return only a single "
@@ -504,7 +538,16 @@ class AnthropicHost:
         if self._client is None:
             import anthropic  # local import: keep import-time SDK-free
 
-            self._client = anthropic.Anthropic()
+            # Both bounds are explicit because both SDK defaults are wrong
+            # here. The default request timeout is 600s, and this host adds
+            # its own attempts on top of the SDK's internal retries, so a
+            # single stuck read could hold a worker for tens of minutes. The
+            # cap below is per HTTP request; _MAX_API_ATTEMPTS bounds how many
+            # of those one role call may make.
+            self._client = anthropic.Anthropic(
+                timeout=_API_REQUEST_TIMEOUT_SECONDS,
+                max_retries=_SDK_MAX_RETRIES,
+            )
         return self._client
 
     def _call_once(
@@ -512,8 +555,10 @@ class AnthropicHost:
     ) -> Any:
         """Call the API with retry-on-exception; return the raw response.
 
-        Retries any API exception up to ``_MAX_API_ATTEMPTS - 1`` times with
-        a short backoff between attempts, then raises :class:`HostRefusal`.
+        Retries a *transient* API exception up to ``_MAX_API_ATTEMPTS - 1``
+        times with backoff, then raises :class:`HostRefusal`. An error that
+        re-sending cannot fix (see :func:`_is_retryable_api_error`) stops the
+        loop immediately and raises the same way.
         """
         client = self._ensure_client()
         last_error: Exception | None = None
@@ -525,8 +570,10 @@ class AnthropicHost:
                     system=system,
                     messages=messages,
                 )
-            except Exception as error:  # noqa: BLE001 - any API failure retries the same way
+            except Exception as error:  # noqa: BLE001 - classified by _is_retryable_api_error
                 last_error = error
+                if not _is_retryable_api_error(error):
+                    break
                 if attempt < _MAX_API_ATTEMPTS - 1:
                     time.sleep(_API_RETRY_BACKOFF_SECONDS[attempt])
         raise HostRefusal(
