@@ -1688,15 +1688,43 @@ async def billing_webhook(request: Request):
     sig = request.headers.get("stripe-signature", "")
 
     result = handle_webhook_event(payload, sig)
+    action = result["action"]
 
-    if result["action"] == "upgrade":
+    # Idempotency. Stripe retries until it gets a 2xx and guarantees no
+    # ordering, so the same event can arrive twice and a stale one can arrive
+    # after a newer one. Claiming the id first means a replay is a no-op --
+    # without it, a redelivered past_due could downgrade someone who has
+    # since recovered. Claimed only for events that actually change state.
+    event_id = result.get("event_id") or ""
+    if action != "none" and event_id:
+        import sqlite3
+
+        from cloud.auth import get_db
+        try:
+            with get_db() as conn:
+                conn.execute(
+                    "INSERT INTO stripe_events (event_id) VALUES (?)", (event_id,)
+                )
+        except sqlite3.IntegrityError:
+            return {"status": "ignored", "reason": "duplicate event"}
+
+    if action == "upgrade":
         update_user_tier(
             result["user_id"], result["tier"],
             result.get("stripe_customer_id"), result.get("stripe_subscription_id"),
         )
         return {"status": "upgraded", "user_id": result["user_id"]}
 
-    elif result["action"] == "downgrade":
+    elif action == "restore":
+        # A recovered subscription (a retried card that finally cleared).
+        customer_id = result.get("stripe_customer_id", "")
+        user = get_user_by_stripe_customer_id(customer_id) if customer_id else None
+        if user:
+            update_user_tier(user["id"], result.get("tier", "pro"), customer_id, None)
+            return {"status": "restored", "user_id": user["id"], "tier": result.get("tier")}
+        return {"status": "restore_failed", "reason": "User not found for customer"}
+
+    elif action == "downgrade":
         customer_id = result.get("stripe_customer_id", "")
         user = get_user_by_stripe_customer_id(customer_id) if customer_id else None
         if user:
@@ -2206,19 +2234,13 @@ def _reserve_agent_run_slot(
     input_ref = multi_agent_team.canonical_digest(jd_text)
     conn = db_get_conn(cloud_settings.DB_PATH)
     try:
-        conn.commit()  # ensure no implicit transaction is already open
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            check_quota(conn, user_id, tier, action)
-            agent_tools._insert_agent_run(
-                conn, user_id, run_id, action,
-                input_ref=input_ref,
-                instruction=instruction,
-            )
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
+        # The transaction itself lives in agent.tools.reserve_run_slot, which
+        # the synchronous /rewrite and /cover-letter paths share -- they had
+        # the same double-spend hole and must not drift from this one.
+        agent_tools.reserve_run_slot(
+            conn, user_id, tier, action, run_id,
+            input_ref=input_ref, instruction=instruction,
+        )
     except QuotaExceeded as exc:
         raise HTTPException(status_code=402, detail=exc.detail)
     finally:

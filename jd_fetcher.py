@@ -28,6 +28,26 @@ _ALLOWED_SCHEMES = {"http", "https"}
 _MAX_REDIRECTS = 5
 _BLOCKED_MSG = "This URL points to a private or internal address and cannot be fetched."
 
+# Ports a job listing is ever served on. Without this, a public hostname is a
+# way to reach ANY port on that host -- databases, admin panels, internal
+# services bound to a routable interface -- because the address check only
+# ever looked at the host.
+_ALLOWED_PORTS = {80, 443}
+_PORT_BLOCKED_MSG = "Only standard web ports (80 and 443) can be fetched."
+
+# Hard ceiling on how much we will pull down. The body was previously read
+# whole into memory on a 1GB machine, and the 8,000-char cap applied only
+# after the download, on one fallback branch. gzip is in Accept-Encoding and
+# requests decompresses transparently, so a small response can expand far
+# past its wire size -- the check below therefore counts DECOMPRESSED bytes.
+_MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024
+_TOO_LARGE_MSG = "This page is too large to fetch."
+
+# Whole-request wall clock. requests' own timeout bounds each socket read
+# individually, so a server dripping one byte at a time holds the worker
+# indefinitely without ever tripping it.
+_MAX_TOTAL_SECONDS = 30.0
+
 # Realistic browser headers — mimic Chrome more completely to reduce bot detection
 _HEADERS = {
     "User-Agent": (
@@ -118,58 +138,116 @@ def _host_resolves_public(host: str) -> bool:
 
 
 def validate_public_url(url: str) -> str:
-    """Raise BlockedURLError unless *url* is http(s) to a public address."""
+    """Raise BlockedURLError unless *url* is http(s), on a standard web port,
+    to a public address."""
     parsed = urlparse(url)
     if parsed.scheme not in _ALLOWED_SCHEMES or not parsed.hostname:
         raise BlockedURLError(_BLOCKED_MSG)
+    # An explicit port must be one we allow; absent means the scheme default,
+    # which already is. urlparse raises for a malformed port, which is a
+    # refusal too -- never a pass.
+    try:
+        port = parsed.port
+    except ValueError:
+        raise BlockedURLError(_BLOCKED_MSG) from None
+    if port is not None and port not in _ALLOWED_PORTS:
+        raise BlockedURLError(_PORT_BLOCKED_MSG)
     if not _host_resolves_public(parsed.hostname):
         raise BlockedURLError(_BLOCKED_MSG)
     return url
 
 
+def _read_capped(resp, deadline: float) -> str:
+    """Return the decoded body, refusing anything past the size or time cap.
+
+    Streams so an oversized response is abandoned mid-transfer rather than
+    buffered whole and rejected afterwards -- the point is never to hold it
+    in memory at all.
+    """
+    import time
+
+    declared = resp.headers.get("Content-Length")
+    if declared and declared.isdigit() and int(declared) > _MAX_DOWNLOAD_BYTES:
+        raise BlockedURLError(_TOO_LARGE_MSG)
+
+    chunks: list[bytes] = []
+    total = 0
+    for chunk in resp.iter_content(chunk_size=64 * 1024):
+        if time.monotonic() > deadline:
+            raise BlockedURLError("Timed out fetching this URL.")
+        if not chunk:
+            continue
+        total += len(chunk)
+        if total > _MAX_DOWNLOAD_BYTES:
+            raise BlockedURLError(_TOO_LARGE_MSG)
+        chunks.append(chunk)
+
+    body = b"".join(chunks)
+    encoding = resp.encoding or resp.apparent_encoding or "utf-8"
+    try:
+        return body.decode(encoding, errors="replace")
+    except LookupError:
+        return body.decode("utf-8", errors="replace")
+
+
 def _safe_get(url: str, timeout: int):
     """The one guarded fetch path: redirects followed manually so every hop
     is re-validated before it is requested (a public URL may 302 internal).
+
+    Returns (response, body_text); the body is read here, under the size and
+    deadline caps, because streaming has to be consumed while the response is
+    still open.
+
     Residual risk: DNS answers can change between validation and connect
     (rebinding); closing that fully needs connection-time IP pinning.
     """
+    import time
+
     import requests
 
+    deadline = time.monotonic() + _MAX_TOTAL_SECONDS
     current = url
     for _ in range(_MAX_REDIRECTS + 1):
         validate_public_url(current)
+        if time.monotonic() > deadline:
+            raise BlockedURLError("Timed out fetching this URL.")
         resp = requests.get(
-            current, headers=_HEADERS, timeout=timeout, allow_redirects=False
+            current, headers=_HEADERS, timeout=timeout,
+            allow_redirects=False, stream=True,
         )
-        if resp.status_code in (301, 302, 303, 307, 308):
-            location = resp.headers.get("Location")
-            if not location:
-                return resp
-            current = urljoin(current, location)
-            continue
-        return resp
+        try:
+            if resp.status_code in (301, 302, 303, 307, 308):
+                location = resp.headers.get("Location")
+                if not location:
+                    return resp, ""
+                current = urljoin(current, location)
+                continue
+            return resp, _read_capped(resp, deadline)
+        finally:
+            resp.close()
     raise BlockedURLError("Too many redirects while fetching this URL.")
 
 
 def fetch_jd_from_url(url: str, timeout: int = 15) -> Optional[str]:
     """Return plain-text job description scraped from *url*, or None on failure.
 
-    Raises BlockedURLError (never fetches) for non-http(s) schemes and hosts
-    that resolve to private, loopback, link-local, or otherwise non-global
-    addresses — including any redirect hop that lands on one.
+    Raises BlockedURLError (never fetches) for non-http(s) schemes, non-standard
+    ports, and hosts that resolve to private, loopback, link-local, or otherwise
+    non-global addresses — including any redirect hop that lands on one. Also
+    raised when the response exceeds the size cap or the whole fetch outruns its
+    deadline; both are refusals, not silent truncation.
     """
     # Strip tracking params — reduces bot-detection likelihood
     url = _strip_tracking_params(url)
 
     try:
-        resp = _safe_get(url, timeout)
+        resp, html = _safe_get(url, timeout)
     except BlockedURLError:
         raise
     except Exception:
         return None
-    if resp.status_code != 200 or not resp.text:
+    if resp.status_code != 200 or not html:
         return None
-    html = resp.text
 
     # ── 1. trafilatura extraction (best quality) — on HTML we already
     #        fetched; its own fetch_url would bypass the guard above ────────
