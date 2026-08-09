@@ -96,7 +96,9 @@ try:
         save_resume as _save_resume_db,
         get_resume as _get_resume_db,
         delete_resume as _delete_resume_db,
+        create_password_reset_token, reset_password_with_token,
     )
+    from cloud.emailer import send_password_reset_email
     from cloud.billing import (
         is_billing_configured, create_checkout_session,
         handle_webhook_event, create_portal_session,
@@ -1630,6 +1632,54 @@ def login(req: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid email or password.")
     token = create_jwt_token(user["id"], user["email"], user["tier"])
     return {"user": user, "token": token}
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+# Per-email cooldown for /auth/forgot. In-memory is enough: the goal is to
+# stop one address being carpet-bombed with reset mail, not to survive
+# restarts, and the single-machine deployment has no second process to sync.
+_FORGOT_COOLDOWN: dict = {}
+_FORGOT_COOLDOWN_SECONDS = 60
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://getresumehq.com")
+
+
+@app.post("/auth/forgot")
+def forgot_password(req: ForgotPasswordRequest):
+    """Email a password-reset link.
+
+    Always answers {"sent": true} — for unknown addresses too — so the
+    endpoint cannot be used to probe which emails have accounts.
+    """
+    if not CLOUD_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Cloud auth not available in local mode.")
+    email = req.email.lower().strip()
+    now = time.time()
+    if now - _FORGOT_COOLDOWN.get(email, 0.0) >= _FORGOT_COOLDOWN_SECONDS:
+        _FORGOT_COOLDOWN[email] = now
+        token = create_password_reset_token(email)
+        if token:
+            send_password_reset_email(email, f"{FRONTEND_URL}/reset?token={token}")
+    return {"sent": True}
+
+
+@app.post("/auth/reset")
+def reset_password(req: ResetPasswordRequest):
+    """Set a new password using a token from the reset email."""
+    if not CLOUD_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Cloud auth not available in local mode.")
+    try:
+        reset_password_with_token(req.token, req.new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"reset": True}
 
 
 @app.post("/auth/api-key")
