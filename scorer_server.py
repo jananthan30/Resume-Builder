@@ -1700,7 +1700,20 @@ def billing_checkout(req: CheckoutRequest = None, auth=Depends(verify_api_key)):
 
 @app.post("/billing/webhook")
 async def billing_webhook(request: Request):
-    """Handle Stripe webhook events (subscription lifecycle)."""
+    """Handle Stripe webhook events (subscription lifecycle).
+
+    Every failure path returns non-2xx ON PURPOSE. Stripe treats any 2xx as
+    "handled" and never retries, so the previous blanket 200 meant a wrong or
+    rotated signing secret silently discarded every entitlement while the
+    Stripe dashboard stayed green: money in, no access granted, no signal.
+
+    Status contract:
+      503  Stripe/webhook secret not configured -- retryable once fixed
+      400  bad signature or unusable metadata -- a retry cannot help, but the
+           delivery must still be recorded as failed
+      500  event is valid but we cannot map its customer to an account
+      200  handled, duplicate, or an event type we deliberately ignore
+    """
     if not CLOUD_AVAILABLE:
         raise HTTPException(status_code=501, detail="Billing not available.")
 
@@ -1709,6 +1722,11 @@ async def billing_webhook(request: Request):
 
     result = handle_webhook_event(payload, sig)
     action = result["action"]
+    error = result.get("error")
+
+    if error:
+        retryable = "not configured" in error
+        raise HTTPException(status_code=503 if retryable else 400, detail=error)
 
     # Idempotency. Stripe retries until it gets a 2xx and guarantees no
     # ordering, so the same event can arrive twice and a stale one can arrive
@@ -1716,6 +1734,7 @@ async def billing_webhook(request: Request):
     # without it, a redelivered past_due could downgrade someone who has
     # since recovered. Claimed only for events that actually change state.
     event_id = result.get("event_id") or ""
+    claimed = False
     if action != "none" and event_id:
         import sqlite3
 
@@ -1725,8 +1744,22 @@ async def billing_webhook(request: Request):
                 conn.execute(
                     "INSERT INTO stripe_events (event_id) VALUES (?)", (event_id,)
                 )
+            claimed = True
         except sqlite3.IntegrityError:
             return {"status": "ignored", "reason": "duplicate event"}
+
+    def _release() -> None:
+        """Un-claim the event so Stripe's retry is processed, not deduped.
+
+        Without this, claim-then-fail burns the event id permanently: the
+        retry hits the duplicate check above and gets a cheerful 200, so the
+        change is lost exactly when the retry was the chance to apply it.
+        """
+        if not claimed:
+            return
+        from cloud.auth import get_db
+        with get_db() as conn:
+            conn.execute("DELETE FROM stripe_events WHERE event_id = ?", (event_id,))
 
     if action == "upgrade":
         update_user_tier(
@@ -1735,22 +1768,25 @@ async def billing_webhook(request: Request):
         )
         return {"status": "upgraded", "user_id": result["user_id"]}
 
-    elif action == "restore":
-        # A recovered subscription (a retried card that finally cleared).
+    elif action in ("restore", "downgrade"):
+        # 'restore' is a recovered subscription (a retried card that cleared).
         customer_id = result.get("stripe_customer_id", "")
         user = get_user_by_stripe_customer_id(customer_id) if customer_id else None
-        if user:
-            update_user_tier(user["id"], result.get("tier", "pro"), customer_id, None)
-            return {"status": "restored", "user_id": user["id"], "tier": result.get("tier")}
-        return {"status": "restore_failed", "reason": "User not found for customer"}
-
-    elif action == "downgrade":
-        customer_id = result.get("stripe_customer_id", "")
-        user = get_user_by_stripe_customer_id(customer_id) if customer_id else None
-        if user:
-            update_user_tier(user["id"], "free", customer_id, None)
-            return {"status": "downgraded", "user_id": user["id"], "reason": result.get("reason")}
-        return {"status": "downgrade_failed", "reason": "User not found for customer"}
+        if not user:
+            # We are billing a customer we cannot map to an account. Refusing
+            # loudly keeps the event in Stripe's retry queue and on the
+            # dashboard instead of dropping the change on the floor.
+            _release()
+            raise HTTPException(
+                status_code=500,
+                detail=f"No account for Stripe customer {customer_id or '(missing)'}",
+            )
+        if action == "restore":
+            tier = result.get("tier", "pro")
+            update_user_tier(user["id"], tier, customer_id, None)
+            return {"status": "restored", "user_id": user["id"], "tier": tier}
+        update_user_tier(user["id"], "free", customer_id, None)
+        return {"status": "downgraded", "user_id": user["id"], "reason": result.get("reason")}
 
     return {"status": "ignored", "event_type": result.get("event_type")}
 
