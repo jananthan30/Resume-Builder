@@ -251,7 +251,7 @@ Claude-powered rubric evaluation that catches nuances the algorithmic scorers mi
 
 **Note for Claude Code / claude.ai users:** Your Anthropic subscription already handles resume writing via Claude. The scorer server only does ATS + HR scoring, so **Pro is all you need** — you do not need Ultra.
 
-Sign up at [resume-scorer-web.streamlit.app](https://resume-scorer-web.streamlit.app). After signing up, run `/resume-builder:setup` to link your Pro account in one step.
+Sign up at [resumehq-app.vercel.app](https://resumehq-app.vercel.app). After signing up, run `/resume-builder:setup` to link your Pro account in one step.
 
 ---
 
@@ -341,7 +341,7 @@ Then edit `.env` (API keys) and `config.json` (your info), and use commands with
 
 ## Cloud Scoring API
 
-The scoring API is hosted at `https://resume-scorer.fly.dev`. Free users get **5 scored resumes**, then local scoring activates automatically. Sign up or upgrade at [resume-scorer-web.streamlit.app](https://resume-scorer-web.streamlit.app).
+The scoring API is hosted at `https://resume-scorer.fly.dev`. Free users get **5 scored resumes**, then local scoring activates automatically. Sign up or upgrade at [resumehq-app.vercel.app](https://resumehq-app.vercel.app).
 
 The easiest way to link your account is via the setup wizard:
 
