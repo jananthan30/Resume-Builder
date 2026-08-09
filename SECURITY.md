@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Email **p.jananthan@gmail.com** with "SECURITY" in the subject. Please include
+Email **support@getresumehq.com** with "SECURITY" in the subject. Please include
 what you found, how to reproduce it, and what an attacker could do with it.
 
 Expect an acknowledgement within 5 days. Please give a reasonable window for a
