@@ -115,8 +115,10 @@ cloud/
 !cloud/client.py
 Dockerfile
 docker-compose.yml
+docker-entrypoint.sh
 fly.toml
 .dockerignore
+litestream.yml
 requirements-cloud.txt
 *.db
 
