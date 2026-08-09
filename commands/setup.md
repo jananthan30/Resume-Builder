@@ -123,7 +123,7 @@ Setup complete! You can now use:
   /resume-builder:writing-coach [resume file]       — Improve resume writing quality
 
 The scoring engine is active and will automatically score your resumes.
-Cloud scoring: 5 free scores included. Upgrade at https://resume-scorer-web.streamlit.app
+Cloud scoring: 5 free scores included. Upgrade at https://getresumehq.com
 ```
 
 If it fails, show the error and suggest fixes.

@@ -13,7 +13,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://resume-scorer-web.streamlit.app"
+Homepage = "https://getresumehq.com"
 Repository = "https://github.com/jananthan30/resume-scorer-web"
 
 [tool.pytest.ini_options]

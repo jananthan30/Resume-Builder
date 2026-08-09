@@ -54,7 +54,7 @@ Show this message exactly:
 Job discovery needs API keys to search live job boards.
 
 Option 1 — Cloud (easiest, no setup):
-  Sign up at https://resume-scorer-web.streamlit.app
+  Sign up at https://getresumehq.com
   Then run /resume-builder:setup to link your account.
 
 Option 2 — Local (free):

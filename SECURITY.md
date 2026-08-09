@@ -13,7 +13,7 @@ fix before disclosing publicly.
 In scope:
 
 - This repository
-- The hosted app at https://resumehq-app.vercel.app
+- The hosted app at https://getresumehq.com
 - The scoring API at https://resume-scorer.fly.dev
 
 Out of scope: findings that require an already-compromised device or account,

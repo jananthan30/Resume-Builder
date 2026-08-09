@@ -731,7 +731,7 @@ async def verify_api_key_with_usage(request: Request):
             if is_anon:
                 detail = (
                     f"Free tier limit reached ({_config['free_tier_total_limit']} scores). "
-                    f"Sign up at https://resume-scorer-web.streamlit.app for more scores, "
+                    f"Sign up at https://getresumehq.com for more scores, "
                     f"or upgrade to Pro ($12/month) for unlimited scoring."
                 )
             else:

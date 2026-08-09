@@ -64,7 +64,7 @@ except ImportError:
     CLOUD_AVAILABLE = False
 
 
-UPGRADE_URL = "https://resume-scorer-web.streamlit.app"
+UPGRADE_URL = "https://getresumehq.com"
 
 
 def _try_cloud(endpoint: str, resume_text: str, jd_text: str, extra: dict = None):
