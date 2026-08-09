@@ -7,6 +7,10 @@ The only resume tool that **finds jobs, scores your fit, and tailors your resume
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-blueviolet)](https://docs.anthropic.com/en/docs/claude-code)
 [![Codex](https://img.shields.io/badge/Codex-Plugin-111111)](https://developers.openai.com/codex/plugins/build)
 
+![Upload a resume, paste a job description, get ATS + recruiter scores with fixes in seconds](assets/resumehq-demo.gif)
+
+*Upload a resume → paste the job posting → ATS + recruiter scores with fixes, in under 30 seconds. [Try it free](https://resumehq-app.vercel.app).*
+
 ---
 
 ## Why ResumeHQ?
