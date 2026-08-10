@@ -79,8 +79,8 @@ from typing import Any
 
 from agent.host_anthropic import AnthropicHost, BudgetExceeded, HostRefusal
 from multi_agent_team import (
-    AgentInvocationFailure,
     ROLE_ORDER,
+    AgentInvocationFailure,
     build_handoff,
     normalize_native_payload,
     validate_handoff,

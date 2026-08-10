@@ -27,7 +27,6 @@ import re
 import sys
 from typing import Any
 
-
 _EXPOSURE_MARKERS = [
     r'\(exposure\)',
     r'\(coursework\)',

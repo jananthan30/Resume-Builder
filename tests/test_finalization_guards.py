@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 from docx import Document
 
-from candidate_fit_preflight import assess_candidate_fit
 import docx_generator
 import tracker_utils
+from candidate_fit_preflight import assess_candidate_fit
 from final_receipt_verifier import (
     FinalReceiptVerificationError,
     canonical_digest,

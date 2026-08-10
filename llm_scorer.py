@@ -11,8 +11,7 @@ Usage:
 """
 
 import json
-import os
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Any, Dict, List, Optional, Tuple
 
 # Try to import Anthropic SDK
 try:
@@ -22,8 +21,8 @@ except ImportError:
     ANTHROPIC_AVAILABLE = False
 
 # PII redaction (strip personal info before sending to external LLM)
-from pii_redactor import redact_text
 from legacy_rewrite_guard import native_resume_team_required_response
+from pii_redactor import redact_text
 
 
 def score_with_llm(
@@ -450,7 +449,7 @@ if __name__ == '__main__':
             sys.exit(1)
 
         print(f"\n{'='*60}")
-        print(f"  LLM-AUGMENTED SCORING REPORT")
+        print("  LLM-AUGMENTED SCORING REPORT")
         print(f"{'='*60}")
         print(f"  ATS Score: {result['ats_score']:.1f}%")
         print(f"  HR Score:  {result['hr_score']:.1f}%")
@@ -460,11 +459,11 @@ if __name__ == '__main__':
 
         # Show dimension breakdown
         if 'dimensions' in result:
-            print(f"\n  ATS Dimensions:")
+            print("\n  ATS Dimensions:")
             for dim, data in result['dimensions'].get('ats', {}).items():
                 print(f"    {dim}: {data['score']}/5 — {data['evidence']}")
 
-            print(f"\n  HR Dimensions:")
+            print("\n  HR Dimensions:")
             for dim, data in result['dimensions'].get('hr', {}).items():
                 print(f"    {dim}: {data['score']}/5 — {data['evidence']}")
 

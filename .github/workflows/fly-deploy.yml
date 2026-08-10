@@ -1,15 +1,18 @@
-# See https://fly.io/docs/app-guides/continuous-deployment-with-github-actions/
+# Manual-only. CI checkouts cannot deploy this app: the deploy kit
+# (Dockerfile, fly.toml context, cloud billing layer) lives in the gitignored
+# private layer and exists only on the operator's machine — a CI-built image
+# would silently ship without billing/auth. Deploys run locally via
+# `flyctl deploy --remote-only`. Kept as workflow_dispatch for emergencies
+# where a machine with repo secrets configured still wants the button.
 
 name: Fly Deploy
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 jobs:
   deploy:
     name: Deploy app
     runs-on: ubuntu-latest
-    concurrency: deploy-group    # optional: ensure only one action runs at a time
+    concurrency: deploy-group
     steps:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master

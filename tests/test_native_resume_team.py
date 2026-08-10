@@ -9,11 +9,11 @@ import pytest
 from candidate_fit_preflight import assess_candidate_fit
 from human_voice_audit import audit_text
 from multi_agent_team import (
-    AgentInvocationFailure,
     AUTHORIZATION_VERSION,
     PROTOCOL_VERSION,
     PUBLICATION_VERSION,
     VOTE_VERSION,
+    AgentInvocationFailure,
     build_context,
     canonical_digest,
     run_team,

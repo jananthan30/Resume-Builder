@@ -13,7 +13,7 @@ from pathlib import Path
 try:
     import pandas as pd
     from openpyxl import load_workbook
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     EXCEL_AVAILABLE = True
 except ImportError:
     EXCEL_AVAILABLE = False

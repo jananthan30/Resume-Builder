@@ -32,13 +32,12 @@ Harvard Style Design Rules (Harvard Office of Career Services):
 import os
 import re
 import tempfile
-from docx import Document
-from docx.shared import Pt, Inches, RGBColor, Twips
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
-from docx.enum.style import WD_STYLE_TYPE
-from docx.oxml.ns import qn
-from docx.oxml import OxmlElement
 
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Inches, Pt, RGBColor
 
 # -- Default font and color constants --
 FONT_BODY = 'Calibri'
@@ -1836,7 +1835,9 @@ def _create_resume_from_verified_md(
 
     # Local import keeps the generator usable without an import cycle.
     from resume_integrity_audit import (
-        audit_resume_files, format_audit_report, resolve_master_path,
+        audit_resume_files,
+        format_audit_report,
+        resolve_master_path,
     )
 
     resolved_master = str(master_path or resolve_master_path(config_path))
@@ -2128,6 +2129,7 @@ if __name__ == '__main__':
     # a script. Keep the invocation fail-closed and point callers at the only
     # authorized resume-DOCX workflow.
     import sys
+
     from legacy_rewrite_guard import (
         NATIVE_RESUME_TEAM_REQUIRED,
         NATIVE_RESUME_TEAM_REQUIRED_MESSAGE,

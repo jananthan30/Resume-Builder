@@ -15,13 +15,13 @@ Or with Claude Code custom commands:
 
 from __future__ import annotations
 
-import os
-import sys
-import re
 import json
+import os
+import re
+import sys
 import tempfile
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 from legacy_rewrite_guard import (
     NATIVE_RESUME_TEAM_REQUIRED,
@@ -41,8 +41,8 @@ except ImportError:
 
 try:
     from docx import Document
-    from docx.shared import Pt, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Inches, Pt
 except ImportError:
     Document = Pt = Inches = WD_ALIGN_PARAGRAPH = None
 
@@ -273,7 +273,9 @@ def save_as_docx(
     temp_md = None
     if doc_type == "resume":
         from resume_integrity_audit import (
-            audit_resume_files, format_audit_report, resolve_master_path,
+            audit_resume_files,
+            format_audit_report,
+            resolve_master_path,
         )
 
         resolved_master = Path(master_path) if master_path is not None else resolve_master_path(config_path)

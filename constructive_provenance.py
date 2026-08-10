@@ -9,7 +9,6 @@ plane.  Without that out-of-band binding, authorization fails closed.
 import hashlib
 import json
 
-
 CONSTRUCTIVE_PROVENANCE_VERSION = "constructive-provenance/v1"
 
 _REQUEST_VERSION = "constructive-provenance-request/v1"

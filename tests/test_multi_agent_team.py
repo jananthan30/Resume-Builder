@@ -21,7 +21,6 @@ except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
 from multi_agent_team import (
-    AgentInvocationFailure,
     AUTHORIZATION_VERSION,
     CONTEXT_VERSION,
     FINAL_RECEIPT_VERSION,
@@ -33,6 +32,7 @@ from multi_agent_team import (
     RUN_CLAIM_VERSION,
     SOURCE_ATTESTATION_VERSION,
     VOTE_VERSION,
+    AgentInvocationFailure,
     _native_agent_host,
     build_context,
     build_handoff,

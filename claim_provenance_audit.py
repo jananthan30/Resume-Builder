@@ -9,7 +9,6 @@ import re
 import unicodedata
 from typing import Any
 
-
 CLAIM_PROVENANCE_VERSION = "claim-provenance/v1"
 
 _REQUEST_KEYS = {"schema_version", "source_roles", "draft_roles", "job_description"}

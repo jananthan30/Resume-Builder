@@ -18,7 +18,6 @@ import stat
 from pathlib import Path
 from typing import Any
 
-
 FINAL_RECEIPT_VERSION = "resume-team-final-receipt/v2"
 AUTHORIZATION_VERSION = "resume-team-authorization/v1"
 VOTE_VERSION = "resume-team-vote/v1"

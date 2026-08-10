@@ -3,11 +3,11 @@ Test job discovery across multiple domains/industries.
 Verifies that role-family filtering works correctly for any resume type,
 not just clinical research.
 """
-import os, sys
 from dotenv import load_dotenv
+
 load_dotenv(override=True)
 
-from job_discovery import analyze_resume_for_search, _detect_text_domain
+from job_discovery import _detect_text_domain, analyze_resume_for_search
 
 # ---------------------------------------------------------------------------
 # Mini resumes for 4 different domains

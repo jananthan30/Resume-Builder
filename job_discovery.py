@@ -12,7 +12,6 @@ Two-tier scoring:
   2. Full ATS + HR score for top N finalists
 """
 
-import hashlib
 import json
 import os
 import re
@@ -21,8 +20,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 from html.parser import HTMLParser
-from typing import Any, Dict, List, Optional, Tuple
-
+from typing import Any, Dict, List, Optional
 
 # ---------------------------------------------------------------------------
 # HTML Stripping

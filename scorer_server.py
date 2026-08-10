@@ -20,11 +20,11 @@ Usage:
     python scorer_server.py [--port 8100] [--host 0.0.0.0] [--require-auth] [--cors-origins "*"]
 """
 
-import time
 import argparse
+import hashlib
 import os
 import sys
-import hashlib
+import time
 
 # Load .env file from project root (simple loader, no python-dotenv required)
 _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
@@ -35,23 +35,22 @@ if os.path.isfile(_env_path):
             if _line and not _line.startswith("#") and "=" in _line:
                 _k, _, _v = _line.partition("=")
                 os.environ[_k.strip()] = _v.strip()
+import asyncio
 import base64
-import tempfile
 import json
 import statistics
+import tempfile
 import threading
 import uuid
-from contextlib import contextmanager
-from pathlib import Path
-from typing import Optional, List, Dict, Any
 from collections import defaultdict
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-import asyncio
-
-from fastapi import FastAPI, HTTPException, Request, Depends, BackgroundTasks
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from legacy_rewrite_guard import native_resume_team_required_response
@@ -77,35 +76,56 @@ print(f"Models loaded in {_elapsed:.1f}s")
 # instead of talking to the model or the four-role pipeline directly, so
 # every draft they can ever return is produced (and audited/recorded) by the
 # exact same code path Task 8's tests already cover. ───
-import agent.tools as agent_tools
-
 # ─── Async run bookkeeping for POST /agent/tailor + /agent/cover-letter
 # (Task 10; see agent/runner.py's own module docstring). Imports cleanly
 # without cloud/ present, same as agent.tools above. ───
 import agent.runner as agent_runner
+import agent.tools as agent_tools
 
 # ─── Cloud modules (graceful import — works locally without cloud deps) ───
 try:
-    from cloud.config import settings as cloud_settings
     from cloud.auth import (
-        create_user, authenticate_user, get_user_by_id,
-        create_api_key as create_user_api_key, validate_api_key as validate_user_api_key,
-        log_usage, check_usage_allowed, get_usage_stats,
-        create_jwt_token, decode_jwt_token, update_user_tier,
-        get_or_create_anonymous_user, get_user_by_stripe_customer_id,
-        save_resume as _save_resume_db,
-        get_resume as _get_resume_db,
+        authenticate_user,
+        check_usage_allowed,
+        create_jwt_token,
+        create_password_reset_token,
+        create_user,
+        decode_jwt_token,
+        get_or_create_anonymous_user,
+        get_usage_stats,
+        get_user_by_id,
+        get_user_by_stripe_customer_id,
+        log_usage,
+        reset_password_with_token,
+        update_user_tier,
+    )
+    from cloud.auth import (
+        create_api_key as create_user_api_key,
+    )
+    from cloud.auth import (
         delete_resume as _delete_resume_db,
-        create_password_reset_token, reset_password_with_token,
     )
-    from cloud.emailer import send_password_reset_email
+    from cloud.auth import (
+        get_resume as _get_resume_db,
+    )
+    from cloud.auth import (
+        save_resume as _save_resume_db,
+    )
+    from cloud.auth import (
+        validate_api_key as validate_user_api_key,
+    )
     from cloud.billing import (
-        is_billing_configured, create_checkout_session,
-        handle_webhook_event, create_portal_session,
+        create_checkout_session,
+        create_portal_session,
         get_subscription_status,
+        handle_webhook_event,
+        is_billing_configured,
     )
-    from cloud.db import get_conn as db_get_conn, run_migrations, scoped
-    from cloud.quotas import QuotaExceeded, check_quota
+    from cloud.config import settings as cloud_settings
+    from cloud.db import get_conn as db_get_conn
+    from cloud.db import run_migrations, scoped
+    from cloud.emailer import send_password_reset_email
+    from cloud.quotas import QuotaExceeded, check_quota  # noqa: F401 — availability probe
     CLOUD_AVAILABLE = True
 except ImportError:
     CLOUD_AVAILABLE = False
@@ -882,7 +902,7 @@ def generate_ats_explanation(resume_text: str, jd_text: str, ats_result: Dict) -
 
     if current_score < 60:
         explanation["quick_wins"].append(
-            f"Add top 5 missing keywords to Core Competencies section (estimated +8-12% ATS score)"
+            "Add top 5 missing keywords to Core Competencies section (estimated +8-12% ATS score)"
         )
     if current_score < 75:
         explanation["quick_wins"].append(
@@ -989,7 +1009,7 @@ def generate_hr_explanation(hr_result: Dict) -> Dict:
         explanation["strengths_to_emphasize"].append({
             "factor": label,
             "current_score": score,
-            "advice": f"Highlight this strength prominently — it's your competitive advantage",
+            "advice": "Highlight this strength prominently — it's your competitive advantage",
         })
 
     # Risk mitigations from penalties
@@ -1872,7 +1892,7 @@ def score_llm(req: ScoreRequest, api_key: str = Depends(verify_api_key_with_usag
     worker threadpool instead.
     """
     try:
-        from llm_scorer import score_with_llm, ANTHROPIC_AVAILABLE
+        from llm_scorer import ANTHROPIC_AVAILABLE, score_with_llm
     except ImportError:
         raise HTTPException(status_code=500, detail="llm_scorer module not found")
 
@@ -1915,7 +1935,7 @@ async def score_combined(req: ScoreRequest, request: Request, api_key: str = Dep
 
     def _run_llm(rules_ats: float, rules_hr: float) -> dict:
         try:
-            from llm_scorer import score_with_llm, combine_scores, ANTHROPIC_AVAILABLE
+            from llm_scorer import ANTHROPIC_AVAILABLE, combine_scores, score_with_llm
             if ANTHROPIC_AVAILABLE:
                 llm_r = score_with_llm(resume_text, jd_text, domain_hint=domain_hint)
                 c_ats, c_hr, blend = combine_scores(rules_ats, rules_hr, llm_r)
@@ -3161,7 +3181,7 @@ if __name__ == "__main__":
     )
 
     print(f"\n{'='*60}")
-    print(f"  Resume Scorer API v3.0")
+    print("  Resume Scorer API v3.0")
     print(f"{'='*60}")
     print(f"  Server:  http://{args.host}:{args.port}")
     print(f"  Auth:    {'Required (JWT + API Key)' if _config['require_auth'] else 'Disabled'}")
@@ -3169,32 +3189,32 @@ if __name__ == "__main__":
     print(f"  Billing: {'Configured' if CLOUD_AVAILABLE and is_billing_configured() else 'Not configured'}")
     print(f"  CORS:    {args.cors_origins}")
     print(f"  Rate:    {args.rate_limit}/min per key")
-    print(f"\n  Scoring Endpoints:")
-    print(f"  GET  /health         — Server status and model info")
-    print(f"  POST /score/ats      — ATS score")
-    print(f"  POST /score/hr       — HR score")
-    print(f"  POST /score/both     — Combined ATS + HR score")
-    print(f"  POST /score/llm      — LLM-augmented score (Claude)")
-    print(f"  POST /score/combined — Blended ATS + HR + LLM score")
-    print(f"  POST /score/batch    — Batch scoring")
-    print(f"  POST /explain        — Score explanation")
-    print(f"  POST /cover-letter   — Cover letter generation (Pro/Ultra)")
-    print(f"  POST /jobs/discover  — Job discovery + scoring")
-    print(f"\n  Async Agent Endpoints:")
-    print(f"  POST /agent/tailor        — Enqueue a tailored-resume run (Pro/Ultra)")
-    print(f"  POST /agent/cover-letter  — Enqueue a cover-letter run (Pro/Ultra)")
-    print(f"  GET  /agent/runs/{{run_id}} — Poll an async agent run")
-    print(f"\n  Auth & Billing Endpoints:")
-    print(f"  POST /auth/register  — Create account")
-    print(f"  POST /auth/login     — Login (returns JWT)")
-    print(f"  POST /auth/api-key   — Generate API key")
-    print(f"  GET  /auth/usage     — Usage stats")
-    print(f"  POST /billing/checkout — Upgrade to Pro (Stripe)")
-    print(f"  POST /billing/webhook  — Stripe webhooks")
-    print(f"  POST /billing/portal   — Manage subscription")
-    print(f"\n  Admin Endpoints:")
-    print(f"  POST /admin/create-key — Legacy key generation")
-    print(f"  GET  /admin/stats      — Server statistics")
+    print("\n  Scoring Endpoints:")
+    print("  GET  /health         — Server status and model info")
+    print("  POST /score/ats      — ATS score")
+    print("  POST /score/hr       — HR score")
+    print("  POST /score/both     — Combined ATS + HR score")
+    print("  POST /score/llm      — LLM-augmented score (Claude)")
+    print("  POST /score/combined — Blended ATS + HR + LLM score")
+    print("  POST /score/batch    — Batch scoring")
+    print("  POST /explain        — Score explanation")
+    print("  POST /cover-letter   — Cover letter generation (Pro/Ultra)")
+    print("  POST /jobs/discover  — Job discovery + scoring")
+    print("\n  Async Agent Endpoints:")
+    print("  POST /agent/tailor        — Enqueue a tailored-resume run (Pro/Ultra)")
+    print("  POST /agent/cover-letter  — Enqueue a cover-letter run (Pro/Ultra)")
+    print("  GET  /agent/runs/{run_id} — Poll an async agent run")
+    print("\n  Auth & Billing Endpoints:")
+    print("  POST /auth/register  — Create account")
+    print("  POST /auth/login     — Login (returns JWT)")
+    print("  POST /auth/api-key   — Generate API key")
+    print("  GET  /auth/usage     — Usage stats")
+    print("  POST /billing/checkout — Upgrade to Pro (Stripe)")
+    print("  POST /billing/webhook  — Stripe webhooks")
+    print("  POST /billing/portal   — Manage subscription")
+    print("\n  Admin Endpoints:")
+    print("  POST /admin/create-key — Legacy key generation")
+    print("  GET  /admin/stats      — Server statistics")
     print(f"{'='*60}\n")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")

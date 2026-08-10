@@ -27,9 +27,9 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from human_voice_audit import audit_text as _trusted_human_voice_audit
-from evidence_audit import audit_text as _trusted_evidence_audit
 from candidate_fit_preflight import assess_candidate_fit as _trusted_candidate_fit_assessment
+from evidence_audit import audit_text as _trusted_evidence_audit
+from human_voice_audit import audit_text as _trusted_human_voice_audit
 from resume_integrity_audit import audit_resume_text as _trusted_resume_integrity_audit
 
 try:
@@ -43,7 +43,6 @@ except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
 from multi_agent_team import (
-    AgentInvocationFailure,
     AUTHORIZATION_VERSION,
     FINAL_RECEIPT_VERSION,
     PROTOCOL_VERSION,
@@ -54,14 +53,14 @@ from multi_agent_team import (
     RUN_CLAIM_VERSION,
     SOURCE_ATTESTATION_VERSION,
     VOTE_VERSION,
+    AgentInvocationFailure,
     build_handoff,
     canonical_digest,
     normalize_native_payload,
     run_team,
-    validate_recomputed_candidate_fit_report,
     validate_handoff,
+    validate_recomputed_candidate_fit_report,
 )
-
 
 HOST_CHECK_VERSION = "resume-team-host-check/v1"
 MAX_CAPTURE_BYTES = 8 * 1024 * 1024

@@ -32,10 +32,11 @@ from candidate_fit_preflight import (
     CANDIDATE_FIT_SCHEMA_VERSION,
     CANDIDATE_FIT_SCORER_VERSION,
     CANDIDATE_FIT_THRESHOLD,
+)
+from candidate_fit_preflight import (
     assess_candidate_fit as _deterministic_candidate_fit_assessment,
 )
 from claim_provenance_audit import claim_supported_by_source
-
 
 PROTOCOL_VERSION = "resume-team/v2"
 CONTEXT_VERSION = "resume-team-context/v1"

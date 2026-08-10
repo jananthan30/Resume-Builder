@@ -14,14 +14,10 @@ Usage:
 """
 
 import base64
-import io
 import json
 import os
-import re
 import urllib.request
 from pathlib import Path
-from typing import Optional
-
 
 # ---------------------------------------------------------------------------
 # DOCX Extraction

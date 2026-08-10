@@ -58,7 +58,12 @@ mcp = FastMCP(
 # ─── Cloud client (optional — falls back to local) ────────────────────────
 
 try:
-    from cloud.client import cloud_score, cloud_health, cloud_get_resume, cloud_save_resume
+    from cloud.client import (  # noqa: F401 — availability probe
+        cloud_get_resume,
+        cloud_health,
+        cloud_save_resume,
+        cloud_score,
+    )
     CLOUD_AVAILABLE = True
 except ImportError:
     CLOUD_AVAILABLE = False
@@ -102,7 +107,7 @@ def _local_available() -> bool:
     """Check if local scoring deps are installed."""
     try:
         import ats_scorer  # noqa: F401
-        import hr_scorer   # noqa: F401
+        import hr_scorer  # noqa: F401
         return True
     except ImportError:
         return False
@@ -275,7 +280,8 @@ def score_with_llm(resume_text: str, jd_text: str, domain_hint: str = "") -> dic
         and a human-readable explanation.
     """
     try:
-        from llm_scorer import score_with_llm as _score_llm, ANTHROPIC_AVAILABLE
+        from llm_scorer import ANTHROPIC_AVAILABLE
+        from llm_scorer import score_with_llm as _score_llm
         if not ANTHROPIC_AVAILABLE:
             return {"error": "anthropic package not installed. Run: pip install anthropic"}
         if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -322,7 +328,7 @@ def explain_score(resume_text: str, jd_text: str) -> dict:
     """
     cloud_result = _try_cloud("/explain", resume_text, jd_text)
     if _is_usage_limit(cloud_result):
-        return _usage_limit_response(cloud_result)
+        return {"error": "free_tier_limit_reached", "message": _usage_limit_message(cloud_result)}
     if cloud_result and "explanation" in cloud_result:
         return cloud_result
 
@@ -378,12 +384,13 @@ def generate_cover_letter(
         extra={"company_name": company_name, "job_title": job_title},
     )
     if _is_usage_limit(cloud_result):
-        return _usage_limit_response(cloud_result)
+        return {"error": "free_tier_limit_reached", "message": _usage_limit_message(cloud_result)}
     if cloud_result and "paragraphs" in cloud_result:
         return cloud_result
 
     # Fallback to local
-    from llm_scorer import generate_cover_letter as _gen_cl, ANTHROPIC_AVAILABLE
+    from llm_scorer import ANTHROPIC_AVAILABLE
+    from llm_scorer import generate_cover_letter as _gen_cl
     if not ANTHROPIC_AVAILABLE:
         return {
             "error": "no_api_key",
@@ -431,7 +438,7 @@ def discover_jobs(
         },
     )
     if _is_usage_limit(cloud_result):
-        return _usage_limit_response(cloud_result)
+        return {"error": "free_tier_limit_reached", "message": _usage_limit_message(cloud_result)}
     if cloud_result and "jobs" in cloud_result:
         return cloud_result
 
@@ -543,7 +550,7 @@ def extract_text(file_path: str) -> dict:
                 text = f.read()
         else:
             return {"error": f"Unsupported format: {ext}. Use .pdf, .docx, .md, or .txt"}
-    except ImportError as e:
+    except ImportError:
         pkg = "pdfplumber" if ext == ".pdf" else "python-docx"
         return {"error": f"Missing dependency for {ext} files. Run: pip install {pkg}"}
     except Exception as e:

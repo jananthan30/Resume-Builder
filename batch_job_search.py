@@ -5,10 +5,9 @@ Usage:
     python batch_job_search.py [--location "New York"] [--top 10]
 """
 
-import sys
 import io
 import os
-import re
+import sys
 from datetime import datetime
 from typing import Any, Dict, List
 
@@ -17,6 +16,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='repla
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 
@@ -33,8 +33,11 @@ def batch_search_and_score(
     Returns top_n jobs sorted by combined score (Job Fit 40% + ATS 30% + HR 30%).
     """
     from job_discovery import (
-        search_jsearch, search_adzuna, strip_html,
-        _title_similarity, _jsearch_configured, _adzuna_configured,
+        _adzuna_configured,
+        _jsearch_configured,
+        _title_similarity,
+        search_adzuna,
+        search_jsearch,
     )
 
     # --- Step 1: Search all queries ---
@@ -182,7 +185,7 @@ def batch_search_and_score(
 def save_to_excel(jobs: List[Dict[str, Any]], output_path: str):
     """Save scored jobs to Excel with formatting."""
     import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
 
     wb = openpyxl.Workbook()
@@ -338,7 +341,7 @@ def main():
     output_path = args.output or f"Job_Search_Results_{today}.xlsx"
 
     print(f"\n{'='*70}")
-    print(f"  BATCH JOB SEARCH — Triple Scorer (Job Fit + ATS + HR)")
+    print("  BATCH JOB SEARCH — Triple Scorer (Job Fit + ATS + HR)")
     print(f"{'='*70}")
     print(f"  Location: {args.location}")
     print(f"  Queries:  {len(queries)}")
@@ -389,7 +392,7 @@ def main():
             f"{j['company'][:19]:<20}"
         )
     print(f"\n  File: {output_path}")
-    print(f"  Next: Open Excel, pick jobs to apply to, then run /resume for each")
+    print("  Next: Open Excel, pick jobs to apply to, then run /resume for each")
     print(f"{'='*70}")
 
 

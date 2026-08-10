@@ -1,14 +1,15 @@
 """Quick local test of job discovery with master resume."""
-import os, sys
 from dotenv import load_dotenv
+
 load_dotenv(override=True)
 
 import json
+
 _cfg = json.load(open('config.json'))
 with open(_cfg.get('master_resume_path', 'master_resume.md'), encoding='utf-8') as f:
     resume_text = f.read()
 
-from job_discovery import discover_jobs, _detect_text_domain
+from job_discovery import _detect_text_domain, discover_jobs
 
 # --- Check heuristic domain detection ---
 detected = _detect_text_domain(resume_text[:2000])

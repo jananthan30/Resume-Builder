@@ -20,25 +20,23 @@ CLI:
     python job_fit_scorer.py --check resume.md jd.txt --json
 """
 
-import re
-import json
 import argparse
 import hashlib
-from pathlib import Path
-from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Tuple, Optional, Any
+import json
+import re
+from dataclasses import asdict, dataclass, field
 from datetime import date
+from typing import Any, Dict, List, Optional, Tuple
+
+from ats_scorer import (
+    SBERT_AVAILABLE,
+    detect_domain,
+    embed_with_cache,
+    extract_jd_keywords,
+)
 
 # Reuse existing infrastructure
-from hr_scorer import (
-    parse_resume, parse_job_description,
-    CandidateProfile, JobRequirements, JobEntry
-)
-from ats_scorer import (
-    detect_domain, extract_jd_keywords, check_job_title_match,
-    embed_with_cache, SBERT_AVAILABLE, SYNONYM_MAP,
-    is_valid_skill, extract_keywords
-)
+from hr_scorer import CandidateProfile, JobEntry, parse_resume
 
 try:
     from ats_scorer import sbert_util
@@ -2725,7 +2723,7 @@ def format_report(result: JobFitResult) -> str:
         lines.append(f'  Seniority Match:      {dims.seniority_match:5.1f}/100 (5%)')
 
     # Estimated ranges
-    lines.append(f'\n  ESTIMATED SCORES (if tailored):')
+    lines.append('\n  ESTIMATED SCORES (if tailored):')
     lines.append(f'  ATS: {result.estimated_ats_range[0]:.0f}% - {result.estimated_ats_range[1]:.0f}%')
     lines.append(f'  HR:  {result.estimated_hr_range[0]:.0f}% - {result.estimated_hr_range[1]:.0f}%')
 

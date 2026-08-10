@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 NATIVE_RESUME_TEAM_REQUIRED = "NATIVE_RESUME_TEAM_REQUIRED"
 NATIVE_RESUME_TEAM_REQUIRED_MESSAGE = (
     "Direct resume rewriting is disabled. Use `python native_resume_team.py "

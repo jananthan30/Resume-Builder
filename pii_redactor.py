@@ -16,7 +16,7 @@ from typing import List, Optional, Set
 
 # Try to import Presidio; fall back to regex-only redaction if unavailable
 try:
-    from presidio_analyzer import AnalyzerEngine, RecognizerResult, Pattern, PatternRecognizer
+    from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer, RecognizerResult
     from presidio_analyzer.nlp_engine import NlpEngineProvider
     from presidio_anonymizer import AnonymizerEngine
     from presidio_anonymizer.entities import OperatorConfig

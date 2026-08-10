@@ -18,7 +18,6 @@ Usage:
 """
 
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -251,7 +250,7 @@ def run_evaluation() -> Dict:
     n_non = len(NON_MATCHING_PAIRS)
     n_partial = len(PARTIAL_MATCHING_PAIRS)
 
-    print(f"Embedding Model Evaluation Benchmark")
+    print("Embedding Model Evaluation Benchmark")
     print(f"{'=' * 60}")
     print(f"Test pairs: {n_match} matching, {n_non} non-matching, {n_partial} partial")
     print(f"Total pairs: {total_pairs}")

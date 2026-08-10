@@ -19,7 +19,6 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Iterable
 
-
 # Calibrated 2026-08-06 against 61 real job descriptions the owner had
 # actually applied to -- a self-selected set, not random postings.
 #

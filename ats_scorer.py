@@ -19,15 +19,16 @@ Enhanced Features (v2.0):
 - Domain auto-detection (§4)
 """
 
-import re
-import os
-import sys
-import json
 import argparse
+import json
 import math
+import os
+import re
+import sys
 from collections import Counter
 from pathlib import Path
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Any, Dict, List, Tuple
+
 import pdfplumber
 
 # NLTK-based lemmatization (replaces spaCy per-word calls)
@@ -42,13 +43,15 @@ except ImportError:
 # Lazy-load sentence-transformers for semantic similarity (§2.2.1)
 # Model loads on first scoring request, NOT at import time (saves 45-90s cold start)
 import threading
+
 _sbert_model = None
 _sbert_lock = threading.Lock()
 _sbert_load_failed = False
 _sbert_load_error = None
 
 try:
-    from sentence_transformers import SentenceTransformer, util as sbert_util
+    from sentence_transformers import SentenceTransformer
+    from sentence_transformers import util as sbert_util
     SBERT_AVAILABLE = True
 except ImportError:
     SBERT_AVAILABLE = False
@@ -77,6 +80,7 @@ def get_sbert_model():
 # EMBEDDING CACHE — Disk-based cache for SBERT embeddings
 # =============================================================================
 import hashlib
+
 import numpy as np
 
 _EMBED_CACHE_DIR = Path(__file__).parent / "embed_cache"
@@ -135,7 +139,12 @@ except ImportError:
 
 # O*NET taxonomy for keyword validation (§ skill filtering)
 try:
-    from taxonomy.onet_loader import is_recognized_skill, get_all_skills, get_skills_for_domain, merge_with_domain_keywords
+    from taxonomy.onet_loader import (
+        get_all_skills,
+        get_skills_for_domain,
+        is_recognized_skill,
+        merge_with_domain_keywords,
+    )
     ONET_AVAILABLE = True
 except ImportError:
     ONET_AVAILABLE = False
@@ -698,8 +707,8 @@ def assess_format_risk(file_path: str) -> Tuple[int, List[str], Dict[str, Any]]:
 
     elif ext == '.docx':
         try:
-            import zipfile
             import xml.etree.ElementTree as ET
+            import zipfile
 
             with zipfile.ZipFile(file_path) as docx:
                 # Read document.xml
@@ -1382,8 +1391,8 @@ def detect_hidden_text(file_path: str) -> Tuple[bool, List[str], Dict[str, Any]]
     # Check for DOCX files
     if file_path.endswith('.docx'):
         try:
-            from zipfile import ZipFile
             import xml.etree.ElementTree as ET
+            from zipfile import ZipFile
 
             with ZipFile(file_path, 'r') as docx:
                 # Read document.xml
@@ -1445,7 +1454,7 @@ def detect_hidden_text(file_path: str) -> Tuple[bool, List[str], Dict[str, Any]]
                 from docx import Document
                 doc = Document(file_path)
                 text = '\n'.join([p.text for p in doc.paragraphs])
-            except:
+            except Exception:
                 text = ""
         else:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -1623,7 +1632,7 @@ def calculate_graph_centrality_score(
     # Calculate PageRank centrality
     try:
         pagerank = nx.pagerank(SKILL_GRAPH, alpha=0.85)
-    except:
+    except Exception:
         pagerank = {n: 1/len(SKILL_GRAPH) for n in SKILL_GRAPH}
 
     # Score based on overlap with centrality weighting
@@ -1909,7 +1918,10 @@ def apply_domain_specific_scoring(
 
 # Try to import fairlearn for bias auditing
 try:
-    from fairlearn.metrics import demographic_parity_difference, equalized_odds_difference
+    from fairlearn.metrics import (  # noqa: F401 — availability probe
+        demographic_parity_difference,
+        equalized_odds_difference,
+    )
     FAIRLEARN_AVAILABLE = True
 except ImportError:
     FAIRLEARN_AVAILABLE = False
@@ -3171,7 +3183,7 @@ def run_web_server(base_resume_path, tailored_resume_path, jd_path, job_title="J
     print("\n" + "="*60)
     print("ATS Resume Scorer")
     print("="*60)
-    print(f"\nComparing:")
+    print("\nComparing:")
     print(f"  Base: {base_resume_path}")
     print(f"  Tailored: {tailored_resume_path}")
     print(f"  JD: {jd_path}")
@@ -3202,7 +3214,7 @@ def main():
         else:
             print(f"\nATS Score: {scores['total_score']}%")
             print(f"Rating: {scores['rating']} - {scores['likelihood']}")
-            print(f"\nBreakdown:")
+            print("\nBreakdown:")
             print(f"  Keyword Match: {scores['keyword_score']}%")
             print(f"  Key Phrases: {scores['phrase_score']}%")
             print(f"  Industry Terms: {scores['weighted_score']}%")
