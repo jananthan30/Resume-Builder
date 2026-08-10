@@ -3060,6 +3060,164 @@ def profile_put(req: ProfileUpdateRequest, auth=Depends(verify_api_key)):
 
 
 # =============================================================================
+# CONNECTIONS — warm-path referrals from the user's own LinkedIn export
+# =============================================================================
+
+_CONNECTIONS_MAX_BYTES = 5_000_000
+_CONNECTIONS_MAX_ROWS = 30_000
+_COMPANY_SUFFIXES = {"inc", "llc", "ltd", "corp", "co", "plc", "gmbh", "company", "corporation"}
+
+
+class ConnectionsUploadRequest(BaseModel):
+    """Raw text of the user's LinkedIn Connections.csv export."""
+    csv_text: str = Field(..., description="Contents of Connections.csv from LinkedIn's data export")
+
+
+def _normalize_company(name: str) -> str:
+    """Lowercase, strip punctuation and legal suffixes: 'Pfizer, Inc.' -> 'pfizer'."""
+    import re as _re
+    words = _re.sub(r"[^a-z0-9 ]", " ", name.lower()).split()
+    while words and words[-1] in _COMPANY_SUFFIXES:
+        words.pop()
+    return " ".join(words)
+
+
+def _parse_linkedin_connections(csv_text: str) -> list[dict]:
+    """Parse Connections.csv, skipping LinkedIn's 'Notes:' preamble.
+
+    The export prepends a free-text notes block; the real data starts at the
+    header row containing First Name/Company. Rows without a name are noise.
+    """
+    import csv as _csv
+    import io as _io
+
+    lines = csv_text.splitlines()
+    header_idx = next(
+        (i for i, line in enumerate(lines)
+         if "First Name" in line and "Company" in line),
+        None,
+    )
+    if header_idx is None:
+        raise HTTPException(
+            status_code=400,
+            detail="That doesn't look like a LinkedIn Connections.csv export — "
+                   "download it from LinkedIn: Settings → Data privacy → Get a copy of your data.",
+        )
+    reader = _csv.DictReader(_io.StringIO("\n".join(lines[header_idx:])))
+    rows = []
+    for row in reader:
+        full_name = f"{(row.get('First Name') or '').strip()} {(row.get('Last Name') or '').strip()}".strip()
+        if not full_name:
+            continue
+        rows.append({
+            "full_name": full_name,
+            "company": (row.get("Company") or "").strip(),
+            "position": (row.get("Position") or "").strip(),
+            "profile_url": (row.get("URL") or "").strip(),
+            "connected_on": (row.get("Connected On") or "").strip(),
+        })
+        if len(rows) >= _CONNECTIONS_MAX_ROWS:
+            break
+    return rows
+
+
+def _require_connections_user(auth) -> int:
+    user_id = _get_user_id(auth)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    if not CLOUD_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Connections unavailable — cloud auth not configured.")
+    return user_id
+
+
+@app.post("/connections/upload")
+def connections_upload(req: ConnectionsUploadRequest, auth=Depends(verify_api_key)):
+    """Replace the caller's stored network with a fresh Connections.csv."""
+    user_id = _require_connections_user(auth)
+    if len(req.csv_text.encode("utf-8", errors="ignore")) > _CONNECTIONS_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="File too large — the Connections.csv export is expected.")
+    rows = _parse_linkedin_connections(req.csv_text)
+    conn = db_get_conn(cloud_settings.DB_PATH)
+    try:
+        s = scoped(conn, user_id)
+        s.q("DELETE FROM connections WHERE user_id = :user_id", {})
+        for r in rows:
+            s.q(
+                """INSERT OR IGNORE INTO connections
+                   (user_id, full_name, company, position, profile_url, connected_on)
+                   VALUES (:user_id, :full_name, :company, :position, :profile_url, :connected_on)""",
+                r,
+            )
+        count = s.q("SELECT COUNT(*) AS n FROM connections WHERE user_id = :user_id", {}).fetchone()["n"]
+        conn.commit()
+    finally:
+        conn.close()
+    return {"imported": count}
+
+
+@app.get("/connections")
+def connections_summary(auth=Depends(verify_api_key)):
+    """How many connections the caller has stored (the profile-card number)."""
+    user_id = _require_connections_user(auth)
+    conn = db_get_conn(cloud_settings.DB_PATH)
+    try:
+        row = scoped(conn, user_id).q(
+            "SELECT COUNT(*) AS n FROM connections WHERE user_id = :user_id", {}
+        ).fetchone()
+    finally:
+        conn.close()
+    return {"count": row["n"]}
+
+
+@app.get("/connections/match")
+def connections_match(company: str, auth=Depends(verify_api_key)):
+    """Connections at a company, matched loosely in both directions.
+
+    'Pfizer' must find 'Pfizer, Inc.' and a job at 'Moderna Therapeutics'
+    must find a connection stored as 'Moderna'. Very short normalized names
+    only match exactly, so 'Co' can't match half the table.
+    """
+    user_id = _require_connections_user(auth)
+    query_norm = _normalize_company(company)
+    if not query_norm:
+        return {"connections": []}
+    conn = db_get_conn(cloud_settings.DB_PATH)
+    try:
+        rows = scoped(conn, user_id).q(
+            "SELECT full_name, company, position, profile_url FROM connections "
+            "WHERE user_id = :user_id AND company != '' ORDER BY full_name",
+            {},
+        ).fetchall()
+    finally:
+        conn.close()
+    matches = []
+    for r in rows:
+        stored_norm = _normalize_company(r["company"])
+        if not stored_norm:
+            continue
+        if min(len(stored_norm), len(query_norm)) < 3:
+            hit = stored_norm == query_norm
+        else:
+            hit = stored_norm in query_norm or query_norm in stored_norm
+        if hit:
+            matches.append({k: r[k] for k in ("full_name", "company", "position", "profile_url")})
+    return {"connections": matches}
+
+
+@app.delete("/connections")
+def connections_delete(auth=Depends(verify_api_key)):
+    """Wipe the caller's stored network entirely."""
+    user_id = _require_connections_user(auth)
+    conn = db_get_conn(cloud_settings.DB_PATH)
+    try:
+        scoped(conn, user_id).q("DELETE FROM connections WHERE user_id = :user_id", {})
+        conn.commit()
+    finally:
+        conn.close()
+    return {"status": "deleted"}
+
+
+# =============================================================================
 # PIPELINE INSIGHTS — deterministic SQL aggregates only, no LLM involved
 # =============================================================================
 
