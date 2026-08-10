@@ -3302,8 +3302,9 @@ if __name__ == "__main__":
 
     # Weekly digest scheduler: Mondays ~13:00 UTC (9am ET). The digest_log
     # table makes runs idempotent per user per ISO week, so restarts and the
-    # half-hour polling loop can never double-send.
-    if CLOUD_AVAILABLE:
+    # half-hour polling loop can never double-send. Gated off by default until
+    # the match-inbox rework lands — enable with DIGEST_SCHEDULER=1.
+    if CLOUD_AVAILABLE and os.getenv("DIGEST_SCHEDULER") == "1":
         import threading
 
         def _digest_scheduler():
