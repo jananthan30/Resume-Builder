@@ -3,13 +3,13 @@
   "description": "Native resume tailoring, auditing, scoring, and document-generation workflows.",
   "owner": {
     "name": "Resume Builder Contributors",
-    "email": ""
+    "email": "support@getresumehq.com"
   },
   "plugins": [
     {
       "name": "resume-builder",
       "source": "./",
-      "description": "AI-powered resume & cover letter generator with dual ATS + HR scoring. Works for any profession — software engineers, marketers, lawyers, finance, healthcare, and more.",
+      "description": "AI-powered resume & cover letter generator with dual ATS + HR scoring. Works for any profession \u2014 software engineers, marketers, lawyers, finance, healthcare, and more.",
       "version": "1.2.0"
     }
   ]
