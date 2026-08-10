@@ -94,6 +94,27 @@ def adzuna_configured() -> bool:
 ADZUNA_BASE = "https://api.adzuna.com/v1/api/jobs"
 
 
+# Adzuna's API is partitioned by country path (/us/, /ca/, /gb/, ...): a
+# US-pinned client silently returns zero results for Toronto or London.
+# Keyword heuristics cover the major English-market cities; ambiguous
+# locations fall back to ADZUNA_COUNTRY (default us).
+_COUNTRY_HINTS = {
+    "ca": ("canada", "toronto", "vancouver", "montreal", "ottawa", "calgary",
+           "edmonton", "mississauga", "winnipeg", ", bc", ", on", ", qc", ", ab"),
+    "gb": ("united kingdom", ", uk", " uk", "england", "scotland", "wales",
+           "london", "manchester", "birmingham", "leeds", "glasgow", "edinburgh"),
+    "au": ("australia", "sydney", "melbourne", "brisbane", "perth", "adelaide", "canberra"),
+}
+
+
+def _country_for_location(location: str) -> str:
+    loc = f" {location.lower().strip()}"
+    for country, hints in _COUNTRY_HINTS.items():
+        if any(h in loc for h in hints):
+            return country
+    return os.getenv("ADZUNA_COUNTRY", "us")
+
+
 def search_adzuna(
     query: str,
     location: str = "",
@@ -773,7 +794,9 @@ def discover_jobs(
 
         # Adzuna (secondary) — independent source, may find different listings
         if has_adzuna:
-            for job in search_adzuna(query, location=location):
+            for job in search_adzuna(
+                query, location=location, country=_country_for_location(location)
+            ):
                 if job["id"] not in seen_ids:
                     seen_ids.add(job["id"])
                     all_jobs.append(job)

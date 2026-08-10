@@ -50,7 +50,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from legacy_rewrite_guard import native_resume_team_required_response
@@ -1756,6 +1756,35 @@ def reset_password(req: ResetPasswordRequest):
     return {"reset": True}
 
 
+@app.get("/digest/unsubscribe")
+def digest_unsubscribe(token: str = ""):
+    """Login-free one-click opt-out from the weekly job digest."""
+    if not CLOUD_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Cloud features not available in local mode.")
+    from cloud.digest import unsubscribe_with_token
+
+    try:
+        unsubscribe_with_token(token)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return HTMLResponse(
+        "<div style='font-family:system-ui;max-width:28rem;margin:4rem auto;text-align:center'>"
+        "<h2>You're unsubscribed</h2><p>No more weekly job digests. You can re-enable "
+        "them anytime from your account at <a href='https://getresumehq.com'>getresumehq.com</a>.</p></div>"
+    )
+
+
+@app.post("/admin/send-digests")
+def admin_send_digests(request: Request, user_id: Optional[int] = None, force: bool = False):
+    """Trigger the weekly digest run (all eligible users, or one for testing)."""
+    _verify_admin_secret(request)
+    if not CLOUD_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Cloud features not available in local mode.")
+    from cloud.digest import send_weekly_digests
+
+    return send_weekly_digests(only_user_id=user_id, force=force)
+
+
 @app.post("/auth/api-key")
 def create_key(req: CreateKeyRequest, auth=Depends(verify_api_key)):
     """Generate a new API key for the authenticated user."""
@@ -3270,5 +3299,28 @@ if __name__ == "__main__":
     print("  POST /admin/create-key — Legacy key generation")
     print("  GET  /admin/stats      — Server statistics")
     print(f"{'='*60}\n")
+
+    # Weekly digest scheduler: Mondays ~13:00 UTC (9am ET). The digest_log
+    # table makes runs idempotent per user per ISO week, so restarts and the
+    # half-hour polling loop can never double-send.
+    if CLOUD_AVAILABLE:
+        import threading
+
+        def _digest_scheduler():
+            import logging as _logging
+            from datetime import datetime, timezone
+
+            from cloud.digest import send_weekly_digests
+
+            while True:
+                now = datetime.now(timezone.utc)
+                if now.weekday() == 0 and 13 <= now.hour < 15:
+                    try:
+                        send_weekly_digests()
+                    except Exception:
+                        _logging.getLogger("scorer.digest").exception("scheduled digest run failed")
+                time.sleep(1800)
+
+        threading.Thread(target=_digest_scheduler, daemon=True, name="digest-scheduler").start()
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
