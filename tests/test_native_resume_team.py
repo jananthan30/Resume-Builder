@@ -1449,7 +1449,11 @@ def test_native_candidate_fit_unavailable_or_malformed_fails_before_artifacts(
     assert not output.exists()
 
 
-def test_codex_preflight_is_non_model_and_reports_unknown_effective_model():
+def test_codex_preflight_is_non_model_and_reports_unknown_effective_model(tmp_path):
+    # Hermetic config: the repo's real config.json is operator-local and
+    # gitignored, so CI checkouts don't have it — pointing at it made this
+    # test pass only on the maintainer's machine.
+    config, _snapshot = _master_fixture(tmp_path)
     commands = []
 
     def runner(command, *, input_text, timeout, cwd, env):
@@ -1476,7 +1480,7 @@ def test_codex_preflight_is_non_model_and_reports_unknown_effective_model():
     report = check_host(
         host="codex",
         project_root=ROOT,
-        config_path=ROOT / "config.json",
+        config_path=config,
         cli_path=sys.executable,
         runner=runner,
     )
