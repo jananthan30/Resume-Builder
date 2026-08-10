@@ -149,3 +149,10 @@ htmlcov/
 # Product specs / plans (business docs — never public)
 # ========================
 docs/superpowers/
+
+# Local dev-server config (absolute paths, machine-specific)
+.claude/launch.json
+
+# Strategy reports (business docs — never public)
+STRATEGY.md
+assets/strategy-card.svg
