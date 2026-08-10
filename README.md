@@ -28,6 +28,7 @@ Most resume tools only score the resume you bring to them. ResumeHQ goes further
 | Application tracker | ❌ | ❌ | ✅ | ✅ |
 | Works in Claude Code / claude.ai / Codex | ❌ | ❌ | ❌ | ✅ |
 | Open source | ❌ | ❌ | ❌ | ✅ |
+| [Publishes its scoring benchmarks](BENCHMARKS.md) — including the bugs | ❌ | ❌ | ❌ | ✅ |
 
 ---
 
