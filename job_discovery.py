@@ -13,6 +13,7 @@ Two-tier scoring:
 """
 
 import json
+import logging
 import os
 import re
 import urllib.error
@@ -261,7 +262,11 @@ def _normalize_remotive_result(raw: dict) -> Dict[str, Any]:
 # JSearch API (Google for Jobs aggregator — LinkedIn, Indeed, Glassdoor, etc.)
 # ---------------------------------------------------------------------------
 
-JSEARCH_BASE = "https://jsearch.p.rapidapi.com/search"
+logger = logging.getLogger("scorer.jobs")
+
+# /search was retired by the provider (404s since the OpenWeb Ninja
+# migration); /search-v2 wraps results as {"data": {"cursor", "jobs"}}.
+JSEARCH_BASE = "https://jsearch.p.rapidapi.com/search-v2"
 
 
 def jsearch_configured() -> bool:
@@ -302,16 +307,24 @@ def search_jsearch(
             "Accept": "application/json",
             "x-rapidapi-host": "jsearch.p.rapidapi.com",
             "x-rapidapi-key": api_key,
+            # Cloudflare-fronted APIs 403 urllib's default UA from datacenter
+            # IPs (see cloud/emailer.py for the Resend incident).
+            "User-Agent": "resumehq/1.2 (+https://getresumehq.com)",
         })
         with urllib.request.urlopen(req, timeout=20) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-    except Exception:
+    except Exception as e:
+        # Sourcing degradation must be visible in logs, not silent — the
+        # /search endpoint retirement went unnoticed because this swallowed it.
+        logger.warning("jsearch search failed: %s", e)
         return []
 
     if data.get("status") != "OK":
+        logger.warning("jsearch non-OK status: %s", data.get("status"))
         return []
 
-    results = data.get("data", [])
+    payload = data.get("data") or []
+    results = payload.get("jobs", []) if isinstance(payload, dict) else payload
     return [_normalize_jsearch_result(r) for r in results]
 
 
