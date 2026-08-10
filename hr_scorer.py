@@ -1077,6 +1077,34 @@ def parse_resume(text: str) -> CandidateProfile:
     return profile
 
 
+def _atomize_requirement(line: str) -> List[str]:
+    """Split one requirement bullet into atomic skill candidates.
+
+    JD bullets routinely pack several skills into a single line ("Protocol
+    compliance, GCP, ICH") or bury them inside sentences. Kept whole, the
+    literal line never word-boundary-matches a resume, so the skills factor
+    collapses to zero on fragment-style JDs and long sentence bullets get
+    silently filtered into a free-pass score. Atoms = known skill keywords
+    found anywhere in the line, plus delimiter-split fragments that survive
+    the junk filter.
+    """
+    atoms: List[str] = []
+    for kw_hit in extract_skills_from_text(line):
+        atoms.append(kw_hit)
+    for frag in re.split(r',|;|/|\band\b|\bor\b', line):
+        frag = frag.strip().strip('.').strip()
+        if _filter_skill_candidate(frag):
+            atoms.append(frag)
+    seen: set = set()
+    out: List[str] = []
+    for a in atoms:
+        k = a.lower().strip()
+        if k and k not in seen:
+            seen.add(k)
+            out.append(a)
+    return out
+
+
 def parse_job_description(text: str) -> JobRequirements:
     """Parse job description into structured requirements"""
     requirements = JobRequirements(raw_text=text)
@@ -1116,7 +1144,7 @@ def parse_job_description(text: str) -> JobRequirements:
 
         if skill_section and line.strip().startswith(('•', '-', '*')):
             skill = re.sub(r'^[•\-*]\s*', '', line.strip())
-            requirements.required_skills.append(skill)
+            requirements.required_skills.extend(_atomize_requirement(skill))
 
     # Extract industry keywords (common terms in the JD)
     words = re.findall(r'\b[a-zA-Z]{4,}\b', text.lower())
@@ -1211,7 +1239,11 @@ def score_skills_contextual(
     matched_skills: list[str] = []
     missing_skills: list[str] = []
     total_weighted_score = 0.0
-    max_possible_score = len(required_skills) * 3.0  # Max weight per skill
+    # Full credit is "every required skill demonstrated in action" (2.0);
+    # the 3.0 main-skill weight is a bonus above that, capped at 100 below.
+    # Grading against 3.0 meant a resume matching every skill in real bullets
+    # could never clear 67 — a calibration bug, not a signal.
+    max_possible_score = len(required_skills) * 2.0
 
     skills_text = ' '.join(candidate_skills).lower()
     bullets_text = ' '.join(candidate_bullets).lower()
