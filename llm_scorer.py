@@ -10,8 +10,8 @@ Usage:
     # Returns: {"ats_score": float, "hr_score": float, "dimensions": {...}, "explanation": str}
 """
 
-import os
 import json
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 # Try to import Anthropic SDK
