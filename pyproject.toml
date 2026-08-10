@@ -1,20 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "ai-resume-tuner"
+name = "resumehq"
 version = "1.2.0"
-description = "Score, analyze, and optimize resumes against job descriptions using dual ATS + HR scoring with optional LLM-augmented analysis."
+description = "Score resumes against job descriptions two ways — ATS parse simulation and recruiter-read simulation — with an open, auditable engine. Ships an MCP server for Claude and other AI assistants."
+readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-authors = [{name = "Resume Builder Contributors"}]
+authors = [{name = "ResumeHQ Contributors"}]
 keywords = ["resume", "ats", "hr", "scoring", "mcp", "claude", "job-search", "career"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: End Users/Desktop",
     "Topic :: Office/Business",
 ]
+dependencies = [
+    "pdfplumber>=0.10.0",
+    "python-docx>=1.1.0",
+    "sentence-transformers>=2.2.0",
+    "nltk>=3.8.0",
+    "textstat>=0.7.0",
+    "networkx>=3.0",
+    "rank-bm25>=0.2.2",
+    "numpy>=1.24.0",
+    "fastmcp>=3.0.0",
+]
 
 [project.urls]
 Homepage = "https://getresumehq.com"
-Repository = "https://github.com/jananthan30/resume-scorer-web"
+Repository = "https://github.com/jananthan30/Resume-Builder"
+Changelog = "https://github.com/jananthan30/Resume-Builder/blob/master/CHANGELOG.md"
+
+[project.scripts]
+resumehq-mcp = "mcp_scorer:main"
+
+[tool.setuptools]
+py-modules = ["ats_scorer", "hr_scorer", "mcp_scorer", "text_extractor", "legacy_rewrite_guard"]
+packages = ["cloud"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

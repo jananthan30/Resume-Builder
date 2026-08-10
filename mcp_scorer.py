@@ -582,5 +582,10 @@ def _overall_assessment(ats_score: float, hr_score: float) -> str:
         return "NEEDS WORK: Significant gaps in keyword matching and recruiter appeal. Major revision recommended."
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Console entry point (`resumehq-mcp`): serve the MCP scorer over stdio."""
     mcp.run()
+
+
+if __name__ == "__main__":
+    main()
