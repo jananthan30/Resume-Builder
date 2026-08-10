@@ -322,6 +322,17 @@ Each resume command follows a gated workflow:
 
 ---
 
+## Alternative: pip install
+
+The scoring engine and MCP server are on PyPI:
+
+```bash
+pip install resumehq
+
+# Serve the scorer to Claude/any MCP client over stdio:
+resumehq-mcp
+```
+
 ## Alternative: Clone & Run Locally
 
 If you prefer not to use the plugin system:
