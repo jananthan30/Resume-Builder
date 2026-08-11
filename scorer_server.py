@@ -2317,6 +2317,23 @@ def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
                         "saved resume if it's missing relevant work."
                     )
                     raise HTTPException(status_code=409, detail=" ".join(parts))
+                # The pipeline anchors every requirement to the posting text;
+                # a description it cannot anchor against (heavily truncated
+                # or oddly formatted board scrapes) is a property of the
+                # input, not a transient outage — "try again in a few
+                # minutes" would be a lie the user disproves in a few
+                # minutes.
+                if terminal == "FAILED:AGENT_PAYLOAD_SCHEMA":
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            "This job description's formatting couldn't be "
+                            "processed reliably, so tailoring stopped rather "
+                            "than guess. Open the original posting, copy the "
+                            "full job description, and paste it in — that "
+                            "almost always fixes it."
+                        ),
+                    )
                 raise HTTPException(status_code=502, detail=_TAILOR_UNAVAILABLE_DETAIL)
 
             draft_text = result["draft"]

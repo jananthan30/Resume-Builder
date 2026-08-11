@@ -817,6 +817,48 @@ def _flatten_list_markers(jd_text: str) -> str:
     return "\n".join(flattened)
 
 
+# A sentence boundary strong enough to split on: terminal punctuation
+# followed by whitespace and a capital/numeral start.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?;])\s+(?=[A-Z0-9(\"'])")
+_PROSE_LINE_MIN_CHARS = 200
+
+
+def _split_prose_lines(jd_text: str) -> str:
+    """Break paragraph-blob job descriptions into one sentence per line.
+
+    Job-board scrapes (the descriptions stored on overnight matches) arrive
+    as long prose paragraphs. The pipeline's evidence contract anchors each
+    requirement to ONE COMPLETE line of the source, verified byte-for-byte —
+    a requirement buried mid-paragraph therefore cannot be anchored at all,
+    and every such run dies as FAILED:AGENT_PAYLOAD_SCHEMA ("evidence must
+    use one complete JD line") no matter which model runs the Researcher.
+    Observed live on 2026-08-11 across consecutive runs on two models.
+
+    Same philosophy as _flatten_list_markers above: normalize the source
+    once instead of asking a model to work around it. Only long lines with a
+    real sentence boundary are split; wording and order are untouched, so
+    the requirements a user reads are unchanged. If splitting would create
+    duplicate lines, the text is returned unchanged — the anchor-uniqueness
+    rule matters more, and it fails closed either way.
+    """
+    out: list = []
+    changed = False
+    for line in jd_text.split("\n"):
+        if len(line) >= _PROSE_LINE_MIN_CHARS:
+            parts = [p.strip() for p in _SENTENCE_SPLIT_RE.split(line) if p.strip()]
+            if len(parts) > 1:
+                out.extend(parts)
+                changed = True
+                continue
+        out.append(line)
+    if not changed:
+        return jd_text
+    significant = [line.strip() for line in out if line.strip()]
+    if len(significant) != len(set(significant)):
+        return jd_text
+    return "\n".join(out)
+
+
 def run_resume_team(
     ctx: ToolContext,
     jd_text: str,
@@ -860,7 +902,7 @@ def run_resume_team(
     # was never runnable cannot consume the caller's allowance.
     if not isinstance(jd_text, str) or not jd_text.strip():
         raise ValueError("jd_text must be a non-empty string")
-    jd_text = _flatten_list_markers(jd_text)
+    jd_text = _split_prose_lines(_flatten_list_markers(jd_text))
 
     if isinstance(resume_text, str) and resume_text.strip():
         master_resume = resume_text
@@ -1004,7 +1046,7 @@ def run_cover_letter(
     # Validate and load before claiming a slot (mirrors run_resume_team).
     if not isinstance(jd_text, str) or not jd_text.strip():
         raise ValueError("jd_text must be a non-empty string")
-    jd_text = _flatten_list_markers(jd_text)
+    jd_text = _split_prose_lines(_flatten_list_markers(jd_text))
 
     if isinstance(resume_text, str) and resume_text.strip():
         source_resume_text = resume_text
