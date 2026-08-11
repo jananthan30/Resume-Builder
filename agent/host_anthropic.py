@@ -85,17 +85,21 @@ __all__ = [
 # run fcc6dfaa failed both its first attempt and its repair on identical
 # input. That is a capability gap, and a retry only papers over it.
 #
-# The Researcher extracts and quotes lines from a job description and has been
-# reliable on Haiku since it was given a real contract. The Auditor reproduces
-# a draft verbatim and reports what it finds -- exacting but far narrower than
-# writing. Sonnet 5 is the current Sonnet and no more expensive than the 4.6 it
-# replaces.
+# The Researcher extracts and quotes lines from a job description under the
+# strictest formatting contract in the pipeline (hard-then-soft strings must
+# equal the anchored evidence strings byte-for-byte, one-for-one, in order).
+# It ran on Haiku until 2026-08-11, when a production JD produced
+# FAILED:AGENT_PAYLOAD_SCHEMA twice in a row ("rubric is not evidence-bound",
+# initial + repair) — the same paraphrase-under-pressure failure class that
+# moved the Writer off Sonnet 4.6. Sonnet 5 costs roughly two cents more per
+# run and closes it. The Auditor reproduces a draft verbatim and reports what
+# it finds -- exacting but far narrower than writing.
 #
-# Cost: about $0.17 -> $0.20 per run at measured token volumes, against $12/mo
-# for ten Pro runs. Roughly 83% margin instead of 86% -- worth paying for a
-# feature that otherwise fails intermittently.
+# Cost: about $0.20 -> $0.22 per run at measured token volumes, against
+# $12/mo for ten Pro runs. Roughly 82% margin -- worth paying for a feature
+# that otherwise fails intermittently.
 DEFAULT_MODEL_MAP: dict[str, str] = {
-    "researcher": "claude-haiku-4-5",
+    "researcher": "claude-sonnet-5",
     "writer": "claude-opus-5",
     "auditor": "claude-sonnet-5",
     "editor": "claude-opus-5",
