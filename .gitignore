@@ -41,6 +41,7 @@ build/
 # ========================
 # IDE / Editor
 # ========================
+.worktrees/
 .vscode/
 .idea/
 *.swp
