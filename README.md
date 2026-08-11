@@ -133,7 +133,7 @@ Or find jobs first:
 | Command | What It Does |
 |---------|-------------|
 | `/resume-builder:setup` | One-time setup wizard (installs Python deps, creates config, links Pro account) |
-| `/resume-builder:job-fit [JD]` | Deterministic master-vs-JD gate (>=70 and zero hard knockouts) before tailoring |
+| `/resume-builder:job-fit [JD]` | Deterministic master-vs-JD gate (fit bar, default 50, and zero hard knockouts) before tailoring |
 | `/resume-builder:resume [JD]` | Full application: tailored resume + cover letter + scoring + DOCX + tracking |
 | `/resume-builder:tailor-resume [JD]` | Resume only (no cover letter) |
 | `/resume-builder:cover-letter [JD]` | Cover letter only |
@@ -194,7 +194,7 @@ The `/find-jobs` command and `discover_jobs` MCP tool search live job boards and
 ```
 
 **How it works:**
-1. Searches Adzuna (16 countries, salary data) + Remotive (remote jobs)
+1. Searches Adzuna (16 countries, salary data) + Remotive (remote jobs) + JSearch (aggregated boards incl. niche career centers; optional RapidAPI key)
 2. Pre-filters top 20 results by title relevance
 3. Lightweight scores all 20 candidates (keyword + phrase + BM25 — fast)
 4. Full ATS + HR scores top 10 finalists
@@ -260,9 +260,9 @@ Claude-powered rubric evaluation that catches nuances the algorithmic scorers mi
 
 | Tier | Price | What You Get |
 |------|-------|-------------|
-| **Free** | $0 | 5 cloud scores, then automatic local scoring fallback |
-| **Pro** | $12/mo | Unlimited cloud scoring — ideal for Claude Code / claude.ai users |
-| **Ultra** | $29/mo | Unlimited scoring + AI resume rewriting via web app |
+| **Free** | $0 | 5 cloud scores (then automatic local scoring fallback for CLI/MCP users) |
+| **Pro** | $12/mo | Unlimited checks, full keyword gap + deep AI analysis, 10 AI rewrites/mo, 30 cover letters/mo |
+| **Ultra** | $29/mo | Everything in Pro + 100 AI rewrites/mo, 1,000 cover letters/mo |
 
 **Note for Claude Code / claude.ai users:** Your Anthropic subscription already handles resume writing via Claude. The scorer server only does ATS + HR scoring, so **Pro is all you need** — you do not need Ultra.
 
@@ -299,7 +299,7 @@ Sign up at [getresumehq.com](https://getresumehq.com). After signing up, run `/r
 │            └────────────────────┘                           │
 │                                                             │
 ├─────────────────────────────────────────────────────────────┤
-│  Job Discovery: Adzuna + Remotive → lightweight score →     │
+│  Job Discovery: Adzuna + Remotive + JSearch → light score → │
 │  full ATS+HR score → ranked results                         │
 ├─────────────────────────────────────────────────────────────┤
 │  Orchestration State (state.json) — Multi-Agent DAG        │
@@ -323,7 +323,7 @@ The MCP server operates in **thin client** mode: it tries the cloud API first fo
 
 Each resume command follows a gated workflow:
 - **Phase 0:** Deterministic candidate-fit preflight against the configured master
-  and exact JD (>=70, zero hard knockouts). Rejected JDs create no output.
+  and exact JD (fit bar, default 50; zero hard knockouts). Rejected JDs create no output.
 - **Phase 1:** Read-only master/JD planning; prior tailored resumes are not inputs.
 - **Phase 2:** Native Researcher → Writer → Auditor → bounded Editor workflow.
 - **Phase 3:** Advisory ATS/HR scoring and cover-letter generation where requested.
@@ -411,6 +411,7 @@ The `.mcp.json` file configures the MCP server to auto-start with Claude Code:
 | `ANTHROPIC_MODEL` | No | `claude-sonnet-4-6` | Claude model for LLM scoring |
 | `ADZUNA_APP_ID` | No | — | For job discovery (free at [developer.adzuna.com](https://developer.adzuna.com/)) |
 | `ADZUNA_APP_KEY` | No | — | For job discovery |
+| `RAPIDAPI_KEY` | No | — | Enables the JSearch job source (aggregated boards) |
 
 ---
 
@@ -576,7 +577,7 @@ The DOCX generator produces files optimized for Applicant Tracking Systems (Work
 | Embeddings | [Sentence Transformers](https://sbert.net/) (all-MiniLM-L6-v2) |
 | NLP | NLTK (lemmatization), TextStat (readability) |
 | Search | BM25Plus (rank-bm25), NetworkX (skill graphs) |
-| Job Discovery | Adzuna API + Remotive API |
+| Job Discovery | Adzuna API + Remotive API + JSearch (RapidAPI) |
 | API Server | FastAPI + Uvicorn |
 | Cloud Hosting | [Fly.io](https://fly.io) (auto-stop/start, persistent volume) |
 | Auth | JWT (PyJWT) + SQLite-backed API keys |
@@ -616,7 +617,7 @@ Resume-Builder/
 ├── .mcp.json                   # MCP server config (auto-starts scorer)
 ├── .codex.mcp.json             # Codex MCP server config
 ├── mcp_scorer.py               # MCP scoring server (7 production-supported surfaces)
-├── job_discovery.py            # Job search + two-tier scoring (Adzuna + Remotive)
+├── job_discovery.py            # Job search + two-tier scoring (Adzuna + Remotive + JSearch)
 ├── data/                       # Reference databases for scoring
 │   ├── keywords_*.json         # Domain-specific keyword databases (6 domains)
 │   ├── skill_taxonomy.json     # Skill categories with decay constants
@@ -632,7 +633,7 @@ Resume-Builder/
 ├── docx_generator.py           # ATS/Workday-compliant DOCX generator
 ├── orchestration_state.py      # Multi-agent state management (DAG)
 ├── multi_agent_team.py         # Vendor-neutral, offline, fail-closed team controller
-├── candidate_fit_preflight.py  # Deterministic >=70/no-knockout first gate
+├── candidate_fit_preflight.py  # Deterministic fit-bar/no-knockout first gate
 ├── native_resume_team.py       # Hardened Codex/Claude CLI adapter and draft publisher
 ├── schemas/
 │   ├── resume-team-handoff.schema.json # Strict public role handoff contract
@@ -682,8 +683,8 @@ specific model, profile, or Ultra setting.
 0. Before any role/team invocation or output creation, the coordinator runs
    `candidate_fit_preflight.py` against the exact JD and only the configured
    master resume—never a prior tailored resume. The canonical
-   `candidate-fit-policy-v2` report must score at least 70 with trustworthy
-   extraction, zero hard knockouts, `passed: true`, and no codes. Scores below 70
+   `candidate-fit-policy-v2` report must clear the fit bar (default 50) with
+   trustworthy extraction, zero hard knockouts, `passed: true`, and no codes. Scores below the bar
    (including 60–69) or hard knockouts return `REJECTED:CANDIDATE_FIT`;
    unavailable, malformed, stale, or mismatched reports return
    `FAILED:CANDIDATE_FIT_PREFLIGHT`. No automatic or manual workflow bypass exists.
