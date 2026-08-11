@@ -2289,7 +2289,13 @@ def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
                     if isinstance(score, (int, float)):
                         bar = fit.get("threshold")
                         if not isinstance(bar, (int, float)):
-                            bar = candidate_fit_preflight.CANDIDATE_FIT_THRESHOLD
+                            # Local import: keeps the pipeline modules off
+                            # server startup, same as multi_agent_team above.
+                            from candidate_fit_preflight import (
+                                CANDIDATE_FIT_THRESHOLD,
+                            )
+
+                            bar = CANDIDATE_FIT_THRESHOLD
                         parts.append(
                             f"Fit score: {round(score)} (needs {round(bar)})."
                         )

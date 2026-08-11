@@ -27,12 +27,14 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from candidate_fit_preflight import assess_candidate_fit as _trusted_candidate_fit_assessment
 from candidate_fit_judge import (
     JudgeUnavailable,
-    judge_candidate_fit as _llm_candidate_fit_judgment,
     validate_candidate_fit_judge_report,
 )
+from candidate_fit_judge import (
+    judge_candidate_fit as _llm_candidate_fit_judgment,
+)
+from candidate_fit_preflight import assess_candidate_fit as _trusted_candidate_fit_assessment
 from evidence_audit import audit_text as _trusted_evidence_audit
 from human_voice_audit import audit_text as _trusted_human_voice_audit
 from resume_integrity_audit import audit_resume_text as _trusted_resume_integrity_audit

@@ -27,6 +27,7 @@ from collections import Counter
 from datetime import date
 from typing import Any, Callable
 
+from candidate_fit_judge import validate_candidate_fit_judge_report
 from candidate_fit_preflight import (
     CANDIDATE_FIT_POLICY_VERSION,
     CANDIDATE_FIT_SCHEMA_VERSION,
@@ -36,7 +37,6 @@ from candidate_fit_preflight import (
 from candidate_fit_preflight import (
     assess_candidate_fit as _deterministic_candidate_fit_assessment,
 )
-from candidate_fit_judge import validate_candidate_fit_judge_report
 from claim_provenance_audit import claim_supported_by_source
 
 PROTOCOL_VERSION = "resume-team/v2"

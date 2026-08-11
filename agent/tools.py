@@ -477,7 +477,6 @@ class CloudTrustedServices:
         the deterministic rejection stand.
         """
         import candidate_fit_judge
-
         from cloud.config import settings as cloud_settings
 
         cache_dir = (
