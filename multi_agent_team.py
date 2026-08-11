@@ -386,6 +386,56 @@ def _line_counts(text: str) -> Counter[str]:
     )
 
 
+def _ownership_violation_hint(master: str, draft: str) -> str:
+    """Best-effort description of WHICH lines broke the duplicate/move rules.
+
+    Diagnostic only — the boolean validators above keep sole authority; this
+    never loosens anything. The repair loop shows the model the rejection
+    reason, and "duplicates or moves source claims" alone gives it nothing
+    to act on: observed live (2026-08-11), an Opus writer failed the initial
+    attempt and the blind repair identically. Naming the offending line
+    turns the second attempt into a targeted fix. Fails silent to "" — a
+    diagnostic that crashes must never mask the real rejection.
+    """
+
+    try:
+        hints: list = []
+        draft_counts = _line_counts(draft)
+        master_counts = _line_counts(master)
+        for line, count in draft_counts.items():
+            if line in master_counts and count > master_counts[line]:
+                hints.append(
+                    f"line appears {count}x in draft but {master_counts[line]}x "
+                    f"in the master: {line[:90]!r}"
+                )
+            elif line not in master_counts and count > 1:
+                hints.append(f"new line repeated {count}x: {line[:90]!r}")
+        master_roles = _experience_roles(master)
+        draft_roles = _experience_roles(draft)
+        master_home: dict = {}
+        for role in master_roles:
+            for line in role["lines"]:
+                master_home.setdefault(line, role["key"])
+        for role in draft_roles:
+            for line in role["lines"]:
+                home = master_home.get(line)
+                if home is not None and home != role["key"]:
+                    hints.append(
+                        f"bullet moved to a different role than the master: "
+                        f"{line[:90]!r}"
+                    )
+                elif home is None and line in master_counts:
+                    hints.append(
+                        "master line moved from outside Professional Experience "
+                        f"into a role: {line[:90]!r}"
+                    )
+        if not hints:
+            return ""
+        return " — " + "; ".join(hints[:3])
+    except Exception:
+        return ""
+
+
 def _changed_lines(draft: str, master: str) -> set[str] | None:
     """Return novel lines, rejecting duplicated master or novel lines."""
 
@@ -814,7 +864,10 @@ def _normalize_claim_evidence(
 
     changed_lines = _changed_lines(draft, master)
     if changed_lines is None or not _experience_ownership_valid(master, draft):
-        raise ValueError("draft duplicates or moves source claims")
+        raise ValueError(
+            "draft duplicates or moves source claims"
+            + _ownership_violation_hint(master, draft)
+        )
     admitted_claims: set[str] = set()
     admitted_source_spans: set[tuple[int, int]] = set()
     draft_line_counts = _line_counts(draft)
@@ -2112,7 +2165,12 @@ def run_team(request: dict, adapter: object, services: object) -> dict:
             code = "AUDITOR_SIDE_EFFECT" if role == "auditor" else "AGENT_CRASH"
             return None, fail(f"FAILED:{code}")
         except AgentInvocationFailure as error:
-            return None, fail(f"FAILED:{error.code}")
+            code = (
+                _SCHEMA_CODES[role]
+                if error.code == "AGENT_PAYLOAD_SCHEMA"
+                else error.code
+            )
+            return None, fail(f"FAILED:{code}")
         except (LookupError, ConnectionError):
             return None, fail("FAILED:AGENT_UNAVAILABLE")
         except Exception:

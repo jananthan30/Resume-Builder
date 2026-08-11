@@ -1343,12 +1343,13 @@ Example University
         attempt=0,
         payload={"master_resume": master, "researcher_artifact": {}},
     )
-    with pytest.raises(ValueError, match="moves source claims"):
+    with pytest.raises(ValueError, match="moves source claims") as caught:
         normalize_native_payload(
             "writer",
             {"draft": moved, "claim_evidence": []},
             context,
         )
+    assert "Reviewed confidential records." in str(caught.value)
 
 
 def test_current_master_without_competencies_or_role_bullets_is_rejected():
@@ -1459,21 +1460,37 @@ def test_cross_role_agent_identity_is_rejected_without_publication():
 
 
 @pytest.mark.parametrize(
-    "code",
+    ("code", "expected_terminal"),
     [
-        "AGENT_EVENT_MALFORMED",
-        "AGENT_OUTPUT_MALFORMED",
-        "AGENT_PAYLOAD_SCHEMA",
+        ("AGENT_EVENT_MALFORMED", "FAILED:AGENT_EVENT_MALFORMED"),
+        ("AGENT_OUTPUT_MALFORMED", "FAILED:AGENT_OUTPUT_MALFORMED"),
+        ("AGENT_PAYLOAD_SCHEMA", "FAILED:RESEARCH_SCHEMA"),
     ],
 )
-def test_typed_native_invocation_failures_keep_specific_terminal_class(code):
+def test_typed_native_invocation_failures_keep_specific_terminal_class(
+    code,
+    expected_terminal,
+):
     class BrokenNativeAdapter(ScriptedAdapter):
         def invoke(self, role, context, timeout_seconds):
             raise AgentInvocationFailure(code)
 
     result = run_team(request(), BrokenNativeAdapter(), Services())
 
-    assert result["terminal_class"] == f"FAILED:{code}"
+    assert result["terminal_class"] == expected_terminal
+    assert result["published"] is result["success_reported"] is False
+
+
+def test_writer_payload_failure_uses_writer_terminal_class():
+    class BrokenWriterAdapter(ScriptedAdapter):
+        def invoke(self, role, context, timeout_seconds):
+            if role == "writer":
+                raise AgentInvocationFailure("AGENT_PAYLOAD_SCHEMA")
+            return super().invoke(role, context, timeout_seconds)
+
+    result = run_team(request(), BrokenWriterAdapter(), Services())
+
+    assert result["terminal_class"] == "FAILED:WRITER_SCHEMA"
     assert result["published"] is result["success_reported"] is False
 
 

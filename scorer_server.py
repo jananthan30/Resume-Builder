@@ -2131,6 +2131,11 @@ _TAILOR_UNAVAILABLE_DETAIL = (
     "We couldn't finish tailoring your resume just now. Please try again in "
     "a few minutes."
 )
+_JD_FORMAT_DETAIL = (
+    "This job description's formatting couldn't be processed reliably, so "
+    "tailoring stopped rather than guess. Open the original posting, copy "
+    "the full job description, and paste it in — that almost always fixes it."
+)
 
 
 def _friendly_tier_required_detail(feature: str) -> str:
@@ -2323,16 +2328,10 @@ def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
                 # input, not a transient outage — "try again in a few
                 # minutes" would be a lie the user disproves in a few
                 # minutes.
-                if terminal == "FAILED:AGENT_PAYLOAD_SCHEMA":
+                if terminal == "FAILED:RESEARCH_SCHEMA":
                     raise HTTPException(
                         status_code=422,
-                        detail=(
-                            "This job description's formatting couldn't be "
-                            "processed reliably, so tailoring stopped rather "
-                            "than guess. Open the original posting, copy the "
-                            "full job description, and paste it in — that "
-                            "almost always fixes it."
-                        ),
+                        detail=_JD_FORMAT_DETAIL,
                     )
                 raise HTTPException(status_code=502, detail=_TAILOR_UNAVAILABLE_DETAIL)
 
@@ -2579,11 +2578,14 @@ def _friendly_agent_error(kind: str, error_code: Optional[str] = None) -> str:
     byte identical refusal, because nothing about that verdict is transient.
     They conclude the product is broken rather than learning what it decided.
 
-    So a fit rejection gets its own honest message. Everything else keeps the
-    generic transient copy, which for those codes is accurate.
+    So a fit rejection gets its own honest message. A Researcher schema
+    failure names the job-description input and its practical workaround;
+    Writer/Auditor/Editor failures keep the generic transient copy.
     """
     if error_code and str(error_code).startswith("REJECTED:CANDIDATE_FIT"):
         return _FIT_REJECTED_DETAIL
+    if kind == "tailor" and error_code == "FAILED:RESEARCH_SCHEMA":
+        return _JD_FORMAT_DETAIL
     if kind == "cover_letter":
         return _COVER_LETTER_UNAVAILABLE_DETAIL
     return _TAILOR_UNAVAILABLE_DETAIL

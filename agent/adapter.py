@@ -94,6 +94,7 @@ _log = logging.getLogger(__name__)
 # enough to carry a full draft plus its evidence, bounded so one malformed
 # reply cannot blow the next request's context.
 _MAX_REPLAY_CHARS = 60_000
+_PRIVATE_REJECTION_DETAIL_SEPARATOR = " — "
 
 
 def _compact_json(payload: Any) -> str | None:
@@ -105,6 +106,12 @@ def _compact_json(payload: Any) -> str | None:
     except (TypeError, ValueError):
         return None
     return text if len(text) <= _MAX_REPLAY_CHARS else None
+
+
+def _safe_log_reason(error: Exception) -> str:
+    """Keep resume-line diagnostics in the model repair, not service logs."""
+
+    return str(error).partition(_PRIVATE_REJECTION_DETAIL_SEPARATOR)[0]
 
 
 class AnthropicTeamAdapter:
@@ -208,7 +215,11 @@ class AnthropicTeamAdapter:
             _log.warning(
                 "role payload rejected (retrying once): role=%s attempt=%s "
                 "run_id=%s reason=%s: %s",
-                role, attempt, run_id, type(first_error).__name__, first_error,
+                role,
+                attempt,
+                run_id,
+                type(first_error).__name__,
+                _safe_log_reason(first_error),
             )
             repair_id = f"{agent_id}.repair"
             if repair_id in self._seen_invocations:
@@ -225,7 +236,11 @@ class AnthropicTeamAdapter:
                 _log.warning(
                     "role payload rejected after repair: role=%s attempt=%s "
                     "run_id=%s reason=%s: %s",
-                    role, attempt, run_id, type(retry_error).__name__, retry_error,
+                    role,
+                    attempt,
+                    run_id,
+                    type(retry_error).__name__,
+                    _safe_log_reason(retry_error),
                 )
                 raise AgentInvocationFailure("AGENT_PAYLOAD_SCHEMA") from retry_error
             agent_id = repair_id
