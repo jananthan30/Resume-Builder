@@ -1,0 +1,104 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "candidate-fit-judge/v1",
+    "title": "Candidate Fit Judge Verdict",
+    "description": "A reasoning-model verdict on whether tailoring may proceed. Untrusted until digest-bound to the exact run/resume/JD and until every requirement_quote is mechanically verified verbatim against the job description text; semantic enforcement is coordinator-owned (candidate_fit_judge.validate_candidate_fit_judge_report).",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "schema_version",
+        "prompt_version",
+        "judge_model",
+        "run_id",
+        "case_id",
+        "as_of_date",
+        "resume_digest",
+        "job_description_digest",
+        "verdict",
+        "fit_score",
+        "hard_gaps",
+        "rationale"
+    ],
+    "properties": {
+        "schema_version": {
+            "const": "candidate-fit-judge/v1"
+        },
+        "prompt_version": {
+            "const": "fit-judge-prompt/v1"
+        },
+        "judge_model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+        },
+        "run_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+        },
+        "case_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+        },
+        "as_of_date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "resume_digest": {
+            "$ref": "#/$defs/digest"
+        },
+        "job_description_digest": {
+            "$ref": "#/$defs/digest"
+        },
+        "verdict": {
+            "enum": [
+                "PROCEED",
+                "DECLINE"
+            ]
+        },
+        "fit_score": {
+            "$ref": "#/$defs/fitScore"
+        },
+        "hard_gaps": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                    "requirement_quote",
+                    "candidate_has"
+                ],
+                "properties": {
+                    "requirement_quote": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 300
+                    },
+                    "candidate_has": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 400
+                    }
+                }
+            }
+        },
+        "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+        }
+    },
+    "$defs": {
+        "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+        },
+        "fitScore": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+        }
+    }
+}

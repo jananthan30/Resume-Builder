@@ -43,6 +43,8 @@ _RECEIPT_KEYS = {
     "job_description_digest",
     "candidate_fit_report",
     "candidate_fit_report_digest",
+    "candidate_fit_judge_report",
+    "candidate_fit_judge_report_digest",
     "researcher_agent_id",
     "researcher_artifact_digest",
     "auditor_attestation",
@@ -282,8 +284,49 @@ def verify_final_receipt(
         raise FinalReceiptVerificationError(
             "CANDIDATE_FIT_REPORT_MISMATCH"
         ) from exc
-    if not fit_valid or not fit_passed:
+    if not fit_valid:
         raise FinalReceiptVerificationError("CANDIDATE_FIT_REPORT_MISMATCH")
+
+    # The deterministic verdict alone no longer decides admission. A receipt
+    # is fit-authorized either by a passing deterministic assessment (judge
+    # fields null/empty) or by a digest-bound, citation-verified PROCEED
+    # judge verdict attached alongside a valid non-passing assessment.
+    judge_report = receipt["candidate_fit_judge_report"]
+    judge_digest = receipt["candidate_fit_judge_report_digest"]
+    if judge_report is None:
+        if judge_digest != "":
+            raise FinalReceiptVerificationError(
+                "CANDIDATE_FIT_JUDGE_REPORT_MISMATCH"
+            )
+        if not fit_passed:
+            raise FinalReceiptVerificationError(
+                "CANDIDATE_FIT_REPORT_MISMATCH"
+            )
+    else:
+        if canonical_digest(judge_report) != judge_digest:
+            raise FinalReceiptVerificationError(
+                "CANDIDATE_FIT_JUDGE_REPORT_MISMATCH"
+            )
+        try:
+            from candidate_fit_judge import (
+                validate_candidate_fit_judge_report,
+            )
+
+            judge_valid, judge_proceed = validate_candidate_fit_judge_report(
+                judge_report,
+                run_id=receipt["run_id"],
+                case_id=receipt["case_id"],
+                master_resume=current_master.text,
+                job_description=job_text,
+            )
+        except Exception as exc:
+            raise FinalReceiptVerificationError(
+                "CANDIDATE_FIT_JUDGE_REPORT_MISMATCH"
+            ) from exc
+        if not judge_valid or not judge_proceed:
+            raise FinalReceiptVerificationError(
+                "CANDIDATE_FIT_JUDGE_REPORT_MISMATCH"
+            )
 
     researcher_agent_id = receipt["researcher_agent_id"]
     researcher_artifact_digest = receipt["researcher_artifact_digest"]

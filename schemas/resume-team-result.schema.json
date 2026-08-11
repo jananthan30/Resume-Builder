@@ -1,365 +1,937 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "resume-team-result/v2",
-  "title": "Native Resume Team draft-stage result",
-  "description": "A PUBLISHED result attests only to an authorized, digest-verified resume.md draft publication. It does not attest to DOCX generation, tracker mutation, cleanup, or application-package completion.",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "run_id",
-    "case_id",
-    "terminal_class",
-    "published",
-    "success_reported",
-    "diagnostics",
-    "final_draft_digest",
-    "authorization_receipt",
-    "authorization_receipt_digest",
-    "authorization_receipt_path",
-    "candidate_fit_report",
-    "candidate_fit_report_digest"
-  ],
-  "properties": {
-    "schema_version": {"const": "resume-team-result/v2"},
-    "run_id": {"type": "string", "minLength": 1},
-    "case_id": {"type": "string", "minLength": 1},
-    "terminal_class": {
-      "type": "string",
-      "minLength": 1,
-      "description": "PUBLISHED denotes successful draft-stage publication only."
-    },
-    "published": {
-      "type": "boolean",
-      "description": "Whether the authorized resume.md draft was atomically committed and read back."
-    },
-    "success_reported": {
-      "type": "boolean",
-      "description": "Whether draft-stage success was reported; never evidence of package completion."
-    },
-    "diagnostics": {
-      "type": "array",
-      "items": {"type": "string", "minLength": 1}
-    },
-    "final_draft_digest": {
-      "description": "Digest of the authorized resume.md draft; empty on failure.",
-      "oneOf": [
-        {"const": ""},
-        {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-      ]
-    },
-    "authorization_receipt": {
-      "description": "Inline copy of the durable draft-authorization receipt; null on failure.",
-      "oneOf": [
-        {"type": "null"},
-        {"$ref": "#/$defs/authorizationReceipt"}
-      ]
-    },
-    "authorization_receipt_digest": {
-      "description": "Canonical JSON digest of authorization_receipt and its sidecar; empty on failure.",
-      "oneOf": [
-        {"const": ""},
-        {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-      ]
-    },
-    "authorization_receipt_path": {
-      "type": "string",
-      "description": "Path to the durable JSON sidecar. Downstream finalization resolves relative paths against the output directory and requires the resolved file to be a regular non-symlink direct child of that directory."
-    },
-    "candidate_fit_report": {
-      "description": "Exact trusted candidate-fit assessment; null only when the assessment was not completed and validated.",
-      "oneOf": [
-        {"type": "null"},
-        {"$ref": "#/$defs/candidateFitReport"}
-      ]
-    },
-    "candidate_fit_report_digest": {
-      "description": "Canonical JSON digest of candidate_fit_report; empty exactly when the report is null.",
-      "oneOf": [
-        {"const": ""},
-        {"$ref": "#/$defs/digest"}
-      ]
-    }
-  },
-  "$defs": {
-    "authorizationReceipt": {
-      "title": "Durable final draft-authorization receipt",
-      "description": "Binds the run, attested master source, exact job description, validated Researcher artifact, same-draft PASS Auditor attestation, complete passing three-vote authorization report, publication, and readback to one draft digest. The canonical authorization_report digest must equal authorization_digest and vote_invocation_ids must equal the report vote IDs in order; semantic enforcement is coordinator-owned.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "resume-team-result/v2",
+    "title": "Native Resume Team draft-stage result",
+    "description": "A PUBLISHED result attests only to an authorized, digest-verified resume.md draft publication. It does not attest to DOCX generation, tracker mutation, cleanup, or application-package completion.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
         "schema_version",
         "run_id",
         "case_id",
-        "draft_digest",
-        "source_digest",
-        "job_description_digest",
+        "terminal_class",
+        "published",
+        "success_reported",
+        "diagnostics",
+        "final_draft_digest",
+        "authorization_receipt",
+        "authorization_receipt_digest",
+        "authorization_receipt_path",
         "candidate_fit_report",
         "candidate_fit_report_digest",
-        "researcher_agent_id",
-        "researcher_artifact_digest",
-        "auditor_attestation",
-        "authorization_digest",
-        "authorization_report",
-        "vote_invocation_ids",
-        "publication_id",
-        "verified_target_digest"
-      ],
-      "properties": {
-        "schema_version": {"const": "resume-team-final-receipt/v2"},
-        "run_id": {"type": "string", "minLength": 1, "maxLength": 256},
-        "case_id": {"type": "string", "minLength": 1, "maxLength": 256},
-        "draft_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "source_digest": {"$ref": "#/$defs/digest"},
-        "job_description_digest": {"$ref": "#/$defs/digest"},
-        "candidate_fit_report": {"$ref": "#/$defs/candidateFitPassingReport"},
-        "candidate_fit_report_digest": {"$ref": "#/$defs/digest"},
-        "researcher_agent_id": {"$ref": "#/$defs/nativeAgentId"},
-        "researcher_artifact_digest": {"$ref": "#/$defs/digest"},
-        "auditor_attestation": {"$ref": "#/$defs/auditorAttestation"},
-        "authorization_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "authorization_report": {"$ref": "#/$defs/authorizationReport"},
-        "vote_invocation_ids": {
-          "type": "array",
-          "minItems": 3,
-          "maxItems": 3,
-          "uniqueItems": true,
-          "items": {"type": "string", "minLength": 1}
+        "candidate_fit_judge_report",
+        "candidate_fit_judge_report_digest"
+    ],
+    "properties": {
+        "schema_version": {
+            "const": "resume-team-result/v2"
         },
-        "publication_id": {"type": "string", "minLength": 1},
-        "verified_target_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-      }
-    },
-    "digest": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
-    },
-    "fitScore": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 100
-    },
-    "candidateFitComponentScores": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "experience_match",
-        "skills_match",
-        "title_alignment",
-        "domain_match",
-        "education_match",
-        "certification_match",
-        "seniority_match"
-      ],
-      "properties": {
-        "experience_match": {"$ref": "#/$defs/fitScore"},
-        "skills_match": {"$ref": "#/$defs/fitScore"},
-        "title_alignment": {"$ref": "#/$defs/fitScore"},
-        "domain_match": {"$ref": "#/$defs/fitScore"},
-        "education_match": {"$ref": "#/$defs/fitScore"},
-        "certification_match": {"$ref": "#/$defs/fitScore"},
-        "seniority_match": {"$ref": "#/$defs/fitScore"}
-      }
-    },
-    "candidateFitKnockout": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["code", "category", "requirement", "candidate_has"],
-      "properties": {
-        "code": {"type": "string", "minLength": 1},
-        "category": {"type": "string", "minLength": 1},
-        "requirement": {"type": "string", "minLength": 1},
-        "candidate_has": {"type": "string", "minLength": 1}
-      }
-    },
-    "candidateFitReport": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "schema_version",
-        "policy_version",
-        "scorer_version",
-        "run_id",
-        "case_id",
-        "as_of_date",
-        "threshold",
-        "semantic_mode",
-        "resume_digest",
-        "job_description_digest",
-        "score",
-        "component_scores",
-        "recommendation",
-        "hard_knockouts",
-        "extraction_trustworthy",
-        "passed",
-        "codes"
-      ],
-      "properties": {
-        "schema_version": {"const": "1.0.0"},
-        "policy_version": {"const": "candidate-fit-policy-v2"},
-        "scorer_version": {"const": "deterministic-job-fit-v1"},
-        "run_id": {"type": "string", "minLength": 1, "maxLength": 256},
-        "case_id": {"type": "string", "minLength": 1, "maxLength": 256},
-        "as_of_date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
-        "threshold": {"type": "number", "minimum": 40, "maximum": 95},
-        "semantic_mode": {"const": "disabled"},
-        "resume_digest": {"$ref": "#/$defs/digest"},
-        "job_description_digest": {"$ref": "#/$defs/digest"},
-        "score": {"$ref": "#/$defs/fitScore"},
-        "component_scores": {"$ref": "#/$defs/candidateFitComponentScores"},
-        "recommendation": {"enum": ["PROCEED", "REJECT"]},
-        "hard_knockouts": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {"$ref": "#/$defs/candidateFitKnockout"}
-        },
-        "extraction_trustworthy": {"type": "boolean"},
-        "passed": {"type": "boolean"},
-        "codes": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {"enum": ["UNTRUSTWORTHY_EXTRACTION", "HARD_KNOCKOUT", "SCORE_BELOW_THRESHOLD"]}
-        }
-      }
-    },
-    "candidateFitPassingReport": {
-      "allOf": [
-        {"$ref": "#/$defs/candidateFitReport"},
-        {
-          "properties": {
-            "recommendation": {"const": "PROCEED"},
-            "hard_knockouts": {"maxItems": 0},
-            "extraction_trustworthy": {"const": true},
-            "passed": {"const": true},
-            "codes": {"maxItems": 0},
-            "score": {"minimum": 70.0}
-          }
-        }
-      ]
-    },
-    "nativeAgentId": {
-      "type": "string",
-      "description": "hosts: api = hosted product runtime; codex/claude = legacy local CLI hosts",
-      "pattern": "^(codex|claude|api):[A-Za-z0-9._:-]{1,128}$"
-    },
-    "auditorAttestation": {
-      "description": "The final distinct native Auditor attestation, which must PASS the receipt draft digest.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["agent_id", "artifact_digest", "verdict", "draft_digest"],
-      "properties": {
-        "agent_id": {"$ref": "#/$defs/nativeAgentId"},
-        "artifact_digest": {"$ref": "#/$defs/digest"},
-        "verdict": {"const": "PASS"},
-        "draft_digest": {"$ref": "#/$defs/digest"}
-      }
-    },
-    "voteBase": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "schema_version",
-        "name",
-        "invocation_id",
-        "passed",
-        "draft_digest",
-        "codes"
-      ],
-      "properties": {
-        "schema_version": {"const": "resume-team-vote/v1"},
-        "name": {"enum": ["evidence", "human_voice", "canonical_integrity"]},
-        "invocation_id": {"type": "string", "minLength": 1},
-        "passed": {"const": true},
-        "draft_digest": {"$ref": "#/$defs/digest"},
-        "codes": {"type": "array", "maxItems": 0}
-      }
-    },
-    "evidenceVote": {
-      "allOf": [
-        {"$ref": "#/$defs/voteBase"},
-        {"properties": {"name": {"const": "evidence"}}}
-      ]
-    },
-    "humanVoiceVote": {
-      "allOf": [
-        {"$ref": "#/$defs/voteBase"},
-        {"properties": {"name": {"const": "human_voice"}}}
-      ]
-    },
-    "canonicalIntegrityVote": {
-      "allOf": [
-        {"$ref": "#/$defs/voteBase"},
-        {"properties": {"name": {"const": "canonical_integrity"}}}
-      ]
-    },
-    "authorizationReport": {
-      "description": "The complete passing report whose canonical digest equals the receipt authorization_digest and whose ordered invocation IDs equal vote_invocation_ids.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["schema_version", "draft_digest", "passed", "codes", "findings", "votes"],
-      "properties": {
-        "schema_version": {"const": "resume-team-authorization/v1"},
-        "draft_digest": {"$ref": "#/$defs/digest"},
-        "passed": {"const": true},
-        "codes": {"type": "array", "maxItems": 0},
-        "findings": {"type": "array", "maxItems": 0},
-        "votes": {
-          "type": "array",
-          "minItems": 3,
-          "maxItems": 3,
-          "prefixItems": [
-            {"$ref": "#/$defs/evidenceVote"},
-            {"$ref": "#/$defs/humanVoiceVote"},
-            {"$ref": "#/$defs/canonicalIntegrityVote"}
-          ],
-          "items": false
-        }
-      }
-    }
-  },
-  "allOf": [
-    {
-      "if": {"properties": {"published": {"const": true}}, "required": ["published"]},
-      "then": {
-        "properties": {
-          "terminal_class": {"const": "PUBLISHED"},
-          "success_reported": {"const": true},
-          "diagnostics": {"type": "array", "maxItems": 0},
-          "final_draft_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-          "authorization_receipt": {"$ref": "#/$defs/authorizationReceipt"},
-          "authorization_receipt_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-          "authorization_receipt_path": {
+        "run_id": {
             "type": "string",
             "minLength": 1
-          },
-          "candidate_fit_report": {"$ref": "#/$defs/candidateFitPassingReport"},
-          "candidate_fit_report_digest": {"$ref": "#/$defs/digest"}
+        },
+        "case_id": {
+            "type": "string",
+            "minLength": 1
+        },
+        "terminal_class": {
+            "type": "string",
+            "minLength": 1,
+            "description": "PUBLISHED denotes successful draft-stage publication only."
+        },
+        "published": {
+            "type": "boolean",
+            "description": "Whether the authorized resume.md draft was atomically committed and read back."
+        },
+        "success_reported": {
+            "type": "boolean",
+            "description": "Whether draft-stage success was reported; never evidence of package completion."
+        },
+        "diagnostics": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "minLength": 1
+            }
+        },
+        "final_draft_digest": {
+            "description": "Digest of the authorized resume.md draft; empty on failure.",
+            "oneOf": [
+                {
+                    "const": ""
+                },
+                {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                }
+            ]
+        },
+        "authorization_receipt": {
+            "description": "Inline copy of the durable draft-authorization receipt; null on failure.",
+            "oneOf": [
+                {
+                    "type": "null"
+                },
+                {
+                    "$ref": "#/$defs/authorizationReceipt"
+                }
+            ]
+        },
+        "authorization_receipt_digest": {
+            "description": "Canonical JSON digest of authorization_receipt and its sidecar; empty on failure.",
+            "oneOf": [
+                {
+                    "const": ""
+                },
+                {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                }
+            ]
+        },
+        "authorization_receipt_path": {
+            "type": "string",
+            "description": "Path to the durable JSON sidecar. Downstream finalization resolves relative paths against the output directory and requires the resolved file to be a regular non-symlink direct child of that directory."
+        },
+        "candidate_fit_report": {
+            "description": "Exact trusted candidate-fit assessment; null only when the assessment was not completed and validated.",
+            "oneOf": [
+                {
+                    "type": "null"
+                },
+                {
+                    "$ref": "#/$defs/candidateFitReport"
+                }
+            ]
+        },
+        "candidate_fit_report_digest": {
+            "description": "Canonical JSON digest of candidate_fit_report; empty exactly when the report is null.",
+            "oneOf": [
+                {
+                    "const": ""
+                },
+                {
+                    "$ref": "#/$defs/digest"
+                }
+            ]
+        },
+        "candidate_fit_judge_report": {
+            "description": "Reasoning-judge verdict consulted when the deterministic assessment did not pass; null when the judge was not consulted or produced no valid verdict.",
+            "oneOf": [
+                {
+                    "type": "null"
+                },
+                {
+                    "$ref": "#/$defs/candidateFitJudgeReport"
+                }
+            ]
+        },
+        "candidate_fit_judge_report_digest": {
+            "description": "Canonical JSON digest of candidate_fit_judge_report; empty exactly when the report is null.",
+            "oneOf": [
+                {
+                    "const": ""
+                },
+                {
+                    "$ref": "#/$defs/digest"
+                }
+            ]
         }
-      },
-      "else": {
-        "properties": {
-          "success_reported": {"const": false},
-          "final_draft_digest": {"const": ""},
-          "authorization_receipt": {"type": "null"},
-          "authorization_receipt_digest": {"const": ""},
-          "authorization_receipt_path": {"const": ""}
-        }
-      }
     },
-    {
-      "if": {
-        "properties": {"candidate_fit_report": {"type": "null"}},
-        "required": ["candidate_fit_report"]
-      },
-      "then": {
-        "properties": {"candidate_fit_report_digest": {"const": ""}}
-      },
-      "else": {
-        "properties": {
-          "candidate_fit_report": {"$ref": "#/$defs/candidateFitReport"},
-          "candidate_fit_report_digest": {"$ref": "#/$defs/digest"}
+    "$defs": {
+        "authorizationReceipt": {
+            "title": "Durable final draft-authorization receipt",
+            "description": "Binds the run, attested master source, exact job description, validated Researcher artifact, same-draft PASS Auditor attestation, complete passing three-vote authorization report, publication, and readback to one draft digest. The canonical authorization_report digest must equal authorization_digest and vote_invocation_ids must equal the report vote IDs in order; semantic enforcement is coordinator-owned.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "schema_version",
+                "run_id",
+                "case_id",
+                "draft_digest",
+                "source_digest",
+                "job_description_digest",
+                "candidate_fit_report",
+                "candidate_fit_report_digest",
+                "candidate_fit_judge_report",
+                "candidate_fit_judge_report_digest",
+                "researcher_agent_id",
+                "researcher_artifact_digest",
+                "auditor_attestation",
+                "authorization_digest",
+                "authorization_report",
+                "vote_invocation_ids",
+                "publication_id",
+                "verified_target_digest"
+            ],
+            "properties": {
+                "schema_version": {
+                    "const": "resume-team-final-receipt/v2"
+                },
+                "run_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                },
+                "case_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                },
+                "draft_digest": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                },
+                "source_digest": {
+                    "$ref": "#/$defs/digest"
+                },
+                "job_description_digest": {
+                    "$ref": "#/$defs/digest"
+                },
+                "candidate_fit_report": {
+                    "$ref": "#/$defs/candidateFitPassingReport"
+                },
+                "candidate_fit_report_digest": {
+                    "$ref": "#/$defs/digest"
+                },
+                "candidate_fit_judge_report": {
+                    "description": "PROCEED judge verdict that authorized this run when the deterministic assessment did not pass; null when the deterministic assessment passed on its own.",
+                    "oneOf": [
+                        {
+                            "type": "null"
+                        },
+                        {
+                            "$ref": "#/$defs/candidateFitJudgeProceedReport"
+                        }
+                    ]
+                },
+                "candidate_fit_judge_report_digest": {
+                    "description": "Canonical JSON digest of candidate_fit_judge_report; empty exactly when the report is null.",
+                    "oneOf": [
+                        {
+                            "const": ""
+                        },
+                        {
+                            "$ref": "#/$defs/digest"
+                        }
+                    ]
+                },
+                "researcher_agent_id": {
+                    "$ref": "#/$defs/nativeAgentId"
+                },
+                "researcher_artifact_digest": {
+                    "$ref": "#/$defs/digest"
+                },
+                "auditor_attestation": {
+                    "$ref": "#/$defs/auditorAttestation"
+                },
+                "authorization_digest": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                },
+                "authorization_report": {
+                    "$ref": "#/$defs/authorizationReport"
+                },
+                "vote_invocation_ids": {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "uniqueItems": true,
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "publication_id": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "verified_target_digest": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                }
+            },
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {
+                            "candidate_fit_judge_report": {
+                                "type": "null"
+                            }
+                        },
+                        "required": [
+                            "candidate_fit_judge_report"
+                        ]
+                    },
+                    "then": {
+                        "properties": {
+                            "candidate_fit_report": {
+                                "$ref": "#/$defs/candidateFitPassingReport"
+                            },
+                            "candidate_fit_judge_report_digest": {
+                                "const": ""
+                            }
+                        }
+                    },
+                    "else": {
+                        "properties": {
+                            "candidate_fit_report": {
+                                "$ref": "#/$defs/candidateFitReport"
+                            },
+                            "candidate_fit_judge_report": {
+                                "$ref": "#/$defs/candidateFitJudgeProceedReport"
+                            },
+                            "candidate_fit_judge_report_digest": {
+                                "$ref": "#/$defs/digest"
+                            }
+                        }
+                    }
+                }
+            ]
+        },
+        "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+        },
+        "fitScore": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+        },
+        "candidateFitComponentScores": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "experience_match",
+                "skills_match",
+                "title_alignment",
+                "domain_match",
+                "education_match",
+                "certification_match",
+                "seniority_match"
+            ],
+            "properties": {
+                "experience_match": {
+                    "$ref": "#/$defs/fitScore"
+                },
+                "skills_match": {
+                    "$ref": "#/$defs/fitScore"
+                },
+                "title_alignment": {
+                    "$ref": "#/$defs/fitScore"
+                },
+                "domain_match": {
+                    "$ref": "#/$defs/fitScore"
+                },
+                "education_match": {
+                    "$ref": "#/$defs/fitScore"
+                },
+                "certification_match": {
+                    "$ref": "#/$defs/fitScore"
+                },
+                "seniority_match": {
+                    "$ref": "#/$defs/fitScore"
+                }
+            }
+        },
+        "candidateFitKnockout": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "code",
+                "category",
+                "requirement",
+                "candidate_has"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "category": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "requirement": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "candidate_has": {
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "candidateFitReport": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "schema_version",
+                "policy_version",
+                "scorer_version",
+                "run_id",
+                "case_id",
+                "as_of_date",
+                "threshold",
+                "semantic_mode",
+                "resume_digest",
+                "job_description_digest",
+                "score",
+                "component_scores",
+                "recommendation",
+                "hard_knockouts",
+                "extraction_trustworthy",
+                "passed",
+                "codes"
+            ],
+            "properties": {
+                "schema_version": {
+                    "const": "1.0.0"
+                },
+                "policy_version": {
+                    "const": "candidate-fit-policy-v2"
+                },
+                "scorer_version": {
+                    "const": "deterministic-job-fit-v1"
+                },
+                "run_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                },
+                "case_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                },
+                "as_of_date": {
+                    "type": "string",
+                    "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                },
+                "threshold": {
+                    "type": "number",
+                    "minimum": 40,
+                    "maximum": 95
+                },
+                "semantic_mode": {
+                    "const": "disabled"
+                },
+                "resume_digest": {
+                    "$ref": "#/$defs/digest"
+                },
+                "job_description_digest": {
+                    "$ref": "#/$defs/digest"
+                },
+                "score": {
+                    "$ref": "#/$defs/fitScore"
+                },
+                "component_scores": {
+                    "$ref": "#/$defs/candidateFitComponentScores"
+                },
+                "recommendation": {
+                    "enum": [
+                        "PROCEED",
+                        "REJECT"
+                    ]
+                },
+                "hard_knockouts": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                        "$ref": "#/$defs/candidateFitKnockout"
+                    }
+                },
+                "extraction_trustworthy": {
+                    "type": "boolean"
+                },
+                "passed": {
+                    "type": "boolean"
+                },
+                "codes": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                        "enum": [
+                            "UNTRUSTWORTHY_EXTRACTION",
+                            "HARD_KNOCKOUT",
+                            "SCORE_BELOW_THRESHOLD"
+                        ]
+                    }
+                }
+            }
+        },
+        "candidateFitPassingReport": {
+            "allOf": [
+                {
+                    "$ref": "#/$defs/candidateFitReport"
+                },
+                {
+                    "properties": {
+                        "recommendation": {
+                            "const": "PROCEED"
+                        },
+                        "hard_knockouts": {
+                            "maxItems": 0
+                        },
+                        "extraction_trustworthy": {
+                            "const": true
+                        },
+                        "passed": {
+                            "const": true
+                        },
+                        "codes": {
+                            "maxItems": 0
+                        },
+                        "score": {
+                            "minimum": 40
+                        }
+                    }
+                }
+            ],
+            "description": "A deterministic assessment that itself passed the configured threshold (which the validator pins; 40 is the clamp floor)."
+        },
+        "nativeAgentId": {
+            "type": "string",
+            "description": "hosts: api = hosted product runtime; codex/claude = legacy local CLI hosts",
+            "pattern": "^(codex|claude|api):[A-Za-z0-9._:-]{1,128}$"
+        },
+        "auditorAttestation": {
+            "description": "The final distinct native Auditor attestation, which must PASS the receipt draft digest.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "agent_id",
+                "artifact_digest",
+                "verdict",
+                "draft_digest"
+            ],
+            "properties": {
+                "agent_id": {
+                    "$ref": "#/$defs/nativeAgentId"
+                },
+                "artifact_digest": {
+                    "$ref": "#/$defs/digest"
+                },
+                "verdict": {
+                    "const": "PASS"
+                },
+                "draft_digest": {
+                    "$ref": "#/$defs/digest"
+                }
+            }
+        },
+        "voteBase": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "schema_version",
+                "name",
+                "invocation_id",
+                "passed",
+                "draft_digest",
+                "codes"
+            ],
+            "properties": {
+                "schema_version": {
+                    "const": "resume-team-vote/v1"
+                },
+                "name": {
+                    "enum": [
+                        "evidence",
+                        "human_voice",
+                        "canonical_integrity"
+                    ]
+                },
+                "invocation_id": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "passed": {
+                    "const": true
+                },
+                "draft_digest": {
+                    "$ref": "#/$defs/digest"
+                },
+                "codes": {
+                    "type": "array",
+                    "maxItems": 0
+                }
+            }
+        },
+        "evidenceVote": {
+            "allOf": [
+                {
+                    "$ref": "#/$defs/voteBase"
+                },
+                {
+                    "properties": {
+                        "name": {
+                            "const": "evidence"
+                        }
+                    }
+                }
+            ]
+        },
+        "humanVoiceVote": {
+            "allOf": [
+                {
+                    "$ref": "#/$defs/voteBase"
+                },
+                {
+                    "properties": {
+                        "name": {
+                            "const": "human_voice"
+                        }
+                    }
+                }
+            ]
+        },
+        "canonicalIntegrityVote": {
+            "allOf": [
+                {
+                    "$ref": "#/$defs/voteBase"
+                },
+                {
+                    "properties": {
+                        "name": {
+                            "const": "canonical_integrity"
+                        }
+                    }
+                }
+            ]
+        },
+        "authorizationReport": {
+            "description": "The complete passing report whose canonical digest equals the receipt authorization_digest and whose ordered invocation IDs equal vote_invocation_ids.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "schema_version",
+                "draft_digest",
+                "passed",
+                "codes",
+                "findings",
+                "votes"
+            ],
+            "properties": {
+                "schema_version": {
+                    "const": "resume-team-authorization/v1"
+                },
+                "draft_digest": {
+                    "$ref": "#/$defs/digest"
+                },
+                "passed": {
+                    "const": true
+                },
+                "codes": {
+                    "type": "array",
+                    "maxItems": 0
+                },
+                "findings": {
+                    "type": "array",
+                    "maxItems": 0
+                },
+                "votes": {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "prefixItems": [
+                        {
+                            "$ref": "#/$defs/evidenceVote"
+                        },
+                        {
+                            "$ref": "#/$defs/humanVoiceVote"
+                        },
+                        {
+                            "$ref": "#/$defs/canonicalIntegrityVote"
+                        }
+                    ],
+                    "items": false
+                }
+            }
+        },
+        "candidateFitJudgeReport": {
+            "title": "Candidate-fit judge verdict",
+            "description": "A reasoning-model verdict on whether tailoring may proceed. Untrusted until digest-bound to the exact run/resume/JD and until every requirement_quote is mechanically verified verbatim against the job description text; semantic enforcement is coordinator-owned (candidate_fit_judge.validate_candidate_fit_judge_report).",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "schema_version",
+                "prompt_version",
+                "judge_model",
+                "run_id",
+                "case_id",
+                "as_of_date",
+                "resume_digest",
+                "job_description_digest",
+                "verdict",
+                "fit_score",
+                "hard_gaps",
+                "rationale"
+            ],
+            "properties": {
+                "schema_version": {
+                    "const": "candidate-fit-judge/v1"
+                },
+                "prompt_version": {
+                    "const": "fit-judge-prompt/v1"
+                },
+                "judge_model": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                },
+                "run_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                },
+                "case_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                },
+                "as_of_date": {
+                    "type": "string",
+                    "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                },
+                "resume_digest": {
+                    "$ref": "#/$defs/digest"
+                },
+                "job_description_digest": {
+                    "$ref": "#/$defs/digest"
+                },
+                "verdict": {
+                    "enum": [
+                        "PROCEED",
+                        "DECLINE"
+                    ]
+                },
+                "fit_score": {
+                    "$ref": "#/$defs/fitScore"
+                },
+                "hard_gaps": {
+                    "type": "array",
+                    "maxItems": 12,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                            "requirement_quote",
+                            "candidate_has"
+                        ],
+                        "properties": {
+                            "requirement_quote": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 300
+                            },
+                            "candidate_has": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 400
+                            }
+                        }
+                    }
+                },
+                "rationale": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                }
+            }
+        },
+        "candidateFitJudgeProceedReport": {
+            "description": "A judge verdict that authorizes proceeding past a non-passing deterministic assessment.",
+            "allOf": [
+                {
+                    "$ref": "#/$defs/candidateFitJudgeReport"
+                },
+                {
+                    "properties": {
+                        "verdict": {
+                            "const": "PROCEED"
+                        }
+                    }
+                }
+            ]
         }
-      }
-    }
-  ]
+    },
+    "allOf": [
+        {
+            "if": {
+                "properties": {
+                    "published": {
+                        "const": true
+                    }
+                },
+                "required": [
+                    "published"
+                ]
+            },
+            "then": {
+                "properties": {
+                    "terminal_class": {
+                        "const": "PUBLISHED"
+                    },
+                    "success_reported": {
+                        "const": true
+                    },
+                    "diagnostics": {
+                        "type": "array",
+                        "maxItems": 0
+                    },
+                    "final_draft_digest": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "authorization_receipt": {
+                        "$ref": "#/$defs/authorizationReceipt"
+                    },
+                    "authorization_receipt_digest": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "authorization_receipt_path": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "candidate_fit_report": {
+                        "$ref": "#/$defs/candidateFitReport"
+                    },
+                    "candidate_fit_report_digest": {
+                        "$ref": "#/$defs/digest"
+                    }
+                }
+            },
+            "else": {
+                "properties": {
+                    "success_reported": {
+                        "const": false
+                    },
+                    "final_draft_digest": {
+                        "const": ""
+                    },
+                    "authorization_receipt": {
+                        "type": "null"
+                    },
+                    "authorization_receipt_digest": {
+                        "const": ""
+                    },
+                    "authorization_receipt_path": {
+                        "const": ""
+                    }
+                }
+            }
+        },
+        {
+            "if": {
+                "properties": {
+                    "candidate_fit_report": {
+                        "type": "null"
+                    }
+                },
+                "required": [
+                    "candidate_fit_report"
+                ]
+            },
+            "then": {
+                "properties": {
+                    "candidate_fit_report_digest": {
+                        "const": ""
+                    }
+                }
+            },
+            "else": {
+                "properties": {
+                    "candidate_fit_report": {
+                        "$ref": "#/$defs/candidateFitReport"
+                    },
+                    "candidate_fit_report_digest": {
+                        "$ref": "#/$defs/digest"
+                    }
+                }
+            }
+        },
+        {
+            "if": {
+                "properties": {
+                    "published": {
+                        "const": true
+                    },
+                    "candidate_fit_judge_report": {
+                        "type": "null"
+                    }
+                },
+                "required": [
+                    "published",
+                    "candidate_fit_judge_report"
+                ]
+            },
+            "then": {
+                "properties": {
+                    "candidate_fit_report": {
+                        "$ref": "#/$defs/candidateFitPassingReport"
+                    }
+                }
+            }
+        },
+        {
+            "if": {
+                "properties": {
+                    "published": {
+                        "const": true
+                    }
+                },
+                "required": [
+                    "published"
+                ],
+                "not": {
+                    "properties": {
+                        "candidate_fit_judge_report": {
+                            "type": "null"
+                        }
+                    },
+                    "required": [
+                        "candidate_fit_judge_report"
+                    ]
+                }
+            },
+            "then": {
+                "properties": {
+                    "candidate_fit_judge_report": {
+                        "$ref": "#/$defs/candidateFitJudgeProceedReport"
+                    }
+                }
+            }
+        },
+        {
+            "if": {
+                "properties": {
+                    "candidate_fit_judge_report": {
+                        "type": "null"
+                    }
+                },
+                "required": [
+                    "candidate_fit_judge_report"
+                ]
+            },
+            "then": {
+                "properties": {
+                    "candidate_fit_judge_report_digest": {
+                        "const": ""
+                    }
+                }
+            },
+            "else": {
+                "properties": {
+                    "candidate_fit_judge_report": {
+                        "$ref": "#/$defs/candidateFitJudgeReport"
+                    },
+                    "candidate_fit_judge_report_digest": {
+                        "$ref": "#/$defs/digest"
+                    }
+                }
+            }
+        }
+    ]
 }

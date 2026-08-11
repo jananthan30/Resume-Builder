@@ -36,6 +36,7 @@ from candidate_fit_preflight import (
 from candidate_fit_preflight import (
     assess_candidate_fit as _deterministic_candidate_fit_assessment,
 )
+from candidate_fit_judge import validate_candidate_fit_judge_report
 from claim_provenance_audit import claim_supported_by_source
 
 PROTOCOL_VERSION = "resume-team/v2"
@@ -1292,6 +1293,8 @@ def _result(
     authorization_receipt_path: str = "",
     candidate_fit_report: dict[str, Any] | None = None,
     candidate_fit_report_digest: str = "",
+    candidate_fit_judge_report: dict[str, Any] | None = None,
+    candidate_fit_judge_report_digest: str = "",
     digest_fn: Callable[[Any], str] = _digest,
 ) -> dict[str, Any]:
     return {
@@ -1311,6 +1314,12 @@ def _result(
         "candidate_fit_report": candidate_fit_report,
         "candidate_fit_report_digest": (
             candidate_fit_report_digest if candidate_fit_report is not None else ""
+        ),
+        "candidate_fit_judge_report": candidate_fit_judge_report,
+        "candidate_fit_judge_report_digest": (
+            candidate_fit_judge_report_digest
+            if candidate_fit_judge_report is not None
+            else ""
         ),
     }
 
@@ -1732,6 +1741,8 @@ def _final_receipt(
     publication_id: str,
     candidate_fit_report: dict[str, Any],
     candidate_fit_report_digest: str,
+    candidate_fit_judge_report: dict[str, Any] | None = None,
+    candidate_fit_judge_report_digest: str = "",
 ) -> dict[str, Any]:
     return {
         "schema_version": FINAL_RECEIPT_VERSION,
@@ -1742,6 +1753,12 @@ def _final_receipt(
         "job_description_digest": _digest(request["job_description"]),
         "candidate_fit_report": candidate_fit_report,
         "candidate_fit_report_digest": candidate_fit_report_digest,
+        "candidate_fit_judge_report": candidate_fit_judge_report,
+        "candidate_fit_judge_report_digest": (
+            candidate_fit_judge_report_digest
+            if candidate_fit_judge_report is not None
+            else ""
+        ),
         "researcher_agent_id": researcher_packet["agent_id"],
         "researcher_artifact_digest": researcher_packet["artifact_digest"],
         "auditor_attestation": {
@@ -1996,13 +2013,60 @@ def run_team(request: dict, adapter: object, services: object) -> dict:
     if not fit_valid:
         return _result(request, "FAILED:CANDIDATE_FIT_PREFLIGHT")
     candidate_fit_report_digest = _digest(candidate_fit_report)
+    candidate_fit_judge_report: dict[str, Any] | None = None
+    candidate_fit_judge_report_digest = ""
     if not fit_passed:
-        return _result(
-            request,
-            "REJECTED:CANDIDATE_FIT",
-            candidate_fit_report=candidate_fit_report,
-            candidate_fit_report_digest=candidate_fit_report_digest,
-        )
+        # The deterministic scanner reads postings with regexes and is
+        # demoted to advisory on rejection: a reasoning judge, when the
+        # trusted services expose one, holds the final refusal decision.
+        # Its verdict is untrusted model output until it survives
+        # validate_candidate_fit_judge_report, which digest-binds it to this
+        # exact run/resume/JD and mechanically verifies every cited
+        # requirement against the posting text. No valid judge verdict —
+        # service absent, errored, or citation check failed — means the
+        # deterministic rejection stands unchanged: the gate degrades to
+        # its old behavior, never to an open gate.
+        judge_service = getattr(services, "judge_candidate_fit", None)
+        judge_report: Any = None
+        if callable(judge_service):
+            try:
+                judge_report = judge_service(
+                    request["master_resume"],
+                    request["job_description"],
+                    request["run_id"],
+                    request["case_id"],
+                    candidate_fit_report,
+                )
+            except Exception:
+                judge_report = None
+        judge_valid = False
+        judge_proceed = False
+        if judge_report is not None:
+            judge_valid, judge_proceed = validate_candidate_fit_judge_report(
+                judge_report,
+                run_id=request["run_id"],
+                case_id=request["case_id"],
+                master_resume=request["master_resume"],
+                job_description=request["job_description"],
+            )
+        if judge_valid:
+            candidate_fit_judge_report = json.loads(
+                _canonical_json(judge_report)
+            )
+            candidate_fit_judge_report_digest = _digest(
+                candidate_fit_judge_report
+            )
+        if not (judge_valid and judge_proceed):
+            return _result(
+                request,
+                "REJECTED:CANDIDATE_FIT",
+                candidate_fit_report=candidate_fit_report,
+                candidate_fit_report_digest=candidate_fit_report_digest,
+                candidate_fit_judge_report=candidate_fit_judge_report,
+                candidate_fit_judge_report_digest=(
+                    candidate_fit_judge_report_digest
+                ),
+            )
 
     seen_agent_ids: set[str] = set()
     seen_packets: set[str] = set()
@@ -2016,6 +2080,8 @@ def run_team(request: dict, adapter: object, services: object) -> dict:
             terminal,
             candidate_fit_report=candidate_fit_report,
             candidate_fit_report_digest=candidate_fit_report_digest,
+            candidate_fit_judge_report=candidate_fit_judge_report,
+            candidate_fit_judge_report_digest=candidate_fit_judge_report_digest,
         )
 
     def invoke_role(
@@ -2194,6 +2260,10 @@ def run_team(request: dict, adapter: object, services: object) -> dict:
             "job_description_digest": _digest(request["job_description"]),
             "candidate_fit_report": candidate_fit_report,
             "candidate_fit_report_digest": candidate_fit_report_digest,
+            "candidate_fit_judge_report": candidate_fit_judge_report,
+            "candidate_fit_judge_report_digest": (
+                candidate_fit_judge_report_digest
+            ),
             "researcher_agent_id": researcher["agent_id"],
             "researcher_artifact_digest": researcher["artifact_digest"],
             "auditor_attestation": {
@@ -2224,6 +2294,8 @@ def run_team(request: dict, adapter: object, services: object) -> dict:
             receipt["publication_id"],
             candidate_fit_report,
             candidate_fit_report_digest,
+            candidate_fit_judge_report,
+            candidate_fit_judge_report_digest,
         )
         try:
             verification = verify_publication(receipt["publication_id"])
@@ -2249,6 +2321,8 @@ def run_team(request: dict, adapter: object, services: object) -> dict:
             ],
             candidate_fit_report=candidate_fit_report,
             candidate_fit_report_digest=candidate_fit_report_digest,
+            candidate_fit_judge_report=candidate_fit_judge_report,
+            candidate_fit_judge_report_digest=candidate_fit_judge_report_digest,
         )
 
     def combined_findings(
@@ -2487,6 +2561,7 @@ __all__ = [
     "normalize_native_payload",
     "run_team",
     "validate_candidate_fit_report",
+    "validate_candidate_fit_judge_report",
     "validate_recomputed_candidate_fit_report",
     "validate_handoff",
 ]

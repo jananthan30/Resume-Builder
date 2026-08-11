@@ -2242,17 +2242,49 @@ def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
                 logging.getLogger("scorer.rewrite").error(
                     "rewrite run not published (user=%s terminal=%s)", user_id, terminal
                 )
-                # A candidate-fit refusal is deterministic policy, not an
-                # outage: "try again in a few minutes" would be a lie, and the
-                # fit gate has no bypass by design. Tell the user the truth.
+                # A candidate-fit refusal is judged policy, not an outage:
+                # "try again in a few minutes" would be a lie. A reasoning
+                # judge holds the final refusal decision (the deterministic
+                # scanner is advisory), so when its verdict is present the
+                # message is built from its own quoted evidence.
                 if terminal.startswith("REJECTED:CANDIDATE_FIT"):
+                    judge = result.get("candidate_fit_judge_report") or {}
+                    if judge.get("verdict") == "DECLINE":
+                        parts = [
+                            "We reviewed this role against your resume and "
+                            "decided not to tailor for it — the tool never "
+                            "invents experience to close a gap."
+                        ]
+                        rationale = str(judge.get("rationale") or "").strip()
+                        if rationale:
+                            parts.append(rationale)
+                        gaps = judge.get("hard_gaps") or []
+                        quoted = "; ".join(
+                            f"“{str(g.get('requirement_quote', '')).strip()[:120]}”"
+                            f" (you show: {str(g.get('candidate_has', '')).strip()[:80]})"
+                            for g in gaps[:2]
+                            if str(g.get("requirement_quote", "")).strip()
+                        )
+                        if quoted:
+                            parts.append(f"The posting requires: {quoted}.")
+                        parts.append(
+                            "If your saved resume is missing relevant work, "
+                            "update it and try again."
+                        )
+                        raise HTTPException(
+                            status_code=409, detail=" ".join(parts)
+                        )
+                    # No judge verdict was reachable (no key, transport
+                    # failure, or invalid citations) — the deterministic
+                    # rejection stands, clearly labeled as a heuristic.
                     fit = result.get("candidate_fit_report") or {}
                     score = fit.get("score")
                     knockouts = fit.get("hard_knockouts") or []
                     parts = [
-                        "Our fit check found this role is a significant stretch "
-                        "for your resume, so the tailoring pipeline declined to "
-                        "run — it never invents experience to close a gap."
+                        "Our automated fit check couldn't confirm this role "
+                        "is close enough to your resume, so tailoring didn't "
+                        "run — the tool never invents experience to close a "
+                        "gap. This check is a heuristic and can be wrong."
                     ]
                     if isinstance(score, (int, float)):
                         bar = fit.get("threshold")
@@ -2270,9 +2302,9 @@ def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
                             if str(k.get("requirement", "")).strip()
                         )
                         parts.append(
-                            f"Hard requirement not met: {reqs}."
+                            f"Flagged requirement: {reqs}."
                             if reqs
-                            else f"Hard requirements not met: {len(knockouts)}."
+                            else f"Flagged requirements: {len(knockouts)}."
                         )
                     parts.append(
                         "Try a role closer to your experience, or update your "

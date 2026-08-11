@@ -28,6 +28,11 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from candidate_fit_preflight import assess_candidate_fit as _trusted_candidate_fit_assessment
+from candidate_fit_judge import (
+    JudgeUnavailable,
+    judge_candidate_fit as _llm_candidate_fit_judgment,
+    validate_candidate_fit_judge_report,
+)
 from evidence_audit import audit_text as _trusted_evidence_audit
 from human_voice_audit import audit_text as _trusted_human_voice_audit
 from resume_integrity_audit import audit_resume_text as _trusted_resume_integrity_audit
@@ -1196,13 +1201,14 @@ class LocalTrustedServices:
         case_id: str,
         job_description: str,
         candidate_fit_report: dict[str, Any],
+        candidate_fit_judge_report: dict[str, Any] | None = None,
         runner: ProcessRunner = _run_process,
         audit_timeout: float = 120.0,
     ) -> None:
         self.project_root = Path(project_root).expanduser().resolve(strict=True)
         self.config_path = Path(config_path).expanduser().resolve(strict=True)
         self.master = master
-        fit_valid, _ = validate_recomputed_candidate_fit_report(
+        fit_valid, fit_passed = validate_recomputed_candidate_fit_report(
             candidate_fit_report,
             run_id=run_id,
             case_id=case_id,
@@ -1218,6 +1224,33 @@ class LocalTrustedServices:
         self.candidate_fit_report_digest = canonical_digest(
             self._candidate_fit_report
         )
+        # A judge report is accepted at construction only when it survives
+        # the digest-and-citation validator against these exact bound inputs.
+        # When the deterministic report did not pass, a valid PROCEED judge
+        # report is the only thing that later lets publish() commit.
+        self._candidate_fit_judge_report: dict[str, Any] | None = None
+        self.candidate_fit_judge_report_digest = ""
+        self._judge_proceed = False
+        if candidate_fit_judge_report is not None:
+            judge_valid, judge_proceed = validate_candidate_fit_judge_report(
+                candidate_fit_judge_report,
+                run_id=run_id,
+                case_id=case_id,
+                master_resume=master.text,
+                job_description=job_description,
+            )
+            if not judge_valid:
+                raise ValueError("invalid trusted candidate-fit judgment")
+            self._candidate_fit_judge_report = json.loads(
+                _canonical_json(candidate_fit_judge_report)
+            )
+            self.candidate_fit_judge_report_digest = canonical_digest(
+                self._candidate_fit_judge_report
+            )
+            self._judge_proceed = judge_proceed
+        if not fit_passed and not self._judge_proceed:
+            raise ValueError("candidate-fit gate not satisfied")
+        self._fit_passed = fit_passed
         output = Path(output_dir).expanduser().absolute()
         if output.is_symlink():
             raise ValueError("unsafe output directory")
@@ -1268,6 +1301,42 @@ class LocalTrustedServices:
         ):
             raise ValueError("candidate-fit assessment binding mismatch")
         return json.loads(_canonical_json(self._candidate_fit_report))
+
+    def judge_candidate_fit(
+        self,
+        master_resume: str,
+        job_description: str,
+        run_id: str,
+        case_id: str,
+        deterministic_report: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Return the exact precomputed judge verdict for the bound inputs.
+
+        Raises when no judge verdict was supplied at construction — the
+        runtime treats that as "no override exists" and lets the
+        deterministic verdict stand.
+        """
+
+        if self._candidate_fit_judge_report is None:
+            raise LookupError("no candidate-fit judgment available")
+        valid, _ = validate_candidate_fit_judge_report(
+            self._candidate_fit_judge_report,
+            run_id=run_id,
+            case_id=case_id,
+            master_resume=master_resume,
+            job_description=job_description,
+        )
+        if (
+            not valid
+            or run_id != self.run_id
+            or case_id != self.case_id
+            or master_resume != self.master.text
+            or job_description != self._job_description
+            or canonical_digest(self._candidate_fit_judge_report)
+            != self.candidate_fit_judge_report_digest
+        ):
+            raise ValueError("candidate-fit judgment binding mismatch")
+        return json.loads(_canonical_json(self._candidate_fit_judge_report))
 
     def _rollback_owned_target(
         self, target: Path, identity: tuple[int, int]
@@ -1591,6 +1660,8 @@ class LocalTrustedServices:
             "job_description_digest",
             "candidate_fit_report",
             "candidate_fit_report_digest",
+            "candidate_fit_judge_report",
+            "candidate_fit_judge_report_digest",
             "researcher_agent_id",
             "researcher_artifact_digest",
             "auditor_attestation",
@@ -1622,12 +1693,20 @@ class LocalTrustedServices:
             or metadata.get("job_description_digest")
             != self.job_description_digest
             or not fit_valid
-            or not fit_passed
+            # The deterministic verdict alone no longer gates publication:
+            # a construction-validated PROCEED judge verdict carries equal
+            # authority. One of the two must hold, and the metadata judge
+            # fields must be byte-identical to the bound construction copy.
+            or not (fit_passed or self._judge_proceed)
             or fit_report != self._candidate_fit_report
             or metadata.get("candidate_fit_report_digest")
             != self.candidate_fit_report_digest
             or metadata.get("candidate_fit_report_digest")
             != canonical_digest(fit_report)
+            or metadata.get("candidate_fit_judge_report")
+            != self._candidate_fit_judge_report
+            or metadata.get("candidate_fit_judge_report_digest")
+            != self.candidate_fit_judge_report_digest
             or not isinstance(metadata.get("researcher_agent_id"), str)
             or not re.fullmatch(
                 r"(?:codex|claude):[A-Za-z0-9._:-]{1,128}",
@@ -1764,6 +1843,12 @@ class LocalTrustedServices:
             "candidate_fit_report": metadata["candidate_fit_report"],
             "candidate_fit_report_digest": metadata[
                 "candidate_fit_report_digest"
+            ],
+            "candidate_fit_judge_report": metadata[
+                "candidate_fit_judge_report"
+            ],
+            "candidate_fit_judge_report_digest": metadata[
+                "candidate_fit_judge_report_digest"
             ],
             "researcher_agent_id": metadata["researcher_agent_id"],
             "researcher_artifact_digest": metadata[
@@ -1917,6 +2002,7 @@ def check_host(
             "resume-team-final-receipt.schema.json": FINAL_RECEIPT_VERSION,
             "resume-team-result.schema.json": RESULT_VERSION,
             "candidate-fit-report.schema.json": "candidate-fit-report/v1",
+            "candidate-fit-judge.schema.json": "candidate-fit-judge/v1",
         }
         for filename, identifier in expected.items():
             schema = json.loads(
@@ -2108,6 +2194,7 @@ def _failure_result(
     terminal: str,
     *,
     candidate_fit_report: dict[str, Any] | None = None,
+    candidate_fit_judge_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": RESULT_VERSION,
@@ -2125,6 +2212,12 @@ def _failure_result(
         "candidate_fit_report_digest": (
             canonical_digest(candidate_fit_report)
             if candidate_fit_report is not None
+            else ""
+        ),
+        "candidate_fit_judge_report": candidate_fit_judge_report,
+        "candidate_fit_judge_report_digest": (
+            canonical_digest(candidate_fit_judge_report)
+            if candidate_fit_judge_report is not None
             else ""
         ),
     }
@@ -2238,15 +2331,53 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(_canonical_json(result))
             return 1
+        candidate_fit_judge_report: dict[str, Any] | None = None
         if not fit_passed:
-            result = _failure_result(
-                run_id,
-                case_id,
-                "REJECTED:CANDIDATE_FIT",
-                candidate_fit_report=candidate_fit_report,
-            )
-            print(_canonical_json(result))
-            return 1
+            # The deterministic scanner's rejection is advisory: the
+            # reasoning judge holds the final refusal decision when it is
+            # reachable. Any judge failure leaves the rejection standing.
+            try:
+                judge_report: dict[str, Any] | None = (
+                    _llm_candidate_fit_judgment(
+                        master.text,
+                        job_description,
+                        run_id=run_id,
+                        case_id=case_id,
+                        as_of_date=as_of_date,
+                        deterministic_report=candidate_fit_report,
+                        cache_dir=(
+                            project_root
+                            / ".resume-team-state"
+                            / "fit-judge-cache"
+                        ),
+                    )
+                )
+            except JudgeUnavailable:
+                judge_report = None
+            judge_valid = False
+            judge_proceed = False
+            if judge_report is not None:
+                judge_valid, judge_proceed = (
+                    validate_candidate_fit_judge_report(
+                        judge_report,
+                        run_id=run_id,
+                        case_id=case_id,
+                        master_resume=master.text,
+                        job_description=job_description,
+                    )
+                )
+            if judge_valid:
+                candidate_fit_judge_report = judge_report
+            if not (judge_valid and judge_proceed):
+                result = _failure_result(
+                    run_id,
+                    case_id,
+                    "REJECTED:CANDIDATE_FIT",
+                    candidate_fit_report=candidate_fit_report,
+                    candidate_fit_judge_report=candidate_fit_judge_report,
+                )
+                print(_canonical_json(result))
+                return 1
         if not args.output_dir:
             raise ValueError("output directory required")
         # Preserve the final path component so LocalTrustedServices can reject
@@ -2270,6 +2401,7 @@ def main(argv: list[str] | None = None) -> int:
             case_id=case_id,
             job_description=job_description,
             candidate_fit_report=candidate_fit_report,
+            candidate_fit_judge_report=candidate_fit_judge_report,
             audit_timeout=args.audit_timeout_seconds,
         )
         services.ensure_job_description(job_description)

@@ -63,7 +63,8 @@ Resume Builder/
 ├── scorer_server.py                        # FastAPI server for ATS/HR/LLM scoring
 ├── resume_builder.py                       # Retired direct-rewrite CLI; native-team migration guard
 ├── multi_agent_team.py                    # Vendor-neutral fail-closed team controller
-├── candidate_fit_preflight.py             # Master-only exact-JD first gate
+├── candidate_fit_preflight.py             # Deterministic fit scan (advisory on rejection)
+├── candidate_fit_judge.py                 # LLM reasoning judge — final refusal authority
 ├── native_resume_team.py                  # Hardened host adapter and Markdown draft publisher
 ├── schemas/resume-team-handoff.schema.json # Public strict handoff schema
 ├── schemas/resume-team-authorization.schema.json # Three-vote report schema
@@ -217,7 +218,7 @@ CERTIFICATIONS & LICENSURE
 ## Workflow (Native Four-Role Resume Team)
 
 ```
-PHASE 0: CANDIDATE FIT ────────── Master-only exact-JD gate (>=70, no knockouts)
+PHASE 0: CANDIDATE FIT ────────── Deterministic scan; LLM judge decides refusals
 PHASE 1: RESEARCHER ────────────── JD-only rubric and evidence spans
 PHASE 2: WRITER ───────────────── Master-resume-bound complete draft
 PHASE 3: AUDITOR ──────────────── Independent PASS/FAIL; no editing authority
@@ -247,9 +248,17 @@ explicitly requests those pins; Claude must not receive Codex-only flags.
    canonical, digest-bound `candidate-fit-policy-v2` report with score at least
    the default bar (50; `CANDIDATE_FIT_THRESHOLD`), trustworthy extraction,
    zero hard knockouts, `passed: true`, and no codes.
-   A lower score or hard knockout is
-   `REJECTED:CANDIDATE_FIT`; unavailable, malformed, stale, or mismatched analysis
-   is `FAILED:CANDIDATE_FIT_PREFLIGHT`. Neither has a workflow bypass.
+   The deterministic verdict is advisory on rejection: when it does not pass,
+   the runtime consults the reasoning judge (`candidate_fit_judge.py`,
+   `candidate-fit-judge/v1`) as the final refusal authority. A judge verdict
+   counts only after `validate_candidate_fit_judge_report` digest-binds it to
+   the exact run/resume/JD and verifies every cited requirement verbatim
+   against the posting; judge PROCEED opens the gate (the receipt then carries
+   both reports), judge DECLINE — or any judge failure: no key, transport
+   error, invalid citation — leaves the deterministic rejection standing as
+   `REJECTED:CANDIDATE_FIT`. Unavailable, malformed, stale, or mismatched
+   deterministic analysis is `FAILED:CANDIDATE_FIT_PREFLIGHT` and is never
+   judge-recoverable.
    Policy v2 calibration: tool knockouts ground only in requirements sections
    (duties prose never disqualifies), doctorates named in requirement ladders
    are alternative routes, and knockouts degrade the score with an informative
@@ -280,8 +289,12 @@ Before finalization, resolve the result's `authorization_receipt_path` against t
 output directory when relative, require its resolved parent to equal that directory,
 and read only regular, non-symlink `resume-team-final-receipt/v2` JSON. Match
 `authorization_receipt_digest`, the inline receipt, run/case IDs, and the exact
-passing `candidate_fit_report`/`candidate_fit_report_digest` to the result and
-independently validated preflight. Match draft/verified-target digests to the
+`candidate_fit_report`/`candidate_fit_report_digest` to the result and
+independently validated preflight; the deterministic report must either have
+passed on its own (judge fields null/empty) or be accompanied by a
+digest-bound, citation-verified PROCEED `candidate_fit_judge_report` whose
+digest matches `candidate_fit_judge_report_digest`.
+Match draft/verified-target digests to the
 actual `resume.md`. Recompute `source_digest` from the current configured master
 and `job_description_digest` from the fixed sibling `job_description.txt`; require
 a SHA-256 Researcher artifact and distinct same-host native Researcher/Auditor

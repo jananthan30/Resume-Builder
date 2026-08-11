@@ -31,10 +31,12 @@ no *resume* text reaches a user except through the fully audited path.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 import agent.skills_loader as skills_loader
@@ -456,6 +458,54 @@ class CloudTrustedServices:
             as_of_date=date.today().isoformat(),
         )
 
+    # --- judge_candidate_fit ---------------------------------------------
+    def judge_candidate_fit(
+        self,
+        master_resume: str,
+        job_description: str,
+        run_id: str,
+        case_id: str,
+        deterministic_report: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Live reasoning-judge verdict, consulted only on deterministic
+        rejection.
+
+        The runtime revalidates whatever this returns
+        (validate_candidate_fit_judge_report digest-binds it and verifies
+        every citation), so this seam only has to produce, cache, and log —
+        never to be trusted. Raises on any failure; the runtime then lets
+        the deterministic rejection stand.
+        """
+        import candidate_fit_judge
+
+        from cloud.config import settings as cloud_settings
+
+        cache_dir = (
+            Path(cloud_settings.DB_PATH).resolve().parent / "fit_judge_cache"
+        )
+        report = candidate_fit_judge.judge_candidate_fit(
+            master_resume,
+            job_description,
+            run_id=run_id,
+            case_id=case_id,
+            as_of_date=date.today().isoformat(),
+            deterministic_report=deterministic_report,
+            cache_dir=cache_dir,
+        )
+        # Every consultation is, by construction, a deterministic rejection —
+        # so each log line is one row of the scanner-vs-judge disagreement
+        # corpus (judge PROCEED = scanner overruled).
+        logging.getLogger("scorer.fit_judge").info(
+            "fit-judge run=%s det_score=%s det_knockouts=%d judge=%s "
+            "judge_score=%s",
+            run_id,
+            (deterministic_report or {}).get("score"),
+            len((deterministic_report or {}).get("hard_knockouts") or []),
+            report.get("verdict"),
+            report.get("fit_score"),
+        )
+        return report
+
     # --- audit_draft: three real, in-process deterministic votes --------
     @staticmethod
     def _vote(name: str, passed: bool, codes: list[str], draft_digest: str) -> dict[str, Any]:
@@ -614,6 +664,12 @@ class CloudTrustedServices:
             "job_description_digest": metadata["job_description_digest"],
             "candidate_fit_report": metadata["candidate_fit_report"],
             "candidate_fit_report_digest": metadata["candidate_fit_report_digest"],
+            "candidate_fit_judge_report": metadata.get(
+                "candidate_fit_judge_report"
+            ),
+            "candidate_fit_judge_report_digest": metadata.get(
+                "candidate_fit_judge_report_digest", ""
+            ),
             "researcher_agent_id": metadata["researcher_agent_id"],
             "researcher_artifact_digest": metadata["researcher_artifact_digest"],
             "auditor_attestation": metadata["auditor_attestation"],
@@ -898,6 +954,7 @@ def run_resume_team(
         "status": "failed",
         "error": terminal_class,
         "candidate_fit_report": result.get("candidate_fit_report"),
+        "candidate_fit_judge_report": result.get("candidate_fit_judge_report"),
     }
 
 
