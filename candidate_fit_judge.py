@@ -31,9 +31,11 @@ Import safety follows ``agent.host_anthropic``: the ``anthropic`` SDK is
 imported lazily inside the default transport only. ``import
 candidate_fit_judge`` succeeds with no SDK installed and no key set.
 
-Determinism: the model is called at temperature 0 and verdicts may be cached
-by ``(resume digest, JD digest, model, prompt version)``, so one
-resume/posting pair keeps one verdict across retries.
+Verdict stability: verdicts may be cached by ``(resume digest, JD digest,
+model, prompt version)``, so one resume/posting pair keeps one verdict
+across retries. (Temperature pinning is not available on current models —
+non-default sampling parameters are rejected — so the cache is the
+stability mechanism.)
 """
 
 from __future__ import annotations
@@ -66,7 +68,10 @@ _MAX_QUOTE_CHARS = 300
 _MAX_CANDIDATE_HAS_CHARS = 400
 _MAX_RATIONALE_CHARS = 2_000
 _MAX_MODEL_NAME_CHARS = 128
-_MAX_OUTPUT_TOKENS = 2_000
+# Room for the model's (adaptive) thinking plus the JSON verdict — on current
+# models max_tokens caps both together, and a squeezed budget truncates the
+# JSON mid-object.
+_MAX_OUTPUT_TOKENS = 8_000
 
 _JUDGE_REPORT_KEYS = frozenset(
     {
@@ -286,10 +291,12 @@ def _default_llm_call(system: str, user: str, model: str) -> str:
         raise JudgeUnavailable("no API key configured")
     try:
         client = anthropic.Anthropic()
+        # No sampling parameters: current models reject non-default
+        # temperature/top_p with a 400. Verdict stability comes from the
+        # (resume, JD, model, prompt) cache, not from temperature pinning.
         response = client.messages.create(
             model=model,
             max_tokens=_MAX_OUTPUT_TOKENS,
-            temperature=0,
             system=system,
             messages=[{"role": "user", "content": user}],
         )

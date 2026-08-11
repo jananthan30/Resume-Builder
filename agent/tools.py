@@ -482,15 +482,27 @@ class CloudTrustedServices:
         cache_dir = (
             Path(cloud_settings.DB_PATH).resolve().parent / "fit_judge_cache"
         )
-        report = candidate_fit_judge.judge_candidate_fit(
-            master_resume,
-            job_description,
-            run_id=run_id,
-            case_id=case_id,
-            as_of_date=date.today().isoformat(),
-            deterministic_report=deterministic_report,
-            cache_dir=cache_dir,
-        )
+        try:
+            report = candidate_fit_judge.judge_candidate_fit(
+                master_resume,
+                job_description,
+                run_id=run_id,
+                case_id=case_id,
+                as_of_date=date.today().isoformat(),
+                deterministic_report=deterministic_report,
+                cache_dir=cache_dir,
+            )
+        except Exception:
+            # The runtime treats any raise as "no override exists" and keeps
+            # the deterministic rejection — correct, but it swallows the
+            # exception, so this seam is the only place the operator can see
+            # WHY the judge never ruled (bad model ID, 400, timeout, ...).
+            logging.getLogger("scorer.fit_judge").exception(
+                "fit-judge unavailable run=%s det_score=%s",
+                run_id,
+                (deterministic_report or {}).get("score"),
+            )
+            raise
         # Every consultation is, by construction, a deterministic rejection —
         # so each log line is one row of the scanner-vs-judge disagreement
         # corpus (judge PROCEED = scanner overruled).
