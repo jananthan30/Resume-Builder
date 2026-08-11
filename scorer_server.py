@@ -2255,7 +2255,12 @@ def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
                         "run — it never invents experience to close a gap."
                     ]
                     if isinstance(score, (int, float)):
-                        parts.append(f"Fit score: {round(score)} (needs 70).")
+                        bar = fit.get("threshold")
+                        if not isinstance(bar, (int, float)):
+                            bar = candidate_fit_preflight.CANDIDATE_FIT_THRESHOLD
+                        parts.append(
+                            f"Fit score: {round(score)} (needs {round(bar)})."
+                        )
                     if knockouts:
                         # Name the requirement: the knockout detector has known
                         # false positives, so the user must be able to judge it.
