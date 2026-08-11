@@ -3106,6 +3106,62 @@ def profile_put(req: ProfileUpdateRequest, auth=Depends(verify_api_key)):
 
 
 # =============================================================================
+# FEEDBACK — signed-in or anonymous; the only write anonymous users get
+# =============================================================================
+
+
+class FeedbackRequest(BaseModel):
+    """A message from a user, with an optional reply-to email."""
+    message: str = Field(..., description="The feedback text")
+    email: str = Field("", description="Optional reply-to email")
+    page: str = Field("", description="Where in the app it was sent from")
+
+
+@app.post("/feedback")
+def feedback_submit(req: FeedbackRequest, auth=Depends(verify_api_key)):
+    """Store feedback. Anonymous is allowed on purpose — launch-day visitors
+    without accounts are exactly who we want to hear from. Rate limiting
+    rides on verify_api_key; size caps stop paste-bombs."""
+    if not CLOUD_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Feedback unavailable right now.")
+    message = req.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Write a little something first.")
+    if len(message) > 5000:
+        raise HTTPException(status_code=400, detail="Please keep feedback under 5000 characters.")
+    if len(req.email) > 254 or len(req.page) > 200:
+        raise HTTPException(status_code=400, detail="Invalid field length.")
+    user_id = _get_user_id(auth)  # None for anonymous — stored as NULL
+    conn = db_get_conn(cloud_settings.DB_PATH)
+    try:
+        conn.execute(
+            "INSERT INTO feedback (user_id, email, message, page) VALUES (?, ?, ?, ?)",
+            (user_id, req.email.strip(), message, req.page.strip()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"status": "received"}
+
+
+@app.get("/admin/feedback")
+def feedback_list(request: Request):
+    """All feedback, newest first. Admin secret required."""
+    _verify_admin_secret(request)
+    if not CLOUD_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Feedback unavailable.")
+    conn = db_get_conn(cloud_settings.DB_PATH)
+    try:
+        rows = conn.execute(
+            "SELECT id, user_id, email, message, page, created_at "
+            "FROM feedback ORDER BY id DESC LIMIT 200"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {"feedback": [dict(r) for r in rows]}
+
+
+# =============================================================================
 # CONNECTIONS — warm-path referrals from the user's own LinkedIn export
 # =============================================================================
 
