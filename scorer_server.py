@@ -2257,8 +2257,17 @@ def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
                     if isinstance(score, (int, float)):
                         parts.append(f"Fit score: {round(score)} (needs 70).")
                     if knockouts:
+                        # Name the requirement: the knockout detector has known
+                        # false positives, so the user must be able to judge it.
+                        reqs = "; ".join(
+                            f"“{str(k.get('requirement', '')).strip()[:120]}”"
+                            for k in knockouts[:2]
+                            if str(k.get("requirement", "")).strip()
+                        )
                         parts.append(
-                            f"Hard requirements not met: {len(knockouts)}."
+                            f"Hard requirement not met: {reqs}."
+                            if reqs
+                            else f"Hard requirements not met: {len(knockouts)}."
                         )
                     parts.append(
                         "Try a role closer to your experience, or update your "
