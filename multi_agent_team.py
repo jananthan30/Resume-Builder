@@ -928,6 +928,75 @@ def _normalize_claim_evidence(
     return normalized
 
 
+def _compile_writer_replacements(
+    master: str,
+    replacements: Any,
+) -> dict[str, Any]:
+    if not isinstance(master, str) or not isinstance(replacements, list):
+        raise ValueError("invalid writer replacements")
+    records = {
+        (start, end): body for body, start, end in _line_records(master)
+    }
+    anchored = []
+    seen_spans = set()
+    for item in replacements:
+        if not isinstance(item, dict) or set(item) != {
+            "source_span_text",
+            "replacement_text",
+        }:
+            raise ValueError("invalid writer replacement item")
+        source_text = item["source_span_text"]
+        replacement_text = item["replacement_text"]
+        if not isinstance(source_text, str) or not isinstance(
+            replacement_text, str
+        ):
+            raise ValueError("writer replacement values must be text")
+        start, end, _ = _unique_span(master, source_text)
+        if (
+            not _covers_complete_source_line(master, start, end)
+            or records.get((start, end)) != source_text
+        ):
+            raise ValueError("writer source must be one exact complete line")
+        if (start, end) in seen_spans:
+            raise ValueError("writer replacement reuses one source line")
+        if replacement_text == source_text:
+            raise ValueError("writer replacement is a no-op")
+        if replacement_text != "" and (
+            not replacement_text.strip()
+            or "\n" in replacement_text
+            or "\r" in replacement_text
+            or not _candidate_text_format_valid(replacement_text)
+        ):
+            raise ValueError("writer replacement must be one safe line")
+        seen_spans.add((start, end))
+        anchored.append((start, end, source_text, replacement_text))
+
+    anchored.sort(key=lambda row: row[0])
+    chunks = []
+    raw_evidence = []
+    cursor = 0
+    for start, end, source_text, replacement_text in anchored:
+        if start < cursor:
+            raise ValueError("writer replacements overlap")
+        chunks.extend((master[cursor:start], replacement_text))
+        cursor = end
+        if replacement_text:
+            raw_evidence.append(
+                {
+                    "claim_text": replacement_text,
+                    "source_span_text": source_text,
+                }
+            )
+    chunks.append(master[cursor:])
+    draft = "".join(chunks)
+    return {
+        "draft": draft,
+        "claim_evidence": _normalize_claim_evidence(
+            draft, master, raw_evidence
+        ),
+    }
+
+
 def _claim_evidence_valid(
     draft: Any,
     master: Any,
@@ -1066,19 +1135,12 @@ def normalize_native_payload(
         }
 
     if role == "writer":
-        if set(raw_payload) != {"draft", "claim_evidence"}:
+        if set(raw_payload) != {"replacements"}:
             raise ValueError("invalid writer payload keys")
-        draft = raw_payload["draft"]
         master = scoped.get("master_resume")
-        evidence = raw_payload["claim_evidence"]
-        if (
-            not isinstance(draft, str)
-            or not isinstance(master, str)
-            or not isinstance(evidence, list)
-        ):
-            raise ValueError("invalid writer evidence")
-        normalized_evidence = _normalize_claim_evidence(draft, master, evidence)
-        return {"draft": draft, "claim_evidence": normalized_evidence}
+        return _compile_writer_replacements(
+            master, raw_payload["replacements"]
+        )
 
     if role == "auditor":
         if set(raw_payload) != {"verdict", "findings", "audited_draft"}:

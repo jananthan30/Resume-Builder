@@ -45,26 +45,6 @@ from multi_agent_team import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _configured_master_resume_path() -> Path | None:
-    """Resolve the machine-local master resume without hardcoding a filename.
-
-    The master resume is personal data and gitignored, so this integration
-    test runs only where config.json points at an existing file.
-    """
-    config_path = ROOT / "config.json"
-    if not config_path.is_file():
-        return None
-    try:
-        configured = json.loads(config_path.read_text(encoding="utf-8")).get(
-            "master_resume_path", ""
-        )
-    except (OSError, ValueError):
-        return None
-    if not configured:
-        return None
-    resolved = (ROOT / configured).resolve()
-    return resolved if resolved.is_file() else None
-
 PASSING_RESUME = """ALEX DOE, MD
 PROFESSIONAL SUMMARY
 Drug safety physician with eight years in pharmacovigilance.
@@ -638,11 +618,10 @@ def test_coordinator_normalizes_text_anchors_and_owns_hashes():
     normalized = normalize_native_payload(
         "writer",
         {
-            "draft": "Checked 12 cases.",
-            "claim_evidence": [
+            "replacements": [
                 {
-                    "claim_text": "Checked 12 cases.",
                     "source_span_text": "Reviewed 12 cases.",
+                    "replacement_text": "Checked 12 cases.",
                 }
             ],
         },
@@ -668,15 +647,293 @@ def test_coordinator_normalizes_text_anchors_and_owns_hashes():
         normalize_native_payload(
             "writer",
             {
-                "draft": "Invented 99 cases.",
-                "claim_evidence": [
+                "replacements": [
                     {
-                        "claim_text": "Invented 99 cases.",
-                        "source_span_text": "99 cases",
+                        "source_span_text": "Reviewed 12 cases.",
+                        "replacement_text": "Invented 99 cases.",
                     }
                 ],
             },
             context,
+        )
+
+
+def writer_context(master: str):
+    return build_context(
+        run_id="run-writer-replacements",
+        case_id="case-writer-replacements",
+        role="writer",
+        attempt=0,
+        payload={"master_resume": master, "researcher_artifact": {}},
+    )
+
+
+def test_writer_replacement_is_applied_in_place_without_move_or_duplicate():
+    master = """PROFESSIONAL SUMMARY
+Reviewed confidential records.
+
+PROFESSIONAL EXPERIENCE
+Analyst | Acme
+2020 - 2021
+• Managed routine work.
+"""
+    source = "Reviewed confidential records."
+    replacement = "Reviewed confidential safety records."
+    context = build_context(
+        run_id="run-source-anchored",
+        case_id="case-source-anchored",
+        role="writer",
+        attempt=0,
+        payload={"master_resume": master, "researcher_artifact": {}},
+    )
+
+    normalized = normalize_native_payload(
+        "writer",
+        {
+            "replacements": [
+                {
+                    "source_span_text": source,
+                    "replacement_text": replacement,
+                }
+            ]
+        },
+        context,
+    )
+
+    expected = master.replace(source, replacement)
+    start = master.index(source)
+    assert normalized["draft"] == expected
+    assert normalized["draft"].count(replacement) == 1
+    assert normalized["draft"].index(replacement) < normalized["draft"].index(
+        "PROFESSIONAL EXPERIENCE"
+    )
+    assert normalized["claim_evidence"] == [
+        {
+            "claim_digest": canonical_digest(replacement),
+            "source_span_digest": canonical_digest(source),
+            "source_start": start,
+            "source_end": start + len(source),
+        }
+    ]
+
+
+def test_writer_empty_replacements_pass_master_through_byte_identically():
+    master = "Reviewed.\n"
+    normalized = normalize_native_payload(
+        "writer", {"replacements": []}, writer_context(master)
+    )
+    assert normalized == {"draft": master, "claim_evidence": []}
+
+
+def test_writer_deletion_blanks_only_the_source_body_and_preserves_lf():
+    master = """SUMMARY
+Optional summary.
+PROFESSIONAL EXPERIENCE
+Analyst | Acme
+2020 - 2021
+• Reviewed records.
+EDUCATION
+Example University
+"""
+    normalized = normalize_native_payload(
+        "writer",
+        {
+            "replacements": [
+                {
+                    "source_span_text": "Optional summary.",
+                    "replacement_text": "",
+                }
+            ]
+        },
+        writer_context(master),
+    )
+    assert normalized == {
+        "draft": """SUMMARY
+
+PROFESSIONAL EXPERIENCE
+Analyst | Acme
+2020 - 2021
+• Reviewed records.
+EDUCATION
+Example University
+""",
+        "claim_evidence": [],
+    }
+
+
+def test_writer_resolves_every_anchor_before_splicing():
+    master = "Reviewed.\nChecked.\n"
+    normalized = normalize_native_payload(
+        "writer",
+        {
+            "replacements": [
+                {
+                    "source_span_text": "Checked.",
+                    "replacement_text": "Checked records.",
+                },
+                {
+                    "source_span_text": "Reviewed.",
+                    "replacement_text": "Reviewed Checked.",
+                },
+            ]
+        },
+        writer_context(master),
+    )
+    assert normalized["draft"] == "Reviewed Checked.\nChecked records.\n"
+    assert [
+        item["source_start"] for item in normalized["claim_evidence"]
+    ] == [0, 10]
+
+
+@pytest.mark.parametrize(
+    "raw_payload",
+    [
+        {},
+        {"replacements": None},
+        {"replacements": {}},
+        {"replacements": [None]},
+        {"replacements": [], "draft": "legacy"},
+        {"draft": "legacy", "claim_evidence": []},
+        {"replacements": [{"source_span_text": "Reviewed."}]},
+        {
+            "replacements": [
+                {
+                    "source_span_text": "Reviewed.",
+                    "replacement_text": "Reviewed.",
+                    "extra": True,
+                }
+            ]
+        },
+        {
+            "replacements": [
+                {"source_span_text": 7, "replacement_text": "Reviewed safely."}
+            ]
+        },
+        {
+            "replacements": [
+                {"source_span_text": "Reviewed.", "replacement_text": 7}
+            ]
+        },
+        {
+            "replacements": [
+                {"source_span_text": "Reviewed.", "replacement_text": "   "}
+            ]
+        },
+        {
+            "replacements": [
+                {
+                    "source_span_text": "Reviewed.",
+                    "replacement_text": "Reviewed.\nAdded.",
+                }
+            ]
+        },
+        {
+            "replacements": [
+                {
+                    "source_span_text": "Reviewed.",
+                    "replacement_text": "Reviewed.\u2028Added.",
+                }
+            ]
+        },
+        {
+            "replacements": [
+                {
+                    "source_span_text": "Reviewed.",
+                    "replacement_text": "Reviewed.",
+                }
+            ]
+        },
+    ],
+)
+def test_writer_rejects_malformed_replacement_payloads(raw_payload):
+    with pytest.raises(ValueError):
+        normalize_native_payload(
+            "writer", raw_payload, writer_context("Reviewed.\n")
+        )
+
+
+@pytest.mark.parametrize(
+    ("master", "source_span_text", "expected_error"),
+    [
+        ("Reviewed records.\n", "Reviewed", "exact complete line"),
+        ("  Reviewed.\n", "Reviewed.", "exact complete line"),
+        (
+            "Reviewed.\nReviewed.\n",
+            "Reviewed.",
+            "one unique source span",
+        ),
+        ("---\nReviewed.\n", "---", "exact complete line"),
+    ],
+)
+def test_writer_rejects_non_exact_or_ambiguous_source_anchors(
+    master,
+    source_span_text,
+    expected_error,
+):
+    with pytest.raises(ValueError, match=expected_error):
+        normalize_native_payload(
+            "writer",
+            {
+                "replacements": [
+                    {
+                        "source_span_text": source_span_text,
+                        "replacement_text": "Reviewed safely.",
+                    }
+                ]
+            },
+            writer_context(master),
+        )
+
+
+def test_writer_rejects_duplicate_source_anchors():
+    with pytest.raises(ValueError, match="reuses one source line"):
+        normalize_native_payload(
+            "writer",
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "Reviewed.",
+                        "replacement_text": "Reviewed records.",
+                    },
+                    {
+                        "source_span_text": "Reviewed.",
+                        "replacement_text": "Reviewed safely.",
+                    },
+                ]
+            },
+            writer_context("Reviewed.\n"),
+        )
+
+
+def test_writer_rejects_unsupported_metric_replacement():
+    with pytest.raises(ValueError, match="UNSUPPORTED_METRIC"):
+        normalize_native_payload(
+            "writer",
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "Reviewed 12 cases.",
+                        "replacement_text": "Reviewed 99 cases.",
+                    }
+                ]
+            },
+            writer_context("Reviewed 12 cases.\n"),
+        )
+
+
+def test_writer_rejects_non_additive_rewrite():
+    with pytest.raises(ValueError, match="UNSUPPORTED_CLAIM"):
+        normalize_native_payload(
+            "writer",
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "Reviewed confidential records.",
+                        "replacement_text": "Reviewed records.",
+                    }
+                ]
+            },
+            writer_context("Reviewed confidential records.\n"),
         )
 
 
@@ -755,12 +1012,18 @@ def test_writer_rejects_non_lf_control_and_format_separators(
         attempt=0,
         payload={"master_resume": master, "researcher_artifact": {}},
     )
-    candidate = master.replace("\n", unsafe_separator)
 
-    with pytest.raises(ValueError, match="unsafe draft text format"):
+    with pytest.raises(ValueError, match="one safe line"):
         normalize_native_payload(
             "writer",
-            {"draft": candidate, "claim_evidence": []},
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "Safe draft",
+                        "replacement_text": f"Safe{unsafe_separator}draft",
+                    }
+                ]
+            },
             context,
         )
 
@@ -1325,17 +1588,6 @@ Managed routine work.
 EDUCATION
 Example University
 """
-    moved = """PROFESSIONAL SUMMARY
-
-PROFESSIONAL EXPERIENCE
-Analyst | Acme
-2020 - 2021
-Managed routine work.
-Reviewed confidential records.
-
-EDUCATION
-Example University
-"""
     context = build_context(
         run_id="run-cross-section",
         case_id="case-cross-section",
@@ -1346,54 +1598,44 @@ Example University
     with pytest.raises(ValueError, match="moves source claims") as caught:
         normalize_native_payload(
             "writer",
-            {"draft": moved, "claim_evidence": []},
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "Reviewed confidential records.",
+                        "replacement_text": "",
+                    },
+                    {
+                        "source_span_text": "Managed routine work.",
+                        "replacement_text": "Reviewed confidential records.",
+                    },
+                ]
+            },
             context,
         )
     assert "Reviewed confidential records." in str(caught.value)
 
 
-def test_current_master_without_competencies_or_role_bullets_is_rejected():
-    master_path = _configured_master_resume_path()
-    if master_path is None:
-        pytest.skip("no configured master resume on this machine")
-    master = master_path.read_text(encoding="utf-8")
-    stripped_lines = []
-    section = "other"
-    for line in master.splitlines():
-        heading = line.strip()
-        if heading == "PROFESSIONAL SUMMARY":
-            section = "summary"
-            continue
-        if heading == "CORE COMPETENCIES":
-            section = "competencies"
-            continue
-        if heading == "PROFESSIONAL EXPERIENCE":
-            section = "experience"
-            stripped_lines.append(line)
-            continue
-        if heading == "EDUCATION":
-            section = "other"
-            stripped_lines.append(line)
-            continue
-        if section in {"summary", "competencies"}:
-            continue
-        if section == "experience" and line.lstrip().startswith("• "):
-            continue
-        stripped_lines.append(line)
-    degenerate = "\n".join(stripped_lines)
-    context = build_context(
-        run_id="run-no-role-bullets",
-        case_id="case-no-role-bullets",
-        role="writer",
-        attempt=0,
-        payload={"master_resume": master, "researcher_artifact": {}},
-    )
+def test_writer_cannot_delete_the_only_bullet_from_a_single_role():
+    master = """PROFESSIONAL EXPERIENCE
+Analyst | Acme
+2020 - 2021
+• Reviewed records.
 
+EDUCATION
+Example University
+"""
     with pytest.raises(ValueError, match="moves source claims"):
         normalize_native_payload(
             "writer",
-            {"draft": degenerate, "claim_evidence": []},
-            context,
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "• Reviewed records.",
+                        "replacement_text": "",
+                    }
+                ]
+            },
+            writer_context(master),
         )
 
 
@@ -1424,14 +1666,6 @@ Analyst | Acme
 EDUCATION
 Example University
 """
-    draft = """PROFESSIONAL EXPERIENCE
-Analyst | Acme
-2020 - 2021
-• Reviewed records.
-
-EDUCATION
-Example University
-"""
     context = build_context(
         run_id="run-optional-summary",
         case_id="case-optional-summary",
@@ -1442,11 +1676,31 @@ Example University
 
     normalized = normalize_native_payload(
         "writer",
-        {"draft": draft, "claim_evidence": []},
+        {
+            "replacements": [
+                {
+                    "source_span_text": "Optional summary.",
+                    "replacement_text": "",
+                }
+            ]
+        },
         context,
     )
 
-    assert normalized == {"draft": draft, "claim_evidence": []}
+    assert normalized == {
+        "draft": """PROFESSIONAL SUMMARY
+
+
+PROFESSIONAL EXPERIENCE
+Analyst | Acme
+2020 - 2021
+• Reviewed records.
+
+EDUCATION
+Example University
+""",
+        "claim_evidence": [],
+    }
 
 
 def test_cross_role_agent_identity_is_rejected_without_publication():
@@ -1750,9 +2004,11 @@ def test_semantic_or_metric_substitution_is_rejected_by_normalize_and_run(
         normalize_native_payload(
             "writer",
             {
-                "draft": draft,
-                "claim_evidence": [
-                    {"claim_text": draft, "source_span_text": source}
+                "replacements": [
+                    {
+                        "source_span_text": source,
+                        "replacement_text": draft,
+                    }
                 ],
             },
             context,

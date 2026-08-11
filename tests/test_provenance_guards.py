@@ -4,7 +4,13 @@ import pytest
 
 from claim_provenance_audit import claim_supported_by_source
 from constructive_provenance import _canonical_ledger_sha256, authorize_claim
-from multi_agent_team import build_context, normalize_native_payload
+from multi_agent_team import (
+    build_context,
+    build_handoff,
+    canonical_digest,
+    normalize_native_payload,
+    validate_handoff,
+)
 from resume_integrity_audit import audit_resume_text
 
 
@@ -147,27 +153,73 @@ def test_model_cannot_slice_context_away_from_source_line(master, draft, sliced_
         attempt=0,
         payload={"master_resume": master, "researcher_artifact": {}},
     )
-    with pytest.raises(ValueError, match="complete source line"):
+    with pytest.raises(ValueError, match="exact complete line"):
         normalize_native_payload(
             "writer",
             {
-                "draft": draft,
-                "claim_evidence": [
-                    {"claim_text": draft, "source_span_text": sliced_span}
+                "replacements": [
+                    {
+                        "source_span_text": sliced_span,
+                        "replacement_text": draft,
+                    }
                 ],
             },
             context,
         )
 
+    source_start = master.index(sliced_span)
+    forged = build_handoff(
+        context=context,
+        role="writer",
+        agent_id="codex:forged-writer-partial-span",
+        payload={
+            "draft": draft,
+            "claim_evidence": [
+                {
+                    "claim_digest": canonical_digest(draft),
+                    "source_span_digest": canonical_digest(sliced_span),
+                    "source_start": source_start,
+                    "source_end": source_start + len(sliced_span),
+                }
+            ],
+        },
+    )
+    assert validate_handoff("writer", forged, context)["code"] == "WRITER_SCHEMA"
+
 
 @pytest.mark.parametrize(
-    "draft",
+    ("replacements", "expected_error"),
     [
-        "Checked 12 cases.\nExamined 12 cases.",
-        "Reviewed 12 cases.\nChecked 12 cases.",
+        (
+            [
+                {
+                    "source_span_text": "Reviewed 12 cases.",
+                    "replacement_text": "Checked 12 cases.",
+                },
+                {
+                    "source_span_text": "Reviewed 12 cases.",
+                    "replacement_text": "Examined 12 cases.",
+                },
+            ],
+            "reuses one source line",
+        ),
+        (
+            [
+                {
+                    "source_span_text": "Reviewed 12 cases.",
+                    "replacement_text": (
+                        "Reviewed 12 cases.\nChecked 12 cases."
+                    ),
+                }
+            ],
+            "one safe line",
+        ),
     ],
 )
-def test_one_source_line_cannot_be_reused_or_retained_as_a_duplicate(draft):
+def test_one_source_line_cannot_be_reused_or_retained_as_a_duplicate(
+    replacements,
+    expected_error,
+):
     master = "Reviewed 12 cases."
     context = build_context(
         run_id="source-multiplicity",
@@ -176,20 +228,56 @@ def test_one_source_line_cannot_be_reused_or_retained_as_a_duplicate(draft):
         attempt=0,
         payload={"master_resume": master, "researcher_artifact": {}},
     )
-    evidence = [
-        {
-            "claim_text": line,
-            "source_span_text": master,
-        }
-        for line in draft.splitlines()
-        if line != master
-    ]
-    with pytest.raises(ValueError, match="duplicates one source line"):
+    with pytest.raises(ValueError, match=expected_error):
         normalize_native_payload(
             "writer",
-            {"draft": draft, "claim_evidence": evidence},
+            {"replacements": replacements},
             context,
         )
+
+
+@pytest.mark.parametrize(
+    ("draft", "claims"),
+    [
+        (
+            "Checked 12 cases.\nExamined 12 cases.",
+            ["Checked 12 cases.", "Examined 12 cases."],
+        ),
+        (
+            "Reviewed 12 cases.\nChecked 12 cases.",
+            ["Checked 12 cases."],
+        ),
+    ],
+)
+def test_forged_writer_handoff_rejects_reused_or_retained_source_line(
+    draft,
+    claims,
+):
+    master = "Reviewed 12 cases."
+    context = build_context(
+        run_id="forged-source-multiplicity",
+        case_id="normalized-defense",
+        role="writer",
+        attempt=0,
+        payload={"master_resume": master, "researcher_artifact": {}},
+    )
+    evidence = [
+        {
+            "claim_digest": canonical_digest(claim),
+            "source_span_digest": canonical_digest(master),
+            "source_start": 0,
+            "source_end": len(master),
+        }
+        for claim in claims
+    ]
+    forged = build_handoff(
+        context=context,
+        role="writer",
+        agent_id="codex:forged-writer-multiplicity",
+        payload={"draft": draft, "claim_evidence": evidence},
+    )
+
+    assert validate_handoff("writer", forged, context)["code"] == "WRITER_SCHEMA"
 
 
 def test_role_locality_blocks_cross_job_metric_migration_and_duplicates():
@@ -213,45 +301,88 @@ Example University
         payload={"master_resume": master, "researcher_artifact": {}},
     )
 
-    moved = master.replace(
-        "• Managed a $9B portfolio.\n\nROLE B",
-        "\nROLE B",
-    ).replace(
-        "• Reviewed analyst reports.",
-        "• Managed a $9B portfolio.",
-    )
     with pytest.raises(ValueError, match="moves source claims"):
         normalize_native_payload(
-            "writer", {"draft": moved, "claim_evidence": []}, context
+            "writer",
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "• Managed a $9B portfolio.",
+                        "replacement_text": "",
+                    },
+                    {
+                        "source_span_text": "• Reviewed analyst reports.",
+                        "replacement_text": "• Managed a $9B portfolio.",
+                    },
+                ]
+            },
+            context,
         )
 
-    cross_role = master.replace(
-        "• Reviewed analyst reports.", "• Led a $9B portfolio."
-    )
     with pytest.raises(
-        ValueError, match="UNSUPPORTED_CLAIM|duplicates one source line"
+        ValueError,
+        match="UNSUPPORTED_(?:CLAIM|METRIC)|duplicates one source line",
     ):
         normalize_native_payload(
             "writer",
             {
-                "draft": cross_role,
-                "claim_evidence": [
+                "replacements": [
                     {
-                        "claim_text": "• Led a $9B portfolio.",
-                        "source_span_text": "• Managed a $9B portfolio.",
+                        "source_span_text": "• Reviewed analyst reports.",
+                        "replacement_text": "• Led a $9B portfolio.",
                     }
                 ],
             },
             context,
         )
 
-    duplicated = master.replace(
-        "• Managed a $9B portfolio.",
-        "• Managed a $9B portfolio.\n• Managed a $9B portfolio.",
+    forged_cross_role_draft = """PROFESSIONAL EXPERIENCE
+ROLE A | COMPANY A
+2020 - 2021
+• Managed a $9B portfolio.
+
+ROLE B | COMPANY B
+2021 - 2022
+• Led a $9B portfolio.
+
+EDUCATION
+Example University
+"""
+    source_text = "• Managed a $9B portfolio."
+    source_start = master.index(source_text)
+    forged = build_handoff(
+        context=context,
+        role="writer",
+        agent_id="codex:forged-writer-cross-role",
+        payload={
+            "draft": forged_cross_role_draft,
+            "claim_evidence": [
+                {
+                    "claim_digest": canonical_digest("• Led a $9B portfolio."),
+                    "source_span_digest": canonical_digest(source_text),
+                    "source_start": source_start,
+                    "source_end": source_start + len(source_text),
+                }
+            ],
+        },
     )
-    with pytest.raises(ValueError, match="duplicates"):
+    assert validate_handoff("writer", forged, context)["code"] == "WRITER_SCHEMA"
+
+    with pytest.raises(ValueError, match="one safe line"):
         normalize_native_payload(
-            "writer", {"draft": duplicated, "claim_evidence": []}, context
+            "writer",
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "• Managed a $9B portfolio.",
+                        "replacement_text": (
+                            "• Managed a $9B portfolio.\n"
+                            "• Managed a $9B portfolio."
+                        ),
+                    }
+                ]
+            },
+            context,
         )
 
 
@@ -268,14 +399,6 @@ ROLE B | COMPANY B
 EDUCATION
 Example University
 """
-    draft = master.replace(
-        "• Reviewed shared records.\n\nROLE B",
-        "• Reviewed shared records.\n• Reviewed shared records.\n\nROLE B",
-        1,
-    ).replace(
-        "ROLE B | COMPANY B\n2021 - 2022\n• Reviewed shared records.",
-        "ROLE B | COMPANY B\n2021 - 2022",
-    )
     context = build_context(
         run_id="role-multiplicity",
         case_id="shared-line",
@@ -283,10 +406,39 @@ Example University
         attempt=0,
         payload={"master_resume": master, "researcher_artifact": {}},
     )
-    with pytest.raises(ValueError, match="duplicates or moves"):
+    with pytest.raises(ValueError, match="one unique source span"):
         normalize_native_payload(
-            "writer", {"draft": draft, "claim_evidence": []}, context
+            "writer",
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "• Reviewed shared records.",
+                        "replacement_text": "• Checked shared records.",
+                    }
+                ]
+            },
+            context,
         )
+
+    forged_draft = """PROFESSIONAL EXPERIENCE
+ROLE A | COMPANY A
+2020 - 2021
+• Reviewed shared records.
+• Reviewed shared records.
+
+ROLE B | COMPANY B
+2021 - 2022
+
+EDUCATION
+Example University
+"""
+    forged = build_handoff(
+        context=context,
+        role="writer",
+        agent_id="codex:forged-writer-role-multiplicity",
+        payload={"draft": forged_draft, "claim_evidence": []},
+    )
+    assert validate_handoff("writer", forged, context)["code"] == "WRITER_SCHEMA"
 
 
 def test_experience_line_cannot_move_or_reword_into_summary():
@@ -308,29 +460,39 @@ Example University
         attempt=0,
         payload={"master_resume": master, "researcher_artifact": {}},
     )
-    verbatim_move = master.replace(
-        "Plain summary.", "Plain summary.\n• Reviewed attributed records."
-    ).replace("\n• Reviewed attributed records.\n\nEDUCATION", "\n\nEDUCATION")
     with pytest.raises(ValueError, match="duplicates or moves"):
         normalize_native_payload(
-            "writer", {"draft": verbatim_move, "claim_evidence": []}, context
+            "writer",
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "Plain summary.",
+                        "replacement_text": "• Reviewed attributed records.",
+                    },
+                    {
+                        "source_span_text": "• Reviewed attributed records.",
+                        "replacement_text": "",
+                    },
+                ]
+            },
+            context,
         )
 
-    rewritten_move = verbatim_move.replace(
-        "• Reviewed attributed records.", "• Checked attributed records."
-    )
     # The role now fails the stronger completeness invariant first because its
     # only genuine bullet was moved into Summary.  It must still fail closed.
     with pytest.raises(ValueError, match="duplicates or moves"):
         normalize_native_payload(
             "writer",
             {
-                "draft": rewritten_move,
-                "claim_evidence": [
+                "replacements": [
                     {
-                        "claim_text": "• Checked attributed records.",
+                        "source_span_text": "Plain summary.",
+                        "replacement_text": "• Checked attributed records.",
+                    },
+                    {
                         "source_span_text": "• Reviewed attributed records.",
-                    }
+                        "replacement_text": "",
+                    },
                 ],
             },
             context,
@@ -346,11 +508,6 @@ ROLE A | COMPANY A
 EDUCATION
 Example University
 """
-    work_draft = """WORK EXPERIENCE
-
-EDUCATION
-Example University
-"""
     work_context = build_context(
         run_id="work-experience-alias",
         case_id="role-removal",
@@ -360,7 +517,16 @@ Example University
     )
     with pytest.raises(ValueError, match="duplicates or moves"):
         normalize_native_payload(
-            "writer", {"draft": work_draft, "claim_evidence": []}, work_context
+            "writer",
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "• Reviewed alpha records.",
+                        "replacement_text": "",
+                    }
+                ]
+            },
+            work_context,
         )
 
     experience_master = """EXPERIENCE
@@ -375,11 +541,6 @@ ROLE B | COMPANY B
 EDUCATION
 Example University
 """
-    experience_draft = experience_master.replace(
-        "• Reviewed alpha records.", "• TEMP records.", 1
-    ).replace(
-        "• Reviewed beta records.", "• Reviewed alpha records.", 1
-    ).replace("• TEMP records.", "• Reviewed beta records.", 1)
     experience_context = build_context(
         run_id="experience-alias",
         case_id="role-swap",
@@ -390,7 +551,18 @@ Example University
     with pytest.raises(ValueError, match="duplicates or moves"):
         normalize_native_payload(
             "writer",
-            {"draft": experience_draft, "claim_evidence": []},
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "• Reviewed alpha records.",
+                        "replacement_text": "• Reviewed beta records.",
+                    },
+                    {
+                        "source_span_text": "• Reviewed beta records.",
+                        "replacement_text": "• Reviewed alpha records.",
+                    },
+                ]
+            },
             experience_context,
         )
 
@@ -427,11 +599,6 @@ def test_all_supported_role_layouts_and_heading_forms_block_cross_role_swaps(
 ## EDUCATION:
 Example University
 """
-    draft = master.replace(
-        "• Reviewed alpha records.", "• TEMP records.", 1
-    ).replace(
-        "• Reviewed beta records.", "• Reviewed alpha records.", 1
-    ).replace("• TEMP records.", "• Reviewed beta records.", 1)
     context = build_context(
         run_id=f"{layout}-heading-grammar",
         case_id="role-swap",
@@ -442,7 +609,18 @@ Example University
     with pytest.raises(ValueError, match="duplicates or moves"):
         normalize_native_payload(
             "writer",
-            {"draft": draft, "claim_evidence": []},
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "• Reviewed alpha records.",
+                        "replacement_text": "• Reviewed beta records.",
+                    },
+                    {
+                        "source_span_text": "• Reviewed beta records.",
+                        "replacement_text": "• Reviewed alpha records.",
+                    },
+                ]
+            },
             context,
         )
 
@@ -464,7 +642,7 @@ Example University
     with pytest.raises(ValueError, match="duplicates or moves"):
         normalize_native_payload(
             "writer",
-            {"draft": master, "claim_evidence": []},
+            {"replacements": []},
             context,
         )
 
@@ -482,11 +660,6 @@ ROLE B | COMPANY B
 EDUCATION
 Example University
 """
-    draft = master.replace(
-        "• Reviewed alpha records.", "• TEMP records.", 1
-    ).replace(
-        "• Reviewed beta records.", "• Reviewed alpha records.", 1
-    ).replace("• TEMP records.", "• Reviewed beta records.", 1)
     context = build_context(
         run_id="partial-role-layout",
         case_id="canonical-parser-alignment",
@@ -497,7 +670,18 @@ Example University
     with pytest.raises(ValueError, match="duplicates or moves"):
         normalize_native_payload(
             "writer",
-            {"draft": draft, "claim_evidence": []},
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "• Reviewed alpha records.",
+                        "replacement_text": "• Reviewed beta records.",
+                    },
+                    {
+                        "source_span_text": "• Reviewed beta records.",
+                        "replacement_text": "• Reviewed alpha records.",
+                    },
+                ]
+            },
             context,
         )
 
@@ -513,11 +697,6 @@ COMPANY B
 EDUCATION
 Example University
 """
-    draft = master.replace(
-        "• Reviewed alpha records.", "• TEMP records.", 1
-    ).replace(
-        "• Reviewed beta records.", "• Reviewed alpha records.", 1
-    ).replace("• TEMP records.", "• Reviewed beta records.", 1)
     report = audit_resume_text(master, master)
     assert report["passed"] is False
     assert report["difference_codes"] == ["AMBIGUOUS_ROLE_LAYOUT"]
@@ -531,7 +710,18 @@ Example University
     with pytest.raises(ValueError, match="duplicates or moves"):
         normalize_native_payload(
             "writer",
-            {"draft": draft, "claim_evidence": []},
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "• Reviewed alpha records.",
+                        "replacement_text": "• Reviewed beta records.",
+                    },
+                    {
+                        "source_span_text": "• Reviewed beta records.",
+                        "replacement_text": "• Reviewed alpha records.",
+                    },
+                ]
+            },
             context,
         )
 
@@ -555,7 +745,7 @@ Example University
     )
     normalized = normalize_native_payload(
         "writer",
-        {"draft": master, "claim_evidence": []},
+        {"replacements": []},
         context,
     )
     assert normalized["draft"] == master
@@ -587,7 +777,7 @@ Example University
     )
     normalized = normalize_native_payload(
         "writer",
-        {"draft": master, "claim_evidence": []},
+        {"replacements": []},
         context,
     )
     assert normalized["draft"] == master
