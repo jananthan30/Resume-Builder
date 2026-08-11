@@ -41,6 +41,7 @@ from typing import Any, Callable
 
 import agent.skills_loader as skills_loader
 import ats_scorer
+import candidate_fit_judge
 import candidate_fit_preflight
 import evidence_audit
 import hr_scorer
@@ -476,7 +477,6 @@ class CloudTrustedServices:
         never to be trusted. Raises on any failure; the runtime then lets
         the deterministic rejection stand.
         """
-        import candidate_fit_judge
         from cloud.config import settings as cloud_settings
 
         cache_dir = (
