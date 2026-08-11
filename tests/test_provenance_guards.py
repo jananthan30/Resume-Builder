@@ -625,13 +625,22 @@ Example University
         )
 
 
-def test_unrecognized_experience_layout_fails_closed():
-    master = """PROFESSIONAL EXPERIENCE
+@pytest.mark.parametrize(
+    "master",
+    [
+        pytest.param("Reviewed.\u2028", id="unsafe-format"),
+        pytest.param(
+            """PROFESSIONAL EXPERIENCE
 An intentionally unstructured role without canonical dates.
 
 EDUCATION
 Example University
-"""
+""",
+            id="unrecognized-experience-layout",
+        ),
+    ],
+)
+def test_empty_writer_passthrough_fails_closed_at_normalized_handoff(master):
     context = build_context(
         run_id="unknown-role-layout",
         case_id="fail-closed",
@@ -639,12 +648,14 @@ Example University
         attempt=0,
         payload={"master_resume": master, "researcher_artifact": {}},
     )
-    with pytest.raises(ValueError, match="duplicates or moves"):
-        normalize_native_payload(
-            "writer",
-            {"replacements": []},
-            context,
-        )
+    handoff = build_handoff(
+        context=context,
+        role="writer",
+        agent_id="codex:untrusted-empty-passthrough",
+        payload={"draft": master, "claim_evidence": []},
+    )
+
+    assert validate_handoff("writer", handoff, context)["code"] == "WRITER_SCHEMA"
 
 
 def test_partial_role_parse_cannot_disable_role_locality():

@@ -717,8 +717,23 @@ Analyst | Acme
     ]
 
 
-def test_writer_empty_replacements_pass_master_through_byte_identically():
-    master = "Reviewed.\n"
+@pytest.mark.parametrize(
+    "master",
+    [
+        pytest.param("Reviewed.\n", id="safe-master"),
+        pytest.param("Reviewed.\u2028", id="unsafe-format-master"),
+        pytest.param(
+            """PROFESSIONAL EXPERIENCE
+An intentionally unstructured role without canonical dates.
+
+EDUCATION
+Example University
+""",
+            id="unrecognized-experience-layout",
+        ),
+    ],
+)
+def test_writer_empty_replacements_pass_master_through_byte_identically(master):
     normalized = normalize_native_payload(
         "writer", {"replacements": []}, writer_context(master)
     )

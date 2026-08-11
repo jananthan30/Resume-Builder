@@ -934,6 +934,8 @@ def _compile_writer_replacements(
 ) -> dict[str, Any]:
     if not isinstance(master, str) or not isinstance(replacements, list):
         raise ValueError("invalid writer replacements")
+    if not replacements:
+        return {"draft": master, "claim_evidence": []}
     records = {
         (start, end): body for body, start, end in _line_records(master)
     }
