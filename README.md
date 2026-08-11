@@ -1,6 +1,13 @@
-# ResumeHQ — AI-Powered Resume Builder with ATS & HR Scoring
+# ResumeHQ — the resume tool that refuses to lie for you
 
-The only resume tool that **finds jobs, scores your fit, and tailors your resume** — all in one workflow. Works as a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) plugin, Codex plugin, or standalone web app.
+Every AI resume tool promises to "beat the ATS." This one has a harder rule:
+**it never invents experience** — and when a job is a genuine mismatch, it
+declines to tailor at all and tells you why. Finds jobs, scores your fit with
+deterministic engines (not LLM vibes), tailors through a fail-closed pipeline
+where an independent auditor can veto the writer, and
+[publishes its own scoring failures](BENCHMARKS.md). Works as a
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code) plugin, Codex
+plugin, or standalone web app.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -29,6 +36,7 @@ Most resume tools only score the resume you bring to them. ResumeHQ goes further
 | Works in Claude Code / claude.ai / Codex | ❌ | ❌ | ❌ | ✅ |
 | Open source | ❌ | ❌ | ❌ | ✅ |
 | [Publishes its scoring benchmarks](BENCHMARKS.md) — including the bugs | ❌ | ❌ | ❌ | ✅ |
+| **Refuses to fabricate** — declines to tailor genuine mismatches, audits every claim against your real resume | ❌ | ❌ | ❌ | ✅ |
 
 ---
 
@@ -37,8 +45,10 @@ Most resume tools only score the resume you bring to them. ResumeHQ goes further
 You paste a job description (or search for jobs). The system:
 
 1. **Discovers** matching jobs from live job boards — scored and ranked by fit with your resume
-2. **Gates candidate fit** — the configured master must score at least 70 against
-   the exact JD with zero hard knockouts before resume work begins
+2. **Gates candidate fit** — your master resume must clear the fit bar
+   (default 50) against the exact JD with zero hard knockouts before resume
+   work begins. If you don't fit, it says so and stops — no tool that invents
+   experience to close the gap is working for you
 3. **Analyzes** passing JDs — extracts keywords, required skills, domain, seniority level
 4. **Tailors** your master resume — rewrites bullets, reorders sections, matches terminology
 5. **Scores** the result with two independent advisory engines (ATS + HR simulation)
