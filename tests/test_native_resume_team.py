@@ -324,6 +324,19 @@ def test_hosted_writer_contract_keeps_detailed_human_voice_gates():
         assert required_rule in contract
 
 
+def test_hosted_writer_contract_keeps_required_resume_structure():
+    from agent.host_anthropic import _ROLE_CONTRACTS
+
+    contract = _ROLE_CONTRACTS["writer"]
+
+    for required_rule in (
+        "non-empty CORE COMPETENCIES",
+        "at least one genuine bullet per canonical role",
+        "Summary is the only optional section",
+    ):
+        assert required_rule in contract
+
+
 def test_codex_adapter_isolated_session_and_actual_thread_id(monkeypatch):
     observed = {}
 

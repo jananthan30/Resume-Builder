@@ -776,28 +776,110 @@ Example University
     }
 
 
-def test_writer_resolves_every_anchor_before_splicing():
+@pytest.mark.parametrize(
+    "proposal_order",
+    [
+        pytest.param(("Checked.", "Reviewed."), id="later-anchor-first"),
+        pytest.param(("Reviewed.", "Checked."), id="earlier-anchor-first"),
+    ],
+)
+def test_writer_resolves_every_anchor_before_splicing(proposal_order):
     master = "Reviewed.\nChecked.\n"
+    replacements = {
+        "Checked.": "Checked records.",
+        "Reviewed.": "Reviewed Checked.",
+    }
     normalized = normalize_native_payload(
         "writer",
         {
             "replacements": [
                 {
-                    "source_span_text": "Checked.",
-                    "replacement_text": "Checked records.",
-                },
-                {
-                    "source_span_text": "Reviewed.",
-                    "replacement_text": "Reviewed Checked.",
-                },
+                    "source_span_text": source,
+                    "replacement_text": replacements[source],
+                }
+                for source in proposal_order
             ]
         },
         writer_context(master),
     )
     assert normalized["draft"] == "Reviewed Checked.\nChecked records.\n"
-    assert [
-        item["source_start"] for item in normalized["claim_evidence"]
-    ] == [0, 10]
+    assert normalized["claim_evidence"] == [
+        {
+            "claim_digest": canonical_digest("Reviewed Checked."),
+            "source_span_digest": canonical_digest("Reviewed."),
+            "source_start": 0,
+            "source_end": 9,
+        },
+        {
+            "claim_digest": canonical_digest("Checked records."),
+            "source_span_digest": canonical_digest("Checked."),
+            "source_start": 10,
+            "source_end": 18,
+        },
+    ]
+
+
+def test_writer_cannot_delete_the_only_core_competencies_line():
+    master = """CORE COMPETENCIES
+• Drug Safety | Signal Detection
+PROFESSIONAL EXPERIENCE
+Analyst | Acme
+2020 - 2021
+• Reviewed safety records.
+EDUCATION
+Example University
+"""
+
+    with pytest.raises(ValueError, match="Core Competencies"):
+        normalize_native_payload(
+            "writer",
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "• Drug Safety | Signal Detection",
+                        "replacement_text": "",
+                    }
+                ]
+            },
+            writer_context(master),
+        )
+
+
+def test_writer_nonempty_replacement_rejects_crlf_master():
+    master = "Reviewed 12 cases.\r\n"
+
+    with pytest.raises(ValueError, match="unsafe draft text format"):
+        normalize_native_payload(
+            "writer",
+            {
+                "replacements": [
+                    {
+                        "source_span_text": "Reviewed 12 cases.",
+                        "replacement_text": "Checked 12 cases.",
+                    }
+                ]
+            },
+            writer_context(master),
+        )
+
+
+def test_writer_empty_replacements_preserve_crlf_but_handoff_fails_closed():
+    master = "Reviewed 12 cases.\r\n"
+    context = writer_context(master)
+    normalized = normalize_native_payload(
+        "writer", {"replacements": []}, context
+    )
+
+    assert normalized == {"draft": master, "claim_evidence": []}
+    handoff = build_handoff(
+        context=context,
+        role="writer",
+        agent_id="native-writer-crlf",
+        payload=normalized,
+    )
+    validation = validate_handoff("writer", handoff, context)
+    assert not validation["valid"]
+    assert validation["code"] == "WRITER_SCHEMA"
 
 
 @pytest.mark.parametrize(

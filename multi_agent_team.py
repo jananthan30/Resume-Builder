@@ -454,6 +454,10 @@ _EXPERIENCE_HEADINGS = {
     "WORK EXPERIENCE",
     "EXPERIENCE",
 }
+_CORE_COMPETENCIES_HEADINGS = {
+    "CORE COMPETENCIES",
+    "COMPETENCIES",
+}
 _EXPERIENCE_END_HEADINGS = {
     "PROFESSIONAL SUMMARY",
     "SUMMARY",
@@ -545,6 +549,28 @@ def _is_genuine_role_bullet(raw: str) -> bool:
 
 def _is_separator(raw: str) -> bool:
     return bool(re.fullmatch(r"\s*(?:_{3,}|-{3,}|={3,})\s*", raw))
+
+
+def _has_nonempty_core_competencies(text: str) -> bool:
+    """Return whether a recognized competencies section has real content."""
+
+    in_section = False
+    known_headings = _EXPERIENCE_HEADINGS | _EXPERIENCE_END_HEADINGS
+    for raw, _, _ in _line_records(text):
+        heading = _section_heading_name(raw)
+        if heading in _CORE_COMPETENCIES_HEADINGS:
+            in_section = True
+            continue
+        if in_section and heading in known_headings:
+            return False
+        if (
+            in_section
+            and raw.strip()
+            and not _is_separator(raw)
+            and any(character.isalnum() for character in raw)
+        ):
+            return True
+    return False
 
 
 def _is_role_date_line(value: str) -> bool:
@@ -991,6 +1017,9 @@ def _compile_writer_replacements(
             )
     chunks.append(master[cursor:])
     draft = "".join(chunks)
+    master_has_competencies = _has_nonempty_core_competencies(master)
+    if master_has_competencies and not _has_nonempty_core_competencies(draft):
+        raise ValueError("Writer must preserve non-empty Core Competencies")
     return {
         "draft": draft,
         "claim_evidence": _normalize_claim_evidence(
