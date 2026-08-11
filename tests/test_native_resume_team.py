@@ -537,6 +537,8 @@ def _publication_metadata(run_id, case_id, draft, report=None):
         "job_description_digest": canonical_digest(TEST_JOB_DESCRIPTION),
         "candidate_fit_report": fit_report,
         "candidate_fit_report_digest": canonical_digest(fit_report),
+        "candidate_fit_judge_report": None,
+        "candidate_fit_judge_report_digest": "",
         "researcher_agent_id": "codex:researcher-test",
         "researcher_artifact_digest": "b" * 64,
         "auditor_attestation": {

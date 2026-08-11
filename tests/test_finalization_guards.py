@@ -111,6 +111,8 @@ def _authorized_artifacts(
         "job_description_digest": canonical_digest(job_description),
         "candidate_fit_report": candidate_fit_report,
         "candidate_fit_report_digest": canonical_digest(candidate_fit_report),
+        "candidate_fit_judge_report": None,
+        "candidate_fit_judge_report_digest": "",
         "researcher_agent_id": "codex:researcher-guard",
         "researcher_artifact_digest": "b" * 64,
         "auditor_attestation": {

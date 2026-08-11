@@ -443,6 +443,12 @@ class Services:
             "candidate_fit_report_digest": metadata.get(
                 "candidate_fit_report_digest", ""
             ),
+            "candidate_fit_judge_report": metadata.get(
+                "candidate_fit_judge_report"
+            ),
+            "candidate_fit_judge_report_digest": metadata.get(
+                "candidate_fit_judge_report_digest", ""
+            ),
             "researcher_agent_id": metadata.get("researcher_agent_id", ""),
             "researcher_artifact_digest": metadata.get(
                 "researcher_artifact_digest", ""
