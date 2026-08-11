@@ -2232,9 +2232,39 @@ def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
             except HTTPException:
                 raise
             except Exception:
+                logging.getLogger("scorer.rewrite").exception(
+                    "rewrite dispatch crashed (user=%s)", user_id
+                )
                 raise HTTPException(status_code=502, detail=_TAILOR_UNAVAILABLE_DETAIL)
 
             if result.get("status") != "succeeded" or not result.get("draft"):
+                terminal = str(result.get("error") or "UNKNOWN")
+                logging.getLogger("scorer.rewrite").error(
+                    "rewrite run not published (user=%s terminal=%s)", user_id, terminal
+                )
+                # A candidate-fit refusal is deterministic policy, not an
+                # outage: "try again in a few minutes" would be a lie, and the
+                # fit gate has no bypass by design. Tell the user the truth.
+                if terminal.startswith("REJECTED:CANDIDATE_FIT"):
+                    fit = result.get("candidate_fit_report") or {}
+                    score = fit.get("score")
+                    knockouts = fit.get("hard_knockouts") or []
+                    parts = [
+                        "Our fit check found this role is a significant stretch "
+                        "for your resume, so the tailoring pipeline declined to "
+                        "run — it never invents experience to close a gap."
+                    ]
+                    if isinstance(score, (int, float)):
+                        parts.append(f"Fit score: {round(score)} (needs 70).")
+                    if knockouts:
+                        parts.append(
+                            f"Hard requirements not met: {len(knockouts)}."
+                        )
+                    parts.append(
+                        "Try a role closer to your experience, or update your "
+                        "saved resume if it's missing relevant work."
+                    )
+                    raise HTTPException(status_code=409, detail=" ".join(parts))
                 raise HTTPException(status_code=502, detail=_TAILOR_UNAVAILABLE_DETAIL)
 
             draft_text = result["draft"]
