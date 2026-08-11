@@ -35,7 +35,14 @@ from typing import Any, Iterable
 # This is a starting bar, not a verdict: applicants set their own (see
 # resolve_threshold), and the authenticity guarantees live downstream in the
 # claim validator, the Auditor, and the evidence audit -- not here.
-CANDIDATE_FIT_THRESHOLD = 65.0
+#
+# 2026-08-10 (owner decision): default lowered 65 -> 50. On the measured
+# distribution above, 50 admits nearly every clean-floor job (range starts
+# 43.5) and turns the score bar into a floor against the truly hopeless
+# rather than a median filter. The real gate remains the hard knockouts,
+# which no score or bar setting can override, plus the downstream evidence
+# and voice audits.
+CANDIDATE_FIT_THRESHOLD = 50.0
 
 # A user-chosen score bar is allowed inside these bounds. The floor exists so
 # "any job at all" cannot be selected: below it the tailoring has nothing

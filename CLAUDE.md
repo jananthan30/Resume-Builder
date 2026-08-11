@@ -6,7 +6,8 @@ AI-powered resume and cover letter generator that tailors applications to specif
 - **Human Voice**: Brevity, burstiness, plain language — hard gate via `human_voice_audit.py`
 - **ATS Score**: Keyword matching for Applicant Tracking Systems (75-85% target)
 - **HR Score**: Human recruiter evaluation simulation (70%+ target)
-- **Candidate Fit**: The configured master must score at least 70 with zero hard
+- **Candidate Fit**: The configured master must score at least 50 (the default
+  bar; `candidate_fit_preflight.CANDIDATE_FIT_THRESHOLD`) with zero hard
   knockouts against the exact JD before any resume development
 - **Safety**: Researcher, Writer, Auditor, and Editor have distinct least-authority contracts; finalization is ordered
 
@@ -244,8 +245,9 @@ explicitly requests those pins; Claude must not receive Codex-only flags.
 0. **Candidate fit** runs `candidate_fit_preflight.py` against only the configured
    master resume and exact JD before any output or role invocation. It requires a
    canonical, digest-bound `candidate-fit-policy-v2` report with score at least
-   70, trustworthy extraction, zero hard knockouts, `passed: true`, and no codes.
-   A lower score (including 60–69) or hard knockout is
+   the default bar (50; `CANDIDATE_FIT_THRESHOLD`), trustworthy extraction,
+   zero hard knockouts, `passed: true`, and no codes.
+   A lower score or hard knockout is
    `REJECTED:CANDIDATE_FIT`; unavailable, malformed, stale, or mismatched analysis
    is `FAILED:CANDIDATE_FIT_PREFLIGHT`. Neither has a workflow bypass.
    Policy v2 calibration: tool knockouts ground only in requirements sections
