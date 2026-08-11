@@ -1778,13 +1778,13 @@ def digest_unsubscribe(token: str = ""):
 
 @app.post("/admin/send-digests")
 def admin_send_digests(request: Request, user_id: Optional[int] = None, force: bool = False):
-    """Trigger the weekly digest run (all eligible users, or one for testing)."""
+    """Trigger the overnight scan + morning digest (all users, or one for testing)."""
     _verify_admin_secret(request)
     if not CLOUD_AVAILABLE:
         raise HTTPException(status_code=501, detail="Cloud features not available in local mode.")
-    from cloud.digest import send_weekly_digests
+    from cloud.digest import send_daily_digests
 
-    return send_weekly_digests(only_user_id=user_id, force=force)
+    return send_daily_digests(only_user_id=user_id, force=force)
 
 
 @app.post("/auth/api-key")
@@ -2883,6 +2883,58 @@ def fetch_jd_endpoint(req: FetchJDRequest, api_key=Depends(verify_api_key)):
         "char_count": len(jd_text),
         "raw_char_count": len(raw_text),
     }
+
+
+# =============================================================================
+# JOB PREFERENCES + OVERNIGHT MATCH INBOX
+# =============================================================================
+
+
+class JobPreferencesRequest(BaseModel):
+    titles: List[str] = Field(
+        default_factory=list,
+        description="Up to 5 job titles the overnight scan searches for",
+    )
+    location: str = Field("", description="Preferred location (blank = anywhere)")
+
+
+@app.get("/jobs/preferences")
+def get_job_preferences(auth=Depends(verify_api_key)):
+    """The signed-in user's saved job titles and location for overnight scans."""
+    user_id = _get_user_id(auth)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Sign in to save job preferences.")
+    from cloud.digest import get_preferences
+
+    titles, location = get_preferences(user_id)
+    return {"titles": titles, "location": location}
+
+
+@app.put("/jobs/preferences")
+def put_job_preferences(req: JobPreferencesRequest, auth=Depends(verify_api_key)):
+    """Save up to 5 job titles + location; the nightly scan uses them."""
+    user_id = _get_user_id(auth)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Sign in to save job preferences.")
+    from cloud.digest import get_preferences, set_preferences
+
+    try:
+        set_preferences(user_id, req.titles, req.location)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    titles, location = get_preferences(user_id)
+    return {"saved": True, "titles": titles, "location": location}
+
+
+@app.get("/jobs/matches")
+def get_job_matches(auth=Depends(verify_api_key)):
+    """Stored overnight matches for the Jobs-page inbox, best/newest first."""
+    user_id = _get_user_id(auth)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Sign in to see your matches.")
+    from cloud.digest import list_matches
+
+    return list_matches(user_id)
 
 
 # =============================================================================

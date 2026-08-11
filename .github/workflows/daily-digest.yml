@@ -1,0 +1,31 @@
+# Overnight job scan + morning digest trigger.
+#
+# The scan itself runs server-side (POST /admin/send-digests walks every
+# eligible user: discover jobs per saved title, persist matches, email the
+# brief). This workflow only fires the trigger — the send is idempotent per
+# user per day (digest_log), so a retry or a duplicate cron firing cannot
+# double-send.
+#
+# 09:30 UTC = 5:30am ET / 2:30am PT: matches land before US mornings.
+name: Daily job digest
+
+on:
+  schedule:
+    - cron: "30 9 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Trigger digest run
+        run: |
+          set -euo pipefail
+          response=$(curl -sS -m 1500 -w "\n%{http_code}" \
+            -X POST "https://resume-scorer.fly.dev/admin/send-digests" \
+            -H "X-Admin-Secret: ${{ secrets.SCORER_ADMIN_SECRET }}")
+          body=$(echo "$response" | sed '$d')
+          code=$(echo "$response" | tail -n1)
+          echo "HTTP $code: $body"
+          test "$code" = "200"
