@@ -220,7 +220,7 @@ CERTIFICATIONS & LICENSURE
 ```
 PHASE 0: CANDIDATE FIT ────────── Deterministic scan; LLM judge decides refusals
 PHASE 1: RESEARCHER ────────────── JD-only rubric and evidence spans
-PHASE 2: WRITER ───────────────── Master-resume-bound complete draft
+PHASE 2: WRITER ───────────────── Master-resume source-anchored replacements
 PHASE 3: AUDITOR ──────────────── Independent PASS/FAIL; no editing authority
 PHASE 4: EDITOR LOOP ──────────── Named findings only; max 2; fresh audit each time
 PHASE 5: THREE VOTES ──────────── Evidence + human voice + canonical integrity
@@ -274,7 +274,7 @@ explicitly requests those pins; Claude must not receive Codex-only flags.
    overruled, authorizing only the manual package path — never the runtime,
    receipts, authorized wrappers, or tracker.
 1. **Researcher** receives only the JD and returns a requirement rubric whose hard-then-soft strings exactly equal the uniquely anchored evidence strings one-for-one and in order.
-2. **Writer** receives only the master resume and validated rubric; it cannot authorize or publish.
+2. **Writer** receives only the master resume and validated rubric, and proposes source-anchored replacements rather than a complete draft; the coordinator resolves the immutable master, applies replacements in source order, and derives evidence bookkeeping. It cannot authorize or publish.
 3. **Auditor** independently checks the exact draft; it cannot edit.
 4. **Editor** corrects only explicit findings, with a maximum of two fresh re-audits.
 5. **Authorization** requires Auditor PASS plus all three deterministic votes on the same digest.

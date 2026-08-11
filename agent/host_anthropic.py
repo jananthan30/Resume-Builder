@@ -76,14 +76,13 @@ __all__ = [
 # Per-role model routing. Matched to what each role actually has to do, not
 # assigned uniformly, because the roles differ enormously in difficulty.
 #
-# The Writer and Editor carry the whole precision burden: one evidence entry
-# per changed line and no others, every anchor copied byte-exactly, each source
-# line used once and gone from the draft, claim and source in the same section,
-# ordered containment, numeric identity. Measured across eleven production
-# runs on Sonnet 4.6, they satisfied any individual rule once told and still
-# missed intermittently -- run 665925eb repaired and completed all four roles,
-# run fcc6dfaa failed both its first attempt and its repair on identical
-# input. That is a capability gap, and a retry only papers over it.
+# The Writer now makes only source-anchored replacement proposals. The
+# coordinator applies them to the immutable master and derives the draft and
+# evidence bookkeeping. The Editor remains responsible for complete-draft
+# claim evidence, including byte-exact anchors and one-use-only source lines.
+# Measured across eleven production runs on Sonnet 4.6, the old full-draft
+# Writer contract missed those bookkeeping constraints intermittently -- a
+# capability gap a retry could only paper over.
 #
 # The Researcher extracts and quotes lines from a job description under the
 # strictest formatting contract in the pipeline (hard-then-soft strings must
@@ -387,59 +386,34 @@ _ROLE_CONTRACTS: dict[str, str] = {
     ),
     "writer": (
         "You are the Writer. You receive a master resume and a validated "
-        "requirement rubric. Produce one complete tailored resume draft that "
-        "reuses only facts already present in the master resume.\n\n"
-        "Return exactly these two top-level keys and no others:\n"
-        '  "draft": string  (the complete resume, plain text)\n'
-        '  "claim_evidence": [{"claim_text": string, '
-        '"source_span_text": string}, ...]\n\n'
-        "CHANGE AS FEW LINES AS POSSIBLE. Every line you change must be "
-        "justified below, one entry each, so a small, surgical edit succeeds "
-        "where a full rewrite fails. Concentrate changes in the professional "
-        "summary and core-competencies lines; leave experience bullets alone "
-        "unless a rubric requirement genuinely needs one reworded.\n\n"
+        "requirement rubric. Propose only safe source-anchored replacement "
+        "operations; the coordinator derives the full tailored draft.\n\n"
+        "Return exactly one top-level key and no others:\n"
+        '  "replacements": [\n'
+        "    {\n"
+        '      "source_span_text": string,\n'
+        '      "replacement_text": string\n'
+        "    }, ...\n"
+        "  ]\n\n"
+        "Return replacements only, never a complete draft. source_span_text is one\n"
+        "exact, uniquely occurring, complete non-separator line copied byte-for-byte\n"
+        "from the master resume. replacement_text is either one safe single line or\n"
+        "the empty string to blank an optional source line. Use each source line at\n"
+        "most once. Do not emit unchanged replacements. Return [] when no supported\n"
+        "change is needed. The coordinator resolves every anchor against the immutable\n"
+        "master, applies all replacements in source order, and derives the full draft,\n"
+        "evidence offsets, and digests.\n\n"
         "Rules, all enforced:\n"
-        "- Never invent employers, titles, dates, degrees, certifications, "
-        "publications, or metrics. Reframe existing wording only.\n"
-        "- Keep job titles, company names, and dates byte-identical to the "
-        "master resume.\n"
-        "- claim_evidence must cover the lines you changed EXACTLY: one entry "
-        "for every changed line, and no entry for any line you left alone. "
-        "Not a sample, not the interesting ones -- all of them and only them. "
-        "A missing or extra entry fails the whole run.\n"
-        '- "claim_text" is your new draft line, copied exactly and occurring '
-        "exactly once in the draft.\n"
-        '- "source_span_text" is the ONE COMPLETE LINE of the master resume '
-        "that line replaces, copied exactly. Because you rewrote it, that "
-        "original line must NOT still appear anywhere in your draft.\n"
-        "- Each master-resume line may back at most one claim.\n"
-        "- ADD, DO NOT REWRITE. Start from the original line and insert the "
-        "job description's terms into it. Every word of the original must "
-        "still be there, in its original order. Deleting or replacing any of "
-        "the original wording is rejected, however much better the new "
-        "sentence reads.\n"
-        "  Original:  Combines clinical judgment with ICH-GCP knowledge\n"
-        "  Good:      Combines clinical judgment with ICH-GCP and "
-        "pharmacovigilance knowledge\n"
-        "  REJECTED:  Brings early-phase oncology experience from a global "
-        "CRO   (the original words are gone)\n"
-        "- STAY IN THE SAME SECTION. A changed line must be paired with the "
-        "line it replaces in that same part of the resume:\n"
-        "    * a summary line's source is the ORIGINAL SUMMARY line;\n"
-        "    * a core-competencies line's source is the ORIGINAL "
-        "COMPETENCIES line;\n"
-        "    * an experience bullet's source is a bullet under THE SAME job.\n"
-        "  Never source a summary or competencies line from an experience "
-        "bullet, and never source a bullet in one job from a bullet in "
-        "another job. Both of those are rejected as UNSUPPORTED_CLAIM even "
-        "when the facts are true.\n"
-        "- The claim must be supported by its source line -- same facts, "
-        "reworded. Do not pair a claim with an unrelated source line.\n"
-        "- Copy both texts with any leading bullet or marker intact "
-        '("• ", "- "); stripping them is rejected.\n'
-        "- Do not reorder or duplicate experience between roles.\n"
-        "- Before answering, count your changed lines and count your "
-        "claim_evidence entries. They must be the same number."
+        "- Never invent or strengthen experience, employers, titles, dates, "
+        "degrees, certifications, publications, metrics, skills, or claims. "
+        "Keep protected canonical facts byte-identical.\n"
+        "- Make minimal additive one-line changes only when the source supports "
+        "them. Preserve human voice: use plain language, avoid AI-cliche "
+        "phrasing and keyword stuffing.\n"
+        "- Never return claim evidence, offsets, hashes, line numbers, a full "
+        "draft, unchanged replacements, or any extra key.\n"
+        "- You have no tools or authority to write files, audit, authorize, "
+        "publish, update a tracker, use credentials, or make network calls."
     ),
     "auditor": (
         "You are the Auditor. You receive the exact writer draft and the "

@@ -131,7 +131,7 @@ def _codex_output_schema_cases():
     """Return model-facing raw payloads and exact contexts for all four roles."""
 
     researcher = researcher_raw()
-    writer = {"draft": PASSING_RESUME, "claim_evidence": []}
+    writer = {"replacements": []}
     auditor = {
         "verdict": "PASS",
         "findings": [],
@@ -1570,7 +1570,7 @@ def test_mocked_codex_native_team_end_to_end_publishes_verifiable_receipt(tmp_pa
                 "jd_evidence_spans": [{"evidence_text": requirement}],
             }
         elif role == "writer":
-            raw = {"draft": master.text, "claim_evidence": []}
+            raw = {"replacements": []}
         elif role == "auditor":
             raw = {
                 "verdict": "PASS",

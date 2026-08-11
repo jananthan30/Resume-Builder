@@ -240,10 +240,20 @@ def _native_output_schema(role: str) -> dict[str, Any]:
             "type": "object",
             "additionalProperties": False,
             "properties": {
-                "draft": text_value,
-                "claim_evidence": claim_evidence,
+                "replacements": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "source_span_text": text_value,
+                            "replacement_text": text_value,
+                        },
+                        "required": ["source_span_text", "replacement_text"],
+                    },
+                },
             },
-            "required": ["draft", "claim_evidence"],
+            "required": ["replacements"],
         }
     if role == "auditor":
         return {

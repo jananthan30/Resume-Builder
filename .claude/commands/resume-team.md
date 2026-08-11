@@ -86,7 +86,28 @@ At the application boundary, require the exact `multi_agent_team.run_team()` con
 Require the exact role payload keys:
 
 - Researcher model payload: `rubric`, `jd_evidence_spans`; concatenate `hard_requirements` then `soft_requirements` and require that exact sequence to equal `jd_evidence_spans[*].evidence_text` one-for-one, byte-for-byte, with no missing, extra, reordered, or paraphrased item. Every evidence string must be one exact, uniquely locatable, complete non-separator JD line—not a substring—so surrounding negation, scope, bounds, and qualification remain bound; the coordinator verifies the boundary, then anchors and hashes it.
-- Writer model payload: `draft`, `claim_evidence`; every changed non-empty draft line has an exact full-line `claim_text` and one unique, complete non-separator source line as `source_span_text`. The coordinator verifies exact changed-line coverage and requires the same NFC-normalized, case-preserving token stream, including every symbol and one-letter token; only the six closed first-action-verb groups are case-insensitive. Bounds, signs, currencies, approximations, ranges, ratios, acronyms, proper nouns, negations, qualifiers, subjects, objects, metrics, and second metrics cannot be dropped, recased, or swapped. Professional Experience evidence must remain in the exact same canonical role header and dates; source lines are one-use-only, and moved, retained-plus-variant, or duplicated claims, metrics, master lines, and novel lines are invalid.
+- Writer model payload follows this exact declaration:
+
+```text
+Return exactly one top-level key and no others:
+  "replacements": [
+    {
+      "source_span_text": string,
+      "replacement_text": string
+    }, ...
+  ]
+
+Return replacements only, never a complete draft. source_span_text is one
+exact, uniquely occurring, complete non-separator line copied byte-for-byte
+from the master resume. replacement_text is either one safe single line or
+the empty string to blank an optional source line. Use each source line at
+most once. Do not emit unchanged replacements. Return [] when no supported
+change is needed. The coordinator resolves every anchor against the immutable
+master, applies all replacements in source order, and derives the full draft,
+evidence offsets, and digests.
+```
+
+The Writer must preserve authenticity and human voice, make only minimal additive one-line changes, and may not return claim evidence, offsets, hashes, line numbers, a full draft, or extra keys. It has no tools or authority to write files, audit, authorize, publish, update a tracker, use credentials, or make network calls. The coordinator resolves anchors against the immutable master, owns application and evidence bookkeeping, and normalizes the resulting draft and claim evidence into the wire handoff.
 - Auditor model payload: `verdict`, `findings`, `audited_draft`; verdict is exactly `PASS` or `FAIL`, each finding supplies exact `evidence_text`, and `audited_draft` must byte-match the candidate. The coordinator converts these to `evidence_digest` and `draft_digest`.
 - Editor model payload: `draft`, `addressed_finding_ids`, `claim_evidence`; the draft is complete, all active finding IDs are covered, and every changed line has the same complete-source-line, case-preserving token equality, one-use-only provenance, and symmetric role binding required of Writer. No verdict or publication request is present.
 
@@ -97,7 +118,7 @@ After normalization, require the exact wire payload keys from `schemas/resume-te
 Delegate in this order to distinct native role agents:
 
 1. Researcher -> `resume-researcher`, attempt 0. Validate its handoff before continuing.
-2. Writer -> `resume-writer`, attempt 0. Validate its complete evidence-bound draft before continuing.
+2. Writer -> `resume-writer`, attempt 0. Validate its source-anchored replacements and coordinator-compiled evidence-bound draft before continuing.
 3. Auditor -> `resume-auditor`, attempt 0. Validate that it audited the exact Writer draft digest.
 
 Call Editor only on a `FAIL`. A fail is the safety union of an Auditor `FAIL` or any failed deterministic authorization vote. Normalize deterministic failures into coded findings before delegating to `resume-editor`. The Editor may correct only those findings and must return a complete draft. Re-audit every edited draft with a fresh `resume-auditor` handoff. Allow at most 2 Editor corrections and therefore at most 2 re-audits; never make a third correction. Stop immediately on a repeated draft digest, editor overreach, a new unsupported fact or metric, unresolved findings, or exhausted correction budget.

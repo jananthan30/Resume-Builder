@@ -197,15 +197,13 @@ class AnthropicTeamAdapter:
         except AgentInvocationFailure:
             raise
         except Exception as first_error:
-            # One repair attempt, then fail closed. A role must satisfy eight
-            # exact-text constraints simultaneously on its first try with no
-            # feedback -- complete-line anchors, uniqueness, one-for-one
-            # evidence coverage, source-line disappearance, one claim per
-            # source line, same-section pairing, ordered containment, numeric
-            # identity. Measured across nine production runs, it lands any
-            # individual rule once told and still misses on a first pass. The
-            # local CLI flow never hit this because an interactive agent reads
-            # the error and fixes it; that feedback was doing invisible work.
+            # One repair attempt, then fail closed. The Writer now proposes
+            # only source-anchored replacement operations; the coordinator
+            # resolves the immutable master into the full draft and derives
+            # its evidence bookkeeping. Other role contracts remain strict.
+            # The local CLI flow never hit malformed payloads because an
+            # interactive agent reads the error and fixes it; that feedback
+            # was doing invisible work.
             #
             # Nothing is loosened: the same validator judges the retry, the
             # coordinator's context and digest binding are untouched, and a
