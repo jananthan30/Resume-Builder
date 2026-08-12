@@ -392,7 +392,7 @@ def _ownership_violation_hint(master: str, draft: str) -> str:
     Diagnostic only — the boolean validators above keep sole authority; this
     never loosens anything. The repair loop shows the model the rejection
     reason, and "duplicates or moves source claims" alone gives it nothing
-    to act on: observed live (2026-08-11), an Opus writer failed the initial
+    to act on: observed live (2026-08-11), the prior writer failed the initial
     attempt and the blind repair identically. Naming the offending line
     turns the second attempt into a targeted fix. Fails silent to "" — a
     diagnostic that crashes must never mask the real rejection.

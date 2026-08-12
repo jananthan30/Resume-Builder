@@ -129,7 +129,7 @@ def _ocr_via_claude(file_path: str) -> str:
     except ImportError:
         raise ImportError("Install PyMuPDF for scanned PDF support: pip install pymupdf")
 
-    model = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+    model = "claude-sonnet-5"
     doc = fitz.open(file_path)
     extracted_pages: list[str] = []
 
@@ -143,6 +143,7 @@ def _ocr_via_claude(file_path: str) -> str:
         payload = json.dumps({
             "model": model,
             "max_tokens": 2000,
+            "thinking": {"type": "disabled"},
             "messages": [{
                 "role": "user",
                 "content": [

@@ -441,7 +441,7 @@ def lightweight_score(resume_text: str, jd_text: str) -> float:
 
 def analyze_resume_for_search(resume_text: str, include_queries: bool = True) -> Dict[str, Any]:
     """
-    Use Claude Haiku to build a structured candidate profile from the resume.
+    Use Claude Sonnet 5 to build a structured candidate profile from the resume.
 
     Always returns: recent_title, career_level, domain, role_type,
                     role_family, excluded_roles, specialties, job_zone.
@@ -457,7 +457,7 @@ def analyze_resume_for_search(resume_text: str, include_queries: bool = True) ->
     if not api_key:
         return {}
 
-    model = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+    model = "claude-sonnet-5"
     resume_excerpt = resume_text[:3000]
 
     queries_instruction = (
@@ -498,6 +498,7 @@ def analyze_resume_for_search(resume_text: str, include_queries: bool = True) ->
     payload = json.dumps({
         "model": model,
         "max_tokens": max_tokens,
+        "thinking": {"type": "disabled"},
         "messages": [{"role": "user", "content": prompt}],
     }).encode("utf-8")
 
@@ -642,7 +643,7 @@ def _ai_role_filter(
     profile: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     """
-    AI batch filter: one Claude Haiku call to confirm role + seniority compatibility.
+    AI batch filter: one Claude Sonnet 5 call to confirm role + seniority compatibility.
     Uses the full structured candidate profile so Claude understands exactly who this
     person is and what roles they should NOT see.
 
@@ -652,7 +653,7 @@ def _ai_role_filter(
     if not api_key or not candidates:
         return candidates
 
-    model = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+    model = "claude-sonnet-5"
 
     role_type = profile.get("role_type", "professional")
     domain = profile.get("domain", "")
@@ -684,6 +685,7 @@ def _ai_role_filter(
     payload = json.dumps({
         "model": model,
         "max_tokens": 150,
+        "thinking": {"type": "disabled"},
         "messages": [{"role": "user", "content": prompt}],
     }).encode("utf-8")
 

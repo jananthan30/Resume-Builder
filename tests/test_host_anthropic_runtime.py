@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from types import SimpleNamespace
 
 import pytest
 
+import candidate_fit_judge
+import llm_scorer
 from agent.adapter import AnthropicTeamAdapter
 from agent.host_anthropic import AnthropicHost, HostRefusal, TokenBudget
+from candidate_fit_judge import JudgeUnavailable, judge_candidate_fit
+from llm_scorer import generate_cover_letter, score_with_llm
 from multi_agent_team import build_context
 
 
@@ -49,9 +54,7 @@ def _thinking_only_response() -> SimpleNamespace:
     )
 
 
-@pytest.mark.parametrize(
-    ("role", "payload", "reply"),
-    [
+ROLE_CASES = [
         (
             "researcher",
             {"job_description": "A complete job-description line."},
@@ -80,8 +83,10 @@ def _thinking_only_response() -> SimpleNamespace:
                 "claim_evidence": [],
             },
         ),
-    ],
-)
+    ]
+
+
+@pytest.mark.parametrize(("role", "payload", "reply"), ROLE_CASES)
 def test_strict_json_role_calls_disable_adaptive_thinking(role, payload, reply):
     """Removing the explicit flag would let Claude 5 spend all output on thought."""
 
@@ -93,20 +98,137 @@ def test_strict_json_role_calls_disable_adaptive_thinking(role, payload, reply):
     assert client.messages.calls[0]["thinking"] == {"type": "disabled"}
 
 
-def test_custom_model_does_not_receive_an_unsupported_thinking_override():
-    """Forcing disabled thinking onto an unknown model can cause a provider 400."""
+@pytest.mark.parametrize(("role", "payload", "reply"), ROLE_CASES)
+def test_default_resume_team_role_calls_sonnet_5(role, payload, reply):
+    """Changing any default route away from Sonnet 5 violates production policy."""
+
+    client = _Client([_text_response(reply)])
+    host = AnthropicHost(client=client)
+
+    host.run_role(role, payload, case_id="CASE", run_id="RUN")
+
+    assert client.messages.calls[0]["model"] == "claude-sonnet-5"
+
+
+def test_host_rejects_non_sonnet_model_override():
+    """Accepting a custom map could silently bypass the production policy."""
 
     client = _Client([_text_response({"replacements": []})])
-    host = AnthropicHost(
-        model_map={"writer": "claude-fable-5"},
-        client=client,
+    with pytest.raises(ValueError, match="Sonnet 5"):
+        AnthropicHost(
+            model_map={"writer": "legacy-model"},
+            client=client,
+        )
+
+    assert client.messages.calls == []
+
+
+def test_resume_team_model_map_cannot_be_mutated_after_construction():
+    """A valid host must not become a different-model host after validation."""
+
+    client = _Client([_text_response({"replacements": []})])
+    host = AnthropicHost(client=client)
+
+    with pytest.raises(TypeError):
+        host.model_map["writer"] = "legacy-model"
+    with pytest.raises(AttributeError):
+        host.model_map = {"writer": "legacy-model"}
+
+    host._model_map = {"writer": "legacy-model"}
+    with pytest.raises(HostRefusal, match="model policy"):
+        host.run_role(
+            "writer", {"master_resume": "Resume"}, case_id="CASE", run_id="RUN"
+        )
+
+    assert client.messages.calls == []
+
+
+def test_resume_team_transport_rejects_non_sonnet_model():
+    """The final SDK boundary must enforce policy even when called directly."""
+
+    client = _Client([_text_response({"replacements": []})])
+    host = AnthropicHost(client=client)
+
+    with pytest.raises(HostRefusal, match="model policy"):
+        host._call_once(
+            model="legacy-model", system="System", messages=[{"role": "user", "content": "x"}]
+        )
+
+    assert client.messages.calls == []
+
+
+def test_candidate_fit_judge_rejects_non_sonnet_override():
+    """A model argument must not bypass the hosted Sonnet 5 policy."""
+
+    with pytest.raises(JudgeUnavailable, match="Sonnet 5"):
+        judge_candidate_fit(
+            "Resume evidence line",
+            "Job requirement line",
+            run_id="RUN",
+            case_id="CASE",
+            as_of_date="2026-08-11",
+            model="legacy-model",
+            llm_call=lambda _system, _user, _model: "{}",
+        )
+
+
+def test_candidate_fit_model_constant_cannot_weaken_policy(monkeypatch):
+    """Rebinding an exported default must not change the enforced model."""
+
+    monkeypatch.setattr(candidate_fit_judge, "DEFAULT_JUDGE_MODEL", "legacy-model")
+    with pytest.raises(JudgeUnavailable, match="Sonnet 5"):
+        judge_candidate_fit(
+            "Resume evidence line",
+            "Job requirement line",
+            run_id="RUN",
+            case_id="CASE",
+            as_of_date="2026-08-11",
+            llm_call=lambda _system, _user, _model: "{}",
+        )
+
+
+def test_candidate_fit_transport_rejects_non_sonnet_model():
+    """The judge's final SDK boundary must enforce the literal policy."""
+
+    with pytest.raises(JudgeUnavailable, match="Sonnet 5"):
+        candidate_fit_judge._default_llm_call(
+            "System instructions", "User payload", "legacy-model"
+        )
+
+
+@pytest.mark.parametrize("call", [score_with_llm, generate_cover_letter])
+def test_direct_hosted_llm_calls_reject_non_sonnet_override(call):
+    """Library callers must not bypass the hosted Sonnet 5 policy."""
+
+    with pytest.raises(ValueError, match="Sonnet 5"):
+        call("Resume evidence line", "Job requirement line", model="legacy-model")
+
+
+def test_direct_hosted_model_constant_cannot_weaken_policy(monkeypatch):
+    """Rebinding the public default must not weaken scorer enforcement."""
+
+    monkeypatch.setattr(llm_scorer, "HOSTED_MODEL", "legacy-model")
+    with pytest.raises(ValueError, match="Sonnet 5"):
+        score_with_llm(
+            "Resume evidence line", "Job requirement line", model="legacy-model"
+        )
+
+
+def test_candidate_fit_default_call_disables_adaptive_thinking(monkeypatch):
+    """The strict JSON judge must reserve its output budget for visible JSON."""
+
+    client = _Client([_text_response({"verdict": "PASS"})])
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setitem(
+        sys.modules, "anthropic", SimpleNamespace(Anthropic=lambda: client)
     )
 
-    host.run_role(
-        "writer", {"master_resume": "Resume"}, case_id="CASE", run_id="RUN"
+    candidate_fit_judge._default_llm_call(
+        "System instructions", "User payload", "claude-sonnet-5"
     )
 
-    assert "thinking" not in client.messages.calls[0]
+    assert client.messages.calls[0]["thinking"] == {"type": "disabled"}
+    assert "temperature" not in client.messages.calls[0]
 
 
 def test_thinking_only_response_accounts_usage_and_reports_safe_metadata():

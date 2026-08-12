@@ -56,6 +56,8 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any
 
 from multi_agent_team import ROLE_ORDER
@@ -71,45 +73,41 @@ __all__ = [
     "AnthropicHost",
 ]
 
-# Default per-role model routing. These are real, active Anthropic model IDs
-# (verified against the current model catalog) -- not placeholders.
-# Per-role model routing. Matched to what each role actually has to do, not
-# assigned uniformly, because the roles differ enormously in difficulty.
+# Hosted production model policy. Every role uses the same current Sonnet 5
+# model so reliability, rate limits, and behavior do not vary by pipeline stage.
 #
 # The Writer now makes only source-anchored replacement proposals. The
 # coordinator applies them to the immutable master and derives the draft and
 # evidence bookkeeping. The Editor remains responsible for complete-draft
 # claim evidence, including byte-exact anchors and one-use-only source lines.
-# Measured across eleven production runs on Sonnet 4.6, the old full-draft
-# Writer contract missed those bookkeeping constraints intermittently -- a
+# Measured across eleven production runs, the old full-draft Writer contract
+# missed those bookkeeping constraints intermittently -- a
 # capability gap a retry could only paper over.
 #
 # The Researcher extracts and quotes lines from a job description under the
 # strictest formatting contract in the pipeline (hard-then-soft strings must
 # equal the anchored evidence strings byte-for-byte, one-for-one, in order).
-# It ran on Haiku until 2026-08-11, when a production JD produced
+# A smaller model tier failed on 2026-08-11 when a production JD produced
 # FAILED:AGENT_PAYLOAD_SCHEMA twice in a row ("rubric is not evidence-bound",
 # initial + repair) — the same paraphrase-under-pressure failure class that
-# moved the Writer off Sonnet 4.6. Sonnet 5 costs roughly two cents more per
-# run and closes it. The Auditor reproduces a draft verbatim and reports what
-# it finds -- exacting but far narrower than writing.
+# moved the Writer to the current policy. Sonnet 5 closes that gap. The Auditor
+# reproduces a draft verbatim and reports what it finds -- exacting but far
+# narrower than writing.
 #
-# Cost: about $0.20 -> $0.22 per run at measured token volumes, against
-# $12/mo for ten Pro runs. Roughly 82% margin -- worth paying for a feature
-# that otherwise fails intermittently.
-DEFAULT_MODEL_MAP: dict[str, str] = {
-    "researcher": "claude-sonnet-5",
-    "writer": "claude-opus-5",
-    "auditor": "claude-sonnet-5",
-    "editor": "claude-opus-5",
-}
+DEFAULT_MODEL_MAP: Mapping[str, str] = MappingProxyType(
+    {
+        "researcher": "claude-sonnet-5",
+        "writer": "claude-sonnet-5",
+        "auditor": "claude-sonnet-5",
+        "editor": "claude-sonnet-5",
+    }
+)
 
 DEFAULT_MAX_INPUT_TOKENS = 120_000
 DEFAULT_MAX_OUTPUT_TOKENS = 25_000
 
 _MAX_TOKENS_PER_CALL = 8_000
 _MAX_API_ATTEMPTS = 3  # one initial attempt plus two retries
-_THINKING_DISABLED_MODELS = frozenset({"claude-opus-5", "claude-sonnet-5"})
 # Backoff between this host's own attempts. Seconds, not milliseconds: the
 # previous 50/100ms values retried inside the window the server was still
 # overloaded in, which amplifies a rate limit instead of shedding it.
@@ -555,7 +553,7 @@ class AnthropicHost:
 
     def __init__(
         self,
-        model_map: dict[str, str] | None = None,
+        model_map: Mapping[str, str] | None = None,
         budget: TokenBudget | None = None,
         client: Any = None,
     ) -> None:
@@ -565,9 +563,17 @@ class AnthropicHost:
         missing = [role for role in ROLE_ORDER if role not in resolved_map]
         if missing:
             raise ValueError(f"model_map is missing roles: {missing}")
-        self.model_map = resolved_map
+        if any(model != "claude-sonnet-5" for model in resolved_map.values()):
+            raise ValueError("all hosted resume-team roles must use Claude Sonnet 5")
+        self._model_map = MappingProxyType(resolved_map)
         self.budget = budget if budget is not None else TokenBudget()
         self._client = client
+
+    @property
+    def model_map(self) -> Mapping[str, str]:
+        """Return the validated, read-only role-to-model policy."""
+
+        return self._model_map
 
     def _ensure_client(self) -> Any:
         """Return the injected client, or lazily construct the real one.
@@ -600,6 +606,8 @@ class AnthropicHost:
         re-sending cannot fix (see :func:`_is_retryable_api_error`) stops the
         loop immediately and raises the same way.
         """
+        if model != "claude-sonnet-5":
+            raise HostRefusal("hosted model policy violation")
         client = self._ensure_client()
         last_error: Exception | None = None
         attempts_made = 0
@@ -611,11 +619,10 @@ class AnthropicHost:
                     "system": system,
                     "messages": messages,
                 }
-                if model in _THINKING_DISABLED_MODELS:
-                    # Claude 5 defaults to adaptive thinking. These roles
-                    # need bounded strict JSON, and thinking can otherwise
-                    # consume the entire cap before a text block is emitted.
-                    request["thinking"] = {"type": "disabled"}
+                # Sonnet 5 defaults to adaptive thinking. These roles need
+                # bounded strict JSON, and thinking can otherwise consume the
+                # entire cap before a text block is emitted.
+                request["thinking"] = {"type": "disabled"}
                 return client.messages.create(
                     **request,
                 )
@@ -672,6 +679,8 @@ class AnthropicHost:
             raise BudgetExceeded("token budget already exhausted; refusing to call")
 
         model = self.model_map[role]
+        if model != "claude-sonnet-5":
+            raise HostRefusal("hosted model policy violation")
         system = _default_system_prompt(role)
         payload_text = json.dumps(payload, sort_keys=True, ensure_ascii=True)
         messages: list[dict[str, Any]] = [{"role": "user", "content": payload_text}]

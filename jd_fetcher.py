@@ -6,7 +6,7 @@ Strategy (in order):
   2. requests + BeautifulSoup — CSS-selector fallback
   3. Raw body text (capped at 8 000 chars)
 
-Then optionally run Claude Haiku to extract only the JD portion from the
+Then optionally run Claude Sonnet 5 to extract only the JD portion from the
 raw page dump (useful when the page has a lot of surrounding nav/footer noise).
 """
 
@@ -305,7 +305,7 @@ def extract_jd_with_ai(
     api_key: str = "",
 ) -> str:
     """
-    Use Claude Haiku to pull out just the job-description content from a
+    Use Claude Sonnet 5 to pull out just the job-description content from a
     raw page dump.  Falls back to returning *raw_text* unchanged on any error.
     """
     key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
@@ -317,8 +317,9 @@ def extract_jd_with_ai(
 
         client = anthropic.Anthropic(api_key=key)
         msg = client.messages.create(
-            model=os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
+            model="claude-sonnet-5",
             max_tokens=2000,
+            thinking={"type": "disabled"},
             messages=[
                 {
                     "role": "user",

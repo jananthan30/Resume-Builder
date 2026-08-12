@@ -453,7 +453,7 @@ class FetchJDRequest(BaseModel):
     """Fetch full job description from a listing URL."""
     url: str = Field(..., description="Job listing URL to scrape")
     job_title: str = Field("", description="Job title hint for AI extraction")
-    use_ai: bool = Field(True, description="Use Claude Haiku to clean/extract JD from raw page text")
+    use_ai: bool = Field(True, description="Use Claude Sonnet 5 to clean/extract JD from raw page text")
 
 
 class JdExtractRequest(BaseModel):
@@ -1078,8 +1078,8 @@ def _agent_key_status() -> Dict[str, Any]:
     and nobody found out until August, because the endpoint that would have
     used it was a 409 stub and nothing else ever touched it.
 
-    So this makes one real request (cheapest model, one output token,
-    a fraction of a cent) the first time it is asked, then caches the answer
+    So this makes one real Sonnet 5 request (one output token) the first time
+    it is asked, then caches the answer
     for the life of the process. A deploy restarts the process, so every
     deploy re-checks. Health checks poll this endpoint every 30s and must
     stay fast, hence the cache.
@@ -1100,8 +1100,9 @@ def _agent_key_status() -> Dict[str, Any]:
             import anthropic
 
             anthropic.Anthropic(api_key=key).messages.create(
-                model="claude-haiku-4-5",
+                model="claude-sonnet-5",
                 max_tokens=1,
+                thinking={"type": "disabled"},
                 messages=[{"role": "user", "content": "ping"}],
             )
             _agent_key_state.update(checked=True, status="ok", detail=None)
@@ -2869,7 +2870,7 @@ def discover_jobs_endpoint(req: JobDiscoverRequest, api_key=Depends(verify_api_k
 
 @app.post("/jobs/fetch-jd")
 def fetch_jd_endpoint(req: FetchJDRequest, api_key=Depends(verify_api_key)):
-    """Scrape full job description from a listing URL. Uses trafilatura + Claude Haiku."""
+    """Scrape full job description from a listing URL. Uses trafilatura + Claude Sonnet 5."""
     try:
         import jd_fetcher
     except ImportError:
@@ -3477,7 +3478,7 @@ def _career_llm_call(prompt: str) -> str:
     Deliberately a tiny seam of its own: it is the only network call on the
     career path, so tests substitute this function and assert the
     once-per-digest contract instead of mocking the SDK. Reuses llm_scorer's
-    env-override convention (ANTHROPIC_MODEL, ANTHROPIC_API_KEY).
+    API-key convention while keeping the hosted model pinned to Sonnet 5.
     """
     try:
         import anthropic
@@ -3488,9 +3489,9 @@ def _career_llm_call(prompt: str) -> str:
         )
     client = anthropic.Anthropic()
     response = client.messages.create(
-        model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+        model="claude-sonnet-5",
         max_tokens=8000,
-        temperature=0,
+        thinking={"type": "disabled"},
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text.strip()

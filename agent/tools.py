@@ -320,7 +320,7 @@ def fetch_jd(ctx: ToolContext, url: str, use_ai: bool = True) -> dict:
     """Scrape a job description from a listing URL. Wraps jd_fetcher.
 
     Mirrors the /jobs/fetch-jd endpoint's own two-step shape: scrape, then
-    (only if an API key is configured) let jd_fetcher's own Haiku cleanup
+    (only if an API key is configured) let jd_fetcher's Sonnet 5 cleanup
     strip surrounding page noise -- that helper already no-ops safely (falls
     back to the raw text) when no key is present.
     """

@@ -408,7 +408,6 @@ The `.mcp.json` file configures the MCP server to auto-start with Claude Code:
 | `SCORER_CLOUD_URL` | No | `https://resume-scorer.fly.dev` | Cloud scoring API URL |
 | `SCORER_CLOUD_API_KEY` | No | — | Your cloud API key (`rb_...`). Anonymous scoring (5 free) works without this. |
 | `ANTHROPIC_API_KEY` | No | — | For LLM scoring (always runs locally with your key) |
-| `ANTHROPIC_MODEL` | No | `claude-sonnet-4-6` | Claude model for LLM scoring |
 | `ADZUNA_APP_ID` | No | — | For job discovery (free at [developer.adzuna.com](https://developer.adzuna.com/)) |
 | `ADZUNA_APP_KEY` | No | — | For job discovery |
 | `RAPIDAPI_KEY` | No | — | Enables the JSearch job source (aggregated boards) |

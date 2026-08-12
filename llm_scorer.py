@@ -11,7 +11,6 @@ Usage:
 """
 
 import json
-import os
 from typing import Any, Dict, List, Optional, Tuple
 
 # Try to import Anthropic SDK
@@ -25,11 +24,18 @@ except ImportError:
 from legacy_rewrite_guard import native_resume_team_required_response
 from pii_redactor import redact_text
 
+HOSTED_MODEL = "claude-sonnet-5"
+
+
+def _require_hosted_model(model: str) -> None:
+    if model != "claude-sonnet-5":
+        raise ValueError("all hosted LLM calls must use Claude Sonnet 5")
+
 
 def score_with_llm(
     resume_text: str,
     jd_text: str,
-    model: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+    model: str = HOSTED_MODEL,
     temperature: float = 0.0,
     domain_hint: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -53,6 +59,7 @@ def score_with_llm(
         - explanation: Human-readable summary
         - model_used: Which model produced the scores
     """
+    _require_hosted_model(model)
     if not ANTHROPIC_AVAILABLE:
         return {
             'error': 'anthropic package not installed',
@@ -151,13 +158,14 @@ RESUME:
 {resume_text}"""
 
     try:
+        request: Dict[str, Any] = {
+            "model": model,
+            "max_tokens": 2000,
+            "messages": [{"role": "user", "content": scoring_prompt}],
+        }
+        request["thinking"] = {"type": "disabled"}
         response = client.messages.create(
-            model=model,
-            max_tokens=2000,
-            temperature=temperature,
-            messages=[
-                {"role": "user", "content": scoring_prompt}
-            ]
+            **request
         )
 
         # Extract JSON from response
@@ -206,7 +214,7 @@ RESUME:
 def rewrite_resume(
     resume_text: str,
     jd_text: str,
-    model: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+    model: str = HOSTED_MODEL,
     temperature: float = 0.3,
     domain_hint: Optional[str] = None,
     format_style: Optional[str] = None,
@@ -225,7 +233,7 @@ def coach_red_flags(
     jd_text: str,
     score_context: Optional[Dict[str, Any]] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
-    model: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+    model: str = HOSTED_MODEL,
     temperature: float = 0.3,
     domain_hint: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -249,7 +257,7 @@ def generate_cover_letter(
     jd_text: str,
     company_name: str = "",
     job_title: str = "",
-    model: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+    model: str = HOSTED_MODEL,
     temperature: float = 0.4,
 ) -> Dict[str, Any]:
     """
@@ -262,6 +270,7 @@ def generate_cover_letter(
         - job_title: Detected or provided job title
         - word_count: Total word count
     """
+    _require_hosted_model(model)
     if not ANTHROPIC_AVAILABLE:
         return {
             "error": "anthropic package not installed",
@@ -314,12 +323,13 @@ CANDIDATE RESUME:
 {resume_text}"""
 
     try:
-        response = client.messages.create(
-            model=model,
-            max_tokens=4000,
-            temperature=temperature,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        request: Dict[str, Any] = {
+            "model": model,
+            "max_tokens": 4000,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        request["thinking"] = {"type": "disabled"}
+        response = client.messages.create(**request)
 
         response_text = response.content[0].text.strip()
 
@@ -428,7 +438,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='LLM-Augmented Resume Scorer')
     parser.add_argument('resume_path', help='Path to resume file')
     parser.add_argument('jd_path', help='Path to job description file')
-    parser.add_argument('--model', default=os.getenv('ANTHROPIC_MODEL', 'claude-sonnet-4-6'), help='Model to use (overrides ANTHROPIC_MODEL env var)')
+    parser.add_argument('--model', default=HOSTED_MODEL, choices=[HOSTED_MODEL], help='Hosted model policy')
     parser.add_argument('--json', action='store_true', help='Output raw JSON')
     parser.add_argument('--domain', help='Domain hint (clinical_research, pharma_biotech, etc.)')
 

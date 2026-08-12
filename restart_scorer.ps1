@@ -19,7 +19,6 @@ $psi.WorkingDirectory = $scriptDir
 $psi.UseShellExecute = $false
 $psi.CreateNoWindow = $true
 $psi.EnvironmentVariables["ANTHROPIC_API_KEY"] = $apiKey
-$psi.EnvironmentVariables["ANTHROPIC_MODEL"] = "claude-sonnet-4-6"
 
 $p = [System.Diagnostics.Process]::Start($psi)
 Write-Host "Started scorer server with PID: $($p.Id)"

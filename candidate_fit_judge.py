@@ -68,9 +68,8 @@ _MAX_QUOTE_CHARS = 300
 _MAX_CANDIDATE_HAS_CHARS = 400
 _MAX_RATIONALE_CHARS = 2_000
 _MAX_MODEL_NAME_CHARS = 128
-# Room for the model's (adaptive) thinking plus the JSON verdict — on current
-# models max_tokens caps both together, and a squeezed budget truncates the
-# JSON mid-object.
+# Room for the model's JSON verdict. Adaptive thinking is disabled because
+# max_tokens caps thinking and visible output together.
 _MAX_OUTPUT_TOKENS = 8_000
 
 _JUDGE_REPORT_KEYS = frozenset(
@@ -283,6 +282,8 @@ def _build_user_prompt(
 
 
 def _default_llm_call(system: str, user: str, model: str) -> str:
+    if model != "claude-sonnet-5":
+        raise JudgeUnavailable("candidate-fit judge must use Claude Sonnet 5")
     try:
         import anthropic  # Deferred: import safety mirrors agent.host_anthropic.
     except Exception as exc:  # pragma: no cover - environment-specific
@@ -297,6 +298,7 @@ def _default_llm_call(system: str, user: str, model: str) -> str:
         response = client.messages.create(
             model=model,
             max_tokens=_MAX_OUTPUT_TOKENS,
+            thinking={"type": "disabled"},
             system=system,
             messages=[{"role": "user", "content": user}],
         )
@@ -404,6 +406,8 @@ def judge_candidate_fit(
     resolved_model = (
         model or os.environ.get(_MODEL_ENV_VAR) or DEFAULT_JUDGE_MODEL
     )
+    if resolved_model != "claude-sonnet-5":
+        raise JudgeUnavailable("candidate-fit judge must use Claude Sonnet 5")
     resume_digest = _digest(master_resume)
     jd_digest = _digest(job_description)
 

@@ -255,8 +255,9 @@ Format Requirements:
 Output the complete cover letter text only, ready to be formatted."""
 
     message = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-5",
         max_tokens=2000,
+        thinking={"type": "disabled"},
         messages=[{"role": "user", "content": prompt}]
     )
 
