@@ -161,22 +161,13 @@ def compile_writer_replacements_salvage(
             continue
         candidates.append((start, ordinal, item))
 
-    duplicate_starts = {
-        start
-        for start, count in Counter(row[0] for row in candidates).items()
-        if count > 1
-    }
-    if duplicate_starts:
-        rejected["INVALID_ANCHOR"] += sum(
-            1 for start, _, _ in candidates if start in duplicate_starts
-        )
-        candidates = [
-            row for row in candidates if row[0] not in duplicate_starts
-        ]
-
     accepted: list[dict[str, str]] = []
+    accepted_starts: set[int] = set()
     compiled = _compile_writer_replacements(master, [])
-    for _, _, item in sorted(candidates):
+    for start, _, item in sorted(candidates):
+        if start in accepted_starts:
+            rejected["INVALID_ANCHOR"] += 1
+            continue
         try:
             proposed = _compile_writer_replacements(master, [*accepted, item])
         except Exception:
@@ -189,6 +180,7 @@ def compile_writer_replacements_salvage(
             rejected["CANONICAL_INTEGRITY"] += 1
             continue
         accepted.append(item)
+        accepted_starts.add(start)
         compiled = proposed
 
     stats = {
