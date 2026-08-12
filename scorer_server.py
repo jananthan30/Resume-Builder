@@ -74,10 +74,10 @@ print(f"Models loaded in {_elapsed:.1f}s")
 
 # ─── Agent tool registry (cloud-hostable; imports cleanly with no cloud/
 # package present and no vendor SDK installed -- see agent/tools.py's own
-# module docstring). /rewrite and /cover-letter dispatch into this registry
-# instead of talking to the model or the four-role pipeline directly, so
-# every draft they can ever return is produced (and audited/recorded) by the
-# exact same code path Task 8's tests already cover. ───
+# module docstring). /rewrite selects the registry's web-only single-writer
+# mode; async tailoring keeps the default four-role mode. Both enter the same
+# audited coordinator and mandatory authorization/publication gates.
+# /cover-letter also dispatches through the registry. ───
 # ─── Async run bookkeeping for POST /agent/tailor + /agent/cover-letter
 # (Task 10; see agent/runner.py's own module docstring). Imports cleanly
 # without cloud/ present, same as agent.tools above. ───
@@ -2168,17 +2168,20 @@ def _safe_agent_scores(ctx: "agent_tools.ToolContext", resume_text: str, jd_text
 @app.post("/rewrite")
 def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
     """
-    Tailor the caller's resume via the audited four-role Resume Team pipeline
-    (agent.tools.run_resume_team) and return it in the legacy REST shape the
-    deployed PWA's Ultra "Rewrite" feature already reads:
+    Tailor the caller's resume through the shared audited coordinator in its
+    web-only single-writer mode: one hosted Writer, deterministic Researcher
+    and Auditor handoffs, no Editor, and the same three authoritative votes,
+    receipt, and readback gates as the default four-role mode. Return the
+    legacy REST shape the deployed PWA's Ultra "Rewrite" feature already reads:
     ``{"rewritten_resume": str, "ats_before", "ats_after", "hr_before",
     "hr_after"}`` (scores are null when unavailable, but ``rewritten_resume``
     is always present on a 200).
 
-    403 for free tier, 402 for an exhausted Pro/Ultra monthly quota, 400 when
-    no resume text is available from either the request or the account, and
-    a 5xx with no internal error codes if the pipeline runs but does not
-    publish a draft.
+    400 for missing inputs, 402 for exhausted quota, 403 for free tier, 409
+    for candidate-fit refusal, and 422 for unprocessable JD or deterministic
+    safety rejection. Authentication/runtime unavailability uses 501/502;
+    capacity refusal remains the existing retryable 429. Internal codes and
+    candidate/resume content are never written to exception logs.
 
     Deliberately a plain ``def``: run_resume_team blocks for minutes on
     synchronous API calls. Declared ``async``, it would run on the event loop
@@ -2249,7 +2252,7 @@ def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
             except HTTPException:
                 raise
             except Exception:
-                logging.getLogger("scorer.rewrite").exception(
+                logging.getLogger("scorer.rewrite").error(
                     "rewrite dispatch crashed (user=%s)", user_id
                 )
                 raise HTTPException(status_code=502, detail=_TAILOR_UNAVAILABLE_DETAIL)
@@ -2593,16 +2596,15 @@ def _friendly_agent_error(kind: str, error_code: Optional[str] = None) -> str:
     'HUMAN_VOICE_AUDIT_FAILED' and friends name model and pipeline internals
     that mean nothing to an end user.
 
-    But one internal outcome is not an error at all, and hiding it behind the
-    generic copy actively misled people: REJECTED:CANDIDATE_FIT means the
-    deterministic preflight judged the candidate too far from the role. Told
-    'please try again in a few minutes', a user retries and gets the byte-for-
-    byte identical refusal, because nothing about that verdict is transient.
-    They conclude the product is broken rather than learning what it decided.
+    Both the default four-role async path and web-only single-writer route use
+    the shared audited coordinator. ``REJECTED:CANDIDATE_FIT`` is a policy
+    refusal, not a transient failure; synchronous ``/rewrite`` reports it as
+    409, while queue polling receives the corresponding friendly copy here.
 
-    So a fit rejection gets its own honest message. A Researcher schema
-    failure names the job-description input and its practical workaround;
-    Writer/Auditor/Editor failures keep the generic transient copy.
+    Researcher schema failures and deterministic safety rejections are 422s
+    on synchronous ``/rewrite`` and receive equally non-transient polling
+    text. Writer/Auditor/Editor infrastructure failures retain generic 5xx
+    wording without internal codes or exception content.
     """
     if error_code and str(error_code).startswith("REJECTED:CANDIDATE_FIT"):
         return _FIT_REJECTED_DETAIL

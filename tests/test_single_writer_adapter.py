@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import agent.adapter as adapter_module
 from agent.adapter import SingleWriterTeamAdapter
 from agent.host_anthropic import AnthropicHost
 from candidate_fit_preflight import assess_candidate_fit
@@ -247,6 +248,72 @@ def test_deterministic_researcher_keeps_only_unique_complete_jd_lines():
         "soft_requirements": [],
     }
     assert client.calls == []
+
+
+def test_deterministic_researcher_normalization_failure_is_typed(monkeypatch):
+    adapter, client = _adapter([])
+    context = build_context(
+        run_id="run-research-failure",
+        case_id="case-research-failure",
+        role="researcher",
+        attempt=0,
+        payload={"job_description": "Must hold an MD.\nReview ICSRs."},
+    )
+
+    def reject_payload(*_args):
+        raise ValueError("private candidate content")
+
+    monkeypatch.setattr(adapter_module, "normalize_native_payload", reject_payload)
+
+    with pytest.raises(adapter_module.AgentInvocationFailure) as error:
+        adapter.invoke("researcher", context, timeout_seconds=30)
+
+    assert error.value.code == "AGENT_PAYLOAD_SCHEMA"
+    assert "private candidate content" not in str(error.value)
+    assert error.value.__cause__ is None
+    assert client.calls == []
+
+
+def test_failed_authoritative_vote_cannot_publish_or_trigger_more_model_calls():
+    class RecordingSingleWriterAdapter(SingleWriterTeamAdapter):
+        def __init__(self, host):
+            super().__init__(host)
+            self.invoked_roles = []
+
+        def invoke(self, role, context, timeout_seconds):
+            self.invoked_roles.append(role)
+            return super().invoke(role, context, timeout_seconds)
+
+    class FailingVoteServices(Services):
+        def audit_draft(self, draft):
+            report = super().audit_draft(draft)
+            report["passed"] = False
+            report["codes"] = ["HUMAN_VOICE"]
+            report["votes"][1]["passed"] = False
+            report["votes"][1]["codes"] = ["HUMAN_VOICE"]
+            report["findings"] = [
+                {
+                    "id": "human-voice-1",
+                    "vote_name": "human_voice",
+                    "code": "HUMAN_VOICE",
+                    "actionable": False,
+                    "locations": [],
+                }
+            ]
+            return report
+
+    client = FakeClient([make_response({"replacements": []})])
+    adapter = RecordingSingleWriterAdapter(host=AnthropicHost(client=client))
+    services = FailingVoteServices()
+
+    result = run_team(request(), adapter, services)
+
+    assert result["published"] is result["success_reported"] is False
+    assert services.published == []
+    assert adapter.invoked_roles == ["researcher", "writer", "auditor"]
+    assert adapter.invoked_roles.count("writer") == 1
+    assert "editor" not in adapter.invoked_roles
+    assert len(client.calls) == 1
 
 
 def test_writer_salvages_safe_subset_without_a_second_model_call():

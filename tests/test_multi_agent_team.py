@@ -2039,7 +2039,7 @@ def test_writer_complete_exposes_only_valid_adapter_stats():
     assert writer_complete["writer_stats"] == adapter.writer_stats
 
 
-def test_writer_complete_omits_malformed_adapter_stats():
+def test_writer_complete_omits_stats_with_unapproved_rejection_code():
     class PayloadServices(Services):
         def __init__(self):
             super().__init__()
@@ -2054,7 +2054,7 @@ def test_writer_complete_omits_malformed_adapter_stats():
         "proposed_count": 2,
         "accepted_count": 1,
         "rejected_count": 1,
-        "rejection_codes": {"": 1},
+        "rejection_codes": {"Candidate resume line: private@example.com": 1},
     }
     services = PayloadServices()
 

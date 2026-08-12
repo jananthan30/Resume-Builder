@@ -21,11 +21,14 @@ identifiers where a column name (never a value) must vary.
 Registry invariant (see tests/test_agent_tools.py): no tool named
 ``writer``/``editor``/``auditor``/``researcher`` exists, and
 ``run_resume_team`` is the only tool whose result can carry resume draft
-text -- it is the sole caller of the audited four-role pipeline
-(``multi_agent_team.run_team``). ``run_cover_letter`` also returns generated
-prose, but cover letters are not resumes and were never gated behind the
-four-role pipeline (see CLAUDE.md); the invariant that matters here is that
-no *resume* text reaches a user except through the fully audited path.
+text -- it is the sole caller of the shared audited coordinator
+(``multi_agent_team.run_team``). The default and async tailoring paths use
+the four hosted roles. The synchronous web ``/rewrite`` route alone selects
+single-writer mode: one hosted Writer plus deterministic Researcher and
+Auditor protocol handoffs, with no Editor. Both modes retain the same three
+authoritative audits, publication receipt, and verified-readback gates.
+``run_cover_letter`` also returns generated prose, but cover letters are not
+resumes and were never gated behind the resume coordinator (see CLAUDE.md).
 """
 
 from __future__ import annotations
@@ -871,7 +874,7 @@ def run_resume_team(
     resume_text: str | None = None,
     pipeline_mode: str = "four_role",
 ) -> dict:
-    """Run the audited four-role Resume Team pipeline and return the draft.
+    """Run the shared audited Resume Team coordinator and return the draft.
 
     THE ONLY tool in this registry whose result can contain resume draft
     text. Checks quota FIRST: a run that never starts (quota exhausted, no
@@ -879,6 +882,11 @@ def run_resume_team(
     "refund". A run that starts but does not reach PUBLISHED is recorded as
     status='failed', which cloud.quotas.month_usage excludes from its count
     -- that exclusion is the entire refund mechanism.
+
+    ``pipeline_mode="four_role"`` is the default used by direct and async
+    tailoring. The web-only ``"single_writer"`` mode calls one hosted Writer,
+    constructs Researcher/Auditor handoffs deterministically, disables Editor,
+    and keeps the coordinator's authoritative votes and publication gates.
 
     ``resume_text``, when a non-empty string, is a ONE-OFF source resume for
     THIS RUN ONLY -- it is used to tailor this draft and is never written to
@@ -912,6 +920,7 @@ def run_resume_team(
     # was never runnable cannot consume the caller's allowance.
     if not isinstance(jd_text, str) or not jd_text.strip():
         raise ValueError("jd_text must be a non-empty string")
+    jd_text = jd_text.replace("\r\n", "\n").replace("\r", "\n")
     jd_text = _split_prose_lines(_flatten_list_markers(jd_text))
 
     if isinstance(resume_text, str) and resume_text.strip():
@@ -952,9 +961,9 @@ def run_resume_team(
 
     try:
         result = multi_agent_team.run_team(request, adapter, services)
-    except Exception as error:  # noqa: BLE001 -- any crash here is a failed run
+    except Exception:  # noqa: BLE001 -- any crash here is a failed run
         _finish_agent_run(
-            ctx.conn, ctx.user_id, run_id, status="failed", error=f"AGENT_CRASH:{error}"
+            ctx.conn, ctx.user_id, run_id, status="failed", error="AGENT_CRASH"
         )
         _record_event(
             ctx.conn,

@@ -362,8 +362,13 @@ class SingleWriterTeamAdapter:
         if role == "editor":
             raise PermissionError("single-writer mode does not permit Editor")
         if role == "researcher":
-            raw = _deterministic_researcher_raw(payload["job_description"])
-            normalized = normalize_native_payload(role, raw, context)
+            try:
+                raw = _deterministic_researcher_raw(payload["job_description"])
+                normalized = normalize_native_payload(role, raw, context)
+            except AgentInvocationFailure:
+                raise
+            except Exception:
+                raise AgentInvocationFailure("AGENT_PAYLOAD_SCHEMA") from None
             agent_id = f"api:researcher.{run_id}.{attempt}.det"
         elif role == "auditor":
             raw = {

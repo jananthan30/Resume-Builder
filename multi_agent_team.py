@@ -27,6 +27,7 @@ from collections import Counter
 from datetime import date
 from typing import Any, Callable
 
+import resume_integrity_audit
 from candidate_fit_judge import validate_candidate_fit_judge_report
 from candidate_fit_preflight import (
     CANDIDATE_FIT_POLICY_VERSION,
@@ -38,7 +39,6 @@ from candidate_fit_preflight import (
     assess_candidate_fit as _deterministic_candidate_fit_assessment,
 )
 from claim_provenance_audit import claim_supported_by_source
-import resume_integrity_audit
 
 PROTOCOL_VERSION = "resume-team/v2"
 CONTEXT_VERSION = "resume-team-context/v1"
@@ -100,6 +100,9 @@ _PAYLOAD_KEYS = {
 }
 
 _VOTE_NAMES = ("evidence", "human_voice", "canonical_integrity")
+_WRITER_REJECTION_CODES = frozenset(
+    {"INVALID_ITEM", "INVALID_ANCHOR", "STRICT_COMPILER", "CANONICAL_INTEGRITY"}
+)
 _CANDIDATE_FIT_REPORT_KEYS = {
     "schema_version",
     "policy_version",
@@ -1161,7 +1164,7 @@ def _admit_writer_stats(value: Any) -> dict[str, Any] | None:
         return None
     if any(
         not isinstance(code, str)
-        or not code
+        or code not in _WRITER_REJECTION_CODES
         or type(count) is not int
         or count < 0
         for code, count in codes.items()

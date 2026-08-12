@@ -73,6 +73,56 @@ def test_single_writer_mode_selects_single_adapter_and_disables_editor(monkeypat
     assert captured["max_editor_attempts"] == 0
 
 
+def test_single_writer_public_tool_normalizes_crlf_before_researcher(monkeypatch):
+    """CRLF input with a duplicate line still reaches valid exact anchors."""
+    _install_quota_module(monkeypatch)
+    adapter = tools.SingleWriterTeamAdapter(
+        host=tools.AnthropicHost(client=SimpleNamespace())
+    )
+    captured = {}
+    monkeypatch.setattr(tools, "_default_single_writer_adapter", lambda: adapter)
+    monkeypatch.setattr(tools, "reserve_run_slot", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tools, "_finish_agent_run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tools, "_record_event", lambda *args, **kwargs: None)
+
+    def run_team(request, selected_adapter, services):
+        captured["job_description"] = request["job_description"]
+        context = tools.multi_agent_team.build_context(
+            run_id=request["run_id"],
+            case_id=request["case_id"],
+            role="researcher",
+            attempt=0,
+            payload={"job_description": request["job_description"]},
+        )
+        researcher = selected_adapter.invoke("researcher", context, 30)
+        captured["rubric"] = researcher["payload"]["rubric"]
+        return {"terminal_class": "FAILED:SYNTHETIC"}
+
+    monkeypatch.setattr(tools.multi_agent_team, "run_team", run_team)
+    crlf_jd = (
+        "Qualifications\r\n"
+        "Must hold an MD.\r\n"
+        "Review ICSRs.\r\n"
+        "Review ICSRs.\r\n"
+        "Knowledge of CIOMS.\r\n"
+    )
+
+    result = tools.dispatch(
+        "run_resume_team",
+        _tool_context(),
+        jd_text=crlf_jd,
+        resume_text=_RESUME,
+        pipeline_mode="single_writer",
+    )
+
+    assert result["error"] == "FAILED:SYNTHETIC"
+    assert "\r" not in captured["job_description"]
+    assert captured["rubric"] == {
+        "hard_requirements": ["Must hold an MD."],
+        "soft_requirements": ["Knowledge of CIOMS."],
+    }
+
+
 def test_default_resume_tool_keeps_the_four_role_adapter(monkeypatch):
     """Omitting the internal mode remains the established four-role behavior."""
     _install_quota_module(monkeypatch)
