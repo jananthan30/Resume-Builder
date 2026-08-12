@@ -50,7 +50,7 @@ import jd_fetcher
 import llm_scorer
 import multi_agent_team
 import resume_integrity_audit
-from agent.adapter import AnthropicTeamAdapter
+from agent.adapter import AnthropicTeamAdapter, SingleWriterTeamAdapter
 from agent.host_anthropic import AnthropicHost
 
 __all__ = ["ToolContext", "TOOLS", "dispatch", "CloudTrustedServices"]
@@ -725,6 +725,11 @@ def _default_team_adapter() -> AnthropicTeamAdapter:
     return AnthropicTeamAdapter(host=AnthropicHost())
 
 
+def _default_single_writer_adapter() -> SingleWriterTeamAdapter:
+    """Construct the hosted adapter that calls only the Writer model."""
+    return SingleWriterTeamAdapter(host=AnthropicHost())
+
+
 # Leading list markers: "- ", "* ", "• ", "1. ", "2) ", en/em dashes.
 _LIST_MARKER_RE = re.compile(r"^[ \t]*(?:[-*•·–—]|\(?\d{1,2}[.)])[ \t]+")
 
@@ -864,6 +869,7 @@ def run_resume_team(
     jd_text: str,
     instruction: str | None = None,
     resume_text: str | None = None,
+    pipeline_mode: str = "four_role",
 ) -> dict:
     """Run the audited four-role Resume Team pipeline and return the draft.
 
@@ -889,6 +895,10 @@ def run_resume_team(
     version. Threading a free-text instruction into the Researcher/Writer
     payloads safely is left to a follow-up task.
     """
+    if pipeline_mode not in {"four_role", "single_writer"}:
+        raise ValueError("pipeline_mode must be 'four_role' or 'single_writer'")
+    single_writer = pipeline_mode == "single_writer"
+
     from cloud.quotas import check_quota
 
     # Advisory fast fail: answer an out-of-allowance caller before doing any
@@ -934,11 +944,11 @@ def run_resume_team(
         "job_description": jd_text,
         "master_resume": master_resume,
         "output_dir": f"agent://tailor/{ctx.user_id}/{run_id}",
-        "max_editor_attempts": _TAILOR_MAX_EDITOR_ATTEMPTS,
+        "max_editor_attempts": 0 if single_writer else _TAILOR_MAX_EDITOR_ATTEMPTS,
         "role_timeout_seconds": _TAILOR_ROLE_TIMEOUT_SECONDS,
     }
     services = CloudTrustedServices(ctx.conn, ctx.user_id, run_id, case_id, master_resume)
-    adapter = _default_team_adapter()
+    adapter = _default_single_writer_adapter() if single_writer else _default_team_adapter()
 
     try:
         result = multi_agent_team.run_team(request, adapter, services)
@@ -950,7 +960,11 @@ def run_resume_team(
             ctx.conn,
             ctx.user_id,
             kind="tailor_run_failed",
-            payload={"run_id": run_id, "terminal_class": "AGENT_CRASH"},
+            payload={
+                "run_id": run_id,
+                "terminal_class": "AGENT_CRASH",
+                "pipeline_mode": pipeline_mode,
+            },
         )
         return {"run_id": run_id, "status": "failed", "error": "AGENT_CRASH"}
 
@@ -976,7 +990,11 @@ def run_resume_team(
             ctx.conn,
             ctx.user_id,
             kind="tailor_run_succeeded",
-            payload={"run_id": run_id, "terminal_class": result["terminal_class"]},
+            payload={
+                "run_id": run_id,
+                "terminal_class": result["terminal_class"],
+                "pipeline_mode": pipeline_mode,
+            },
         )
         return {
             "run_id": run_id,
@@ -1000,7 +1018,11 @@ def run_resume_team(
         ctx.conn,
         ctx.user_id,
         kind="tailor_run_failed",
-        payload={"run_id": run_id, "terminal_class": terminal_class},
+        payload={
+            "run_id": run_id,
+            "terminal_class": terminal_class,
+            "pipeline_mode": pipeline_mode,
+        },
     )
     return {
         "run_id": run_id,

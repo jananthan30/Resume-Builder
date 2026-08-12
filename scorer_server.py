@@ -2132,6 +2132,16 @@ _TAILOR_UNAVAILABLE_DETAIL = (
     "We couldn't finish tailoring your resume just now. Please try again in "
     "a few minutes."
 )
+_NO_SAFE_TAILOR_DETAIL = (
+    "We reviewed the job against your resume, but couldn't make a safe "
+    "source-supported change. Your resume was left unchanged. If it is "
+    "missing relevant experience, update it and try again."
+)
+_TAILOR_SAFETY_REJECTED_DETAIL = (
+    "Deterministic safety checks stopped the draft, and your saved resume "
+    "was left unchanged. If it is missing relevant experience, update it "
+    "and try again."
+)
 _JD_FORMAT_DETAIL = (
     "This job description's formatting couldn't be processed reliably, so "
     "tailoring stopped rather than guess. Open the original posting, copy "
@@ -2232,6 +2242,7 @@ def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
                     ctx,
                     jd_text=jd_text,
                     resume_text=provided_resume or None,
+                    pipeline_mode="single_writer",
                 )
             except QuotaExceeded as exc:
                 raise HTTPException(status_code=402, detail=exc.detail)
@@ -2333,6 +2344,16 @@ def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
                     raise HTTPException(
                         status_code=422,
                         detail=_JD_FORMAT_DETAIL,
+                    )
+                if terminal == "REJECTED:NO_SAFE_CHANGES":
+                    raise HTTPException(
+                        status_code=422,
+                        detail=_NO_SAFE_TAILOR_DETAIL,
+                    )
+                if terminal.startswith("REJECTED:"):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=_TAILOR_SAFETY_REJECTED_DETAIL,
                     )
                 raise HTTPException(status_code=502, detail=_TAILOR_UNAVAILABLE_DETAIL)
 
@@ -2587,6 +2608,10 @@ def _friendly_agent_error(kind: str, error_code: Optional[str] = None) -> str:
         return _FIT_REJECTED_DETAIL
     if kind == "tailor" and error_code == "FAILED:RESEARCH_SCHEMA":
         return _JD_FORMAT_DETAIL
+    if kind == "tailor" and error_code == "REJECTED:NO_SAFE_CHANGES":
+        return _NO_SAFE_TAILOR_DETAIL
+    if kind == "tailor" and error_code and str(error_code).startswith("REJECTED:"):
+        return _TAILOR_SAFETY_REJECTED_DETAIL
     if kind == "cover_letter":
         return _COVER_LETTER_UNAVAILABLE_DETAIL
     return _TAILOR_UNAVAILABLE_DETAIL
