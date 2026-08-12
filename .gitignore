@@ -137,6 +137,7 @@ tests/*
 !tests/test_human_voice_audit.py
 !tests/test_evidence_audit.py
 !tests/test_docx_generator_optional_summary.py
+!tests/test_host_anthropic_runtime.py
 !tests/fixtures/
 tests/fixtures/*
 !tests/fixtures/resume_integrity/

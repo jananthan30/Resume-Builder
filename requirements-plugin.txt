@@ -1,4 +1,4 @@
 # Lightweight requirements for MCP plugin (cloud scoring only)
 # For full local scoring, use: pip install -r requirements.txt
 fastmcp>=3.0.0
-anthropic>=0.18.0
+anthropic>=0.84.0

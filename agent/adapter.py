@@ -173,6 +173,13 @@ class AnthropicTeamAdapter:
                     role, payload, case_id=case_id, run_id=run_id, **extra
                 )
             except (HostRefusal, BudgetExceeded) as error:
+                _log.warning(
+                    "Anthropic role call failed: role=%s run_id=%s reason=%s: %s",
+                    role,
+                    run_id,
+                    type(error).__name__,
+                    _safe_log_reason(error),
+                )
                 raise ConnectionError(
                     f"Anthropic host unavailable for role {role!r}: {error}"
                 ) from error

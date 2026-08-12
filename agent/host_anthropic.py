@@ -109,6 +109,7 @@ DEFAULT_MAX_OUTPUT_TOKENS = 25_000
 
 _MAX_TOKENS_PER_CALL = 8_000
 _MAX_API_ATTEMPTS = 3  # one initial attempt plus two retries
+_THINKING_DISABLED_MODELS = frozenset({"claude-opus-5", "claude-sonnet-5"})
 # Backoff between this host's own attempts. Seconds, not milliseconds: the
 # previous 50/100ms values retried inside the window the server was still
 # overloaded in, which amplifies a rate limit instead of shedding it.
@@ -121,6 +122,25 @@ _API_RETRY_BACKOFF_SECONDS = (1.0, 4.0)
 # SDK's own defaults (600s, 2 retries) do not give us.
 _API_REQUEST_TIMEOUT_SECONDS = 120.0
 _SDK_MAX_RETRIES = 1
+
+
+def _provider_error_diagnostic(error: BaseException, attempts: int) -> str:
+    """Return useful provider metadata without logging the exception message."""
+
+    error_type = type(error).__name__
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,79}", error_type) is None:
+        error_type = "UnknownProviderError"
+    status = getattr(error, "status_code", None)
+    status_text = str(status) if isinstance(status, int) else "unknown"
+    request_id = getattr(error, "request_id", None)
+    if not isinstance(request_id, str) or re.fullmatch(
+        r"[A-Za-z0-9_.:-]{1,128}", request_id
+    ) is None:
+        request_id = "unknown"
+    return (
+        f"error_type={error_type} status={status_text} "
+        f"request_id={request_id} attempts={attempts}"
+    )
 
 
 def _is_retryable_api_error(error: BaseException) -> bool:
@@ -299,13 +319,23 @@ def _first_text_block(response: Any) -> str:
     content = getattr(response, "content", None)
     if content is None and isinstance(response, dict):
         content = response.get("content")
+    stop_reason = getattr(response, "stop_reason", None)
+    if stop_reason is None and isinstance(response, dict):
+        stop_reason = response.get("stop_reason")
     if not isinstance(content, list):
-        raise HostRefusal("Anthropic response has no content blocks")
+        raise HostRefusal(
+            "Anthropic response has no content blocks "
+            f"(stop_reason={stop_reason or 'unknown'} content_blocks=none)"
+        )
 
+    content_block_types: list[str] = []
     for block in content:
         block_type = getattr(block, "type", None)
         if block_type is None and isinstance(block, dict):
             block_type = block.get("type")
+        content_block_types.append(
+            block_type if isinstance(block_type, str) else "unknown"
+        )
         if block_type != "text":
             continue
         text = getattr(block, "text", None)
@@ -314,7 +344,11 @@ def _first_text_block(response: Any) -> str:
         if isinstance(text, str):
             return text
 
-    raise HostRefusal("Anthropic response contained no text block")
+    raise HostRefusal(
+        "Anthropic response contained no text block "
+        f"(stop_reason={stop_reason or 'unknown'} "
+        f"content_blocks={','.join(content_block_types) or 'none'})"
+    )
 
 
 def _usage_tokens(response: Any) -> tuple[int, int]:
@@ -568,23 +602,35 @@ class AnthropicHost:
         """
         client = self._ensure_client()
         last_error: Exception | None = None
+        attempts_made = 0
         for attempt in range(_MAX_API_ATTEMPTS):
             try:
+                request: dict[str, Any] = {
+                    "model": model,
+                    "max_tokens": _MAX_TOKENS_PER_CALL,
+                    "system": system,
+                    "messages": messages,
+                }
+                if model in _THINKING_DISABLED_MODELS:
+                    # Claude 5 defaults to adaptive thinking. These roles
+                    # need bounded strict JSON, and thinking can otherwise
+                    # consume the entire cap before a text block is emitted.
+                    request["thinking"] = {"type": "disabled"}
                 return client.messages.create(
-                    model=model,
-                    max_tokens=_MAX_TOKENS_PER_CALL,
-                    system=system,
-                    messages=messages,
+                    **request,
                 )
             except Exception as error:  # noqa: BLE001 - classified by _is_retryable_api_error
                 last_error = error
+                attempts_made = attempt + 1
                 if not _is_retryable_api_error(error):
                     break
                 if attempt < _MAX_API_ATTEMPTS - 1:
                     time.sleep(_API_RETRY_BACKOFF_SECONDS[attempt])
+        assert last_error is not None
         raise HostRefusal(
-            f"Anthropic API call failed after {_MAX_API_ATTEMPTS} attempts: {last_error}"
-        )
+            "Anthropic API call failed "
+            f"({_provider_error_diagnostic(last_error, attempts_made)})"
+        ) from last_error
 
     def run_role(
         self,
@@ -642,9 +688,9 @@ class AnthropicHost:
             )
 
         response = self._call_once(model=model, system=system, messages=messages)
-        text = _first_text_block(response)
         in_tokens, out_tokens = _usage_tokens(response)
         self.budget.add(in_tokens, out_tokens)
+        text = _first_text_block(response)
 
         try:
             return _extract_json_object(text)
@@ -656,9 +702,9 @@ class AnthropicHost:
             {"role": "user", "content": _REPAIR_INSTRUCTION},
         ]
         response = self._call_once(model=model, system=system, messages=repair_messages)
-        text = _first_text_block(response)
         in_tokens, out_tokens = _usage_tokens(response)
         self.budget.add(in_tokens, out_tokens)
+        text = _first_text_block(response)
 
         try:
             return _extract_json_object(text)
