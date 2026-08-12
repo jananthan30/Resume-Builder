@@ -1202,6 +1202,72 @@ def test_native_auditor_finding_must_bind_one_unique_draft_line(
         )
 
 
+def test_writer_allows_byte_identical_tabs_in_unchanged_trusted_source_lines():
+    master = """PROFESSIONAL SUMMARY
+Wrote SOPs.
+CONTACT
+Boston	private@example.com
+CORE COMPETENCIES
+• SOP Development
+"""
+    context = build_context(
+        run_id="run-trusted-tab",
+        case_id="case-trusted-tab",
+        role="writer",
+        attempt=0,
+        payload={"master_resume": master, "researcher_artifact": {}},
+    )
+
+    normalized = normalize_native_payload(
+        "writer",
+        {
+            "replacements": [
+                {
+                    "source_span_text": "Wrote SOPs.",
+                    "replacement_text": "Authored SOPs.",
+                }
+            ]
+        },
+        context,
+    )
+
+    assert "Boston	private@example.com" in normalized["draft"]
+    assert "Authored SOPs." in normalized["draft"]
+
+
+def test_writer_handoff_cannot_move_a_trusted_tab_line():
+    master = """PROFESSIONAL SUMMARY
+Wrote SOPs.
+Boston	private@example.com
+CORE COMPETENCIES
+• SOP Development
+"""
+    moved = """PROFESSIONAL SUMMARY
+Boston	private@example.com
+Wrote SOPs.
+CORE COMPETENCIES
+• SOP Development
+"""
+    context = build_context(
+        run_id="run-moved-tab",
+        case_id="case-moved-tab",
+        role="writer",
+        attempt=0,
+        payload={"master_resume": master, "researcher_artifact": {}},
+    )
+    envelope = build_handoff(
+        context=context,
+        role="writer",
+        agent_id="api:writer.run-moved-tab.0",
+        payload={"draft": moved, "claim_evidence": []},
+    )
+
+    assert validate_handoff("writer", envelope, context) == {
+        "valid": False,
+        "code": "WRITER_SCHEMA",
+    }
+
+
 @pytest.mark.parametrize(
     "unsafe_separator",
     [

@@ -21,12 +21,11 @@ identifiers where a column name (never a value) must vary.
 Registry invariant (see tests/test_agent_tools.py): no tool named
 ``writer``/``editor``/``auditor``/``researcher`` exists, and
 ``run_resume_team`` is the only tool whose result can carry resume draft
-text -- it is the sole caller of the shared audited coordinator
-(``multi_agent_team.run_team``). The default and async tailoring paths use
-the four hosted roles. The synchronous web ``/rewrite`` route alone selects
-single-writer mode: one hosted Writer plus deterministic Researcher and
-Auditor protocol handoffs, with no Editor. Both modes retain the same three
-authoritative audits, publication receipt, and verified-readback gates.
+text. Default and asynchronous tailoring use the shared four-role coordinator.
+The synchronous web ``/rewrite`` route instead uses a direct compiler-style
+service: derive exact JD requirements, call one hosted Writer, run the same
+three authoritative audits, then commit and read back the verified draft. It
+has no synthetic role envelopes, protocol Auditor, or Editor.
 ``run_cover_letter`` also returns generated prose, but cover letters are not
 resumes and were never gated behind the resume coordinator (see CLAUDE.md).
 """
@@ -43,6 +42,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import agent.skills_loader as skills_loader
+import agent.web_rewrite as web_rewrite
 import ats_scorer
 import candidate_fit_judge
 import candidate_fit_preflight
@@ -53,7 +53,7 @@ import jd_fetcher
 import llm_scorer
 import multi_agent_team
 import resume_integrity_audit
-from agent.adapter import AnthropicTeamAdapter, SingleWriterTeamAdapter
+from agent.adapter import AnthropicTeamAdapter
 from agent.host_anthropic import AnthropicHost
 
 __all__ = ["ToolContext", "TOOLS", "dispatch", "CloudTrustedServices"]
@@ -184,7 +184,7 @@ def _finish_agent_run(
 ) -> None:
     from cloud.db import scoped
 
-    scoped(conn, user_id).q(
+    cursor = scoped(conn, user_id).q(
         """
         UPDATE agent_runs
         SET status = :status,
@@ -205,6 +205,9 @@ def _finish_agent_run(
             "finished_at": _now_utc_sql(),
         },
     )
+    if cursor.rowcount != 1:
+        conn.rollback()
+        raise LookupError("run disappeared before terminal update")
     conn.commit()
 
 
@@ -372,34 +375,18 @@ def read_skill(ctx: ToolContext, skill_name: str) -> dict:
 
 
 # =============================================================================
-# CloudTrustedServices -- the SQL-backed `services` boundary run_team() needs
+# CloudTrustedServices -- SQL-backed trust boundary for hosted resume execution
 # =============================================================================
 
 
 class CloudTrustedServices:
-    """SQL-backed ``services`` boundary for :func:`multi_agent_team.run_team`.
+    """SQL-backed trust boundary shared by hosted resume execution paths.
 
-    The hosted-runtime analogue of ``native_resume_team.LocalTrustedServices``:
-    the same six methods, verified against the exact same validators inside
-    ``multi_agent_team`` (``_validate_run_claim``, ``_validate_source_
-    attestation``, ``_validate_authorization_report``,
-    ``_validate_publication_receipt``, ``_validate_publication_
-    verification``), but backed by the ``agent_runs``/``events`` tables
-    through ``scoped()`` instead of local files, subprocesses, and fcntl
-    locks -- there is no CLI trust boundary to cross in a hosted process, so
-    the three deterministic votes call the real audit engines
-    (``evidence_audit``, ``human_voice_audit``, ``resume_integrity_audit``)
-    in-process, exactly as ``tests/test_team_via_api_host.py`` already does
-    to prove real-audit parity for the Anthropic-hosted adapter.
-
-    Known v1 simplification: a failed vote always reports
-    ``actionable: False`` with no line locations (never fabricates a
-    location it cannot prove). That is schema-valid and fails closed --
-    ``multi_agent_team._authorization_findings`` treats an all-non-actionable
-    report as a terminal ``REJECTED:*`` outcome rather than routing it into
-    the editor-repair loop. Precise line-level attribution (so a real
-    failure could instead feed the editor loop) is deferred; see the task
-    report.
+    Both the four-role coordinator and direct web rewrite service use these
+    code-owned candidate-fit, source-attestation, audit, event, publication,
+    and durable-readback operations. The three authorization votes call the
+    real evidence, human-voice, and canonical-integrity engines in-process;
+    model output never supplies a vote or publication receipt.
     """
 
     def __init__(
@@ -536,21 +523,35 @@ class CloudTrustedServices:
         draft_digest = multi_agent_team.canonical_digest(draft)
 
         evidence_report = evidence_audit.audit_text(draft)
-        evidence_passed = bool(evidence_report.get("passed"))
+        evidence_passed = (
+            isinstance(evidence_report, dict)
+            and evidence_report.get("passed") is True
+        )
         evidence_codes = [] if evidence_passed else ["EVIDENCE_UNSUPPORTED_ITEMS"]
 
         voice_report = human_voice_audit.audit_text(draft, mode="resume")
-        voice_passed = bool(voice_report.get("passed"))
+        voice_passed = (
+            isinstance(voice_report, dict)
+            and voice_report.get("passed") is True
+        )
         voice_codes = [] if voice_passed else ["HUMAN_VOICE_AUDIT_FAILED"]
 
         integrity_report = resume_integrity_audit.audit_resume_text(
             self._master_resume, draft
         )
-        integrity_passed = bool(integrity_report.get("passed"))
+        integrity_passed = (
+            isinstance(integrity_report, dict)
+            and integrity_report.get("passed") is True
+        )
         integrity_codes = (
             []
             if integrity_passed
-            else (integrity_report.get("difference_codes") or ["CANONICAL_INTEGRITY_FAILED"])
+            else (
+                integrity_report.get("difference_codes")
+                if isinstance(integrity_report, dict)
+                else None
+            )
+            or ["CANONICAL_INTEGRITY_FAILED"]
         )
 
         votes = [
@@ -618,22 +619,22 @@ class CloudTrustedServices:
             raise ValueError("draft digest mismatch at publish")
 
         publication_id = f"pub:{uuid.uuid4()}"
-        self.last_published_draft = draft
 
         # Durable readback proof: write into this run's own agent_runs row
         # (the SQL analogue of LocalTrustedServices writing resume.md to
-        # disk) so verify_publication() below reads it back from storage --
+        # disk) so read_publication()/verify_publication() read it from storage --
         # not from an in-memory attribute -- before the pipeline is allowed
         # to treat it as committed.
         from cloud.db import scoped
 
-        scoped(self.conn, self.user_id).q(
+        cursor = scoped(self.conn, self.user_id).q(
             """
             UPDATE agent_runs SET result = :result
-            WHERE id = :id AND user_id = :user_id
+            WHERE id = :id AND user_id = :user_id AND status = :status
             """,
             {
                 "id": self.run_id,
+                "status": "running",
                 "result": json.dumps(
                     {
                         "publication_id": publication_id,
@@ -643,7 +644,11 @@ class CloudTrustedServices:
                 ),
             },
         )
+        if cursor.rowcount != 1:
+            self.conn.rollback()
+            raise LookupError("run disappeared during publication")
         self.conn.commit()
+        self.last_published_draft = draft
 
         return {
             "schema_version": multi_agent_team.PUBLICATION_VERSION,
@@ -653,7 +658,9 @@ class CloudTrustedServices:
             "publication_id": publication_id,
         }
 
-    def verify_publication(self, publication_id: str) -> dict[str, Any]:
+    def read_publication(self, publication_id: str) -> dict[str, Any]:
+        """Read one committed draft from SQL, never from process memory."""
+
         from cloud.db import scoped
 
         row = scoped(self.conn, self.user_id).q(
@@ -663,9 +670,18 @@ class CloudTrustedServices:
         if row is None or row["result"] is None:
             raise LookupError("unknown publication")
         stored = json.loads(row["result"])
-        if stored.get("publication_id") != publication_id:
+        if (
+            not isinstance(stored, dict)
+            or set(stored) != {"publication_id", "draft", "metadata"}
+            or stored.get("publication_id") != publication_id
+            or not isinstance(stored.get("draft"), str)
+            or not isinstance(stored.get("metadata"), dict)
+        ):
             raise LookupError("unknown publication")
+        return stored
 
+    def verify_publication(self, publication_id: str) -> dict[str, Any]:
+        stored = self.read_publication(publication_id)
         draft = stored["draft"]
         metadata = stored["metadata"]
         digest = multi_agent_team.canonical_digest(draft)
@@ -728,9 +744,18 @@ def _default_team_adapter() -> AnthropicTeamAdapter:
     return AnthropicTeamAdapter(host=AnthropicHost())
 
 
-def _default_single_writer_adapter() -> SingleWriterTeamAdapter:
-    """Construct the hosted adapter that calls only the Writer model."""
-    return SingleWriterTeamAdapter(host=AnthropicHost())
+def _default_writer_host() -> AnthropicHost:
+    """Construct the sole language-model boundary used by web rewrites."""
+    return AnthropicHost()
+
+
+def _admit_writer_stats(value: Any) -> dict[str, Any] | None:
+    """Admit only the coordinator's fixed, count-only Writer diagnostics."""
+
+    try:
+        return multi_agent_team._admit_writer_stats(value)
+    except Exception:
+        return None
 
 
 # Leading list markers: "- ", "* ", "• ", "1. ", "2) ", en/em dashes.
@@ -874,19 +899,19 @@ def run_resume_team(
     resume_text: str | None = None,
     pipeline_mode: str = "four_role",
 ) -> dict:
-    """Run the shared audited Resume Team coordinator and return the draft.
+    """Run an audited tailoring path and return only a verified draft.
 
     THE ONLY tool in this registry whose result can contain resume draft
     text. Checks quota FIRST: a run that never starts (quota exhausted, no
     resume on file) never touches agent_runs, so there is nothing to
-    "refund". A run that starts but does not reach PUBLISHED is recorded as
-    status='failed', which cloud.quotas.month_usage excludes from its count
-    -- that exclusion is the entire refund mechanism.
+    "refund". A run that starts but does not publish is recorded as
+    status='failed', which cloud.quotas.month_usage excludes from its count.
 
     ``pipeline_mode="four_role"`` is the default used by direct and async
-    tailoring. The web-only ``"single_writer"`` mode calls one hosted Writer,
-    constructs Researcher/Auditor handoffs deterministically, disables Editor,
-    and keeps the coordinator's authoritative votes and publication gates.
+    tailoring. The web-only ``"single_writer"`` mode bypasses role
+    coordination entirely: it calls one hosted Writer, compiles its anchored
+    replacements, runs the three deterministic votes, and returns only the
+    committed SQL readback. Native and async execution remain unchanged.
 
     ``resume_text``, when a non-empty string, is a ONE-OFF source resume for
     THIS RUN ONLY -- it is used to tailor this draft and is never written to
@@ -897,11 +922,7 @@ def run_resume_team(
     loaded exactly as before.
 
     ``instruction`` is recorded on the agent_runs row for observability but
-    is not yet wired into the pipeline itself: multi_agent_team.run_team()'s
-    request schema is closed (exactly eight fixed keys -- see
-    ``_REQUEST_KEYS``) and has no instruction-injection hook in this
-    version. Threading a free-text instruction into the Researcher/Writer
-    payloads safely is left to a follow-up task.
+    is not injected into either execution path in this version.
     """
     if pipeline_mode not in {"four_role", "single_writer"}:
         raise ValueError("pipeline_mode must be 'four_role' or 'single_writer'")
@@ -946,65 +967,129 @@ def run_resume_team(
             instruction=instruction,
         )
 
-    request = {
-        "schema_version": multi_agent_team.PROTOCOL_VERSION,
-        "run_id": run_id,
-        "case_id": case_id,
-        "job_description": jd_text,
-        "master_resume": master_resume,
-        "output_dir": f"agent://tailor/{ctx.user_id}/{run_id}",
-        "max_editor_attempts": 0 if single_writer else _TAILOR_MAX_EDITOR_ATTEMPTS,
-        "role_timeout_seconds": _TAILOR_ROLE_TIMEOUT_SECONDS,
-    }
     services = CloudTrustedServices(ctx.conn, ctx.user_id, run_id, case_id, master_resume)
-    adapter = _default_single_writer_adapter() if single_writer else _default_team_adapter()
 
     try:
-        result = multi_agent_team.run_team(request, adapter, services)
-    except Exception:  # noqa: BLE001 -- any crash here is a failed run
-        _finish_agent_run(
-            ctx.conn, ctx.user_id, run_id, status="failed", error="AGENT_CRASH"
-        )
-        _record_event(
-            ctx.conn,
-            ctx.user_id,
-            kind="tailor_run_failed",
-            payload={
+        if single_writer:
+            host = _default_writer_host()
+            if not callable(getattr(host, "run_role", None)) or not hasattr(
+                host, "budget"
+            ):
+                raise TypeError("writer host factory returned an invalid host")
+            result = web_rewrite.run_web_rewrite(
+                run_id=run_id,
+                case_id=case_id,
+                master_resume=master_resume,
+                job_description=jd_text,
+                host=host,
+                services=services,
+            )
+            budget = host.budget
+        else:
+            request = {
+                "schema_version": multi_agent_team.PROTOCOL_VERSION,
                 "run_id": run_id,
-                "terminal_class": "AGENT_CRASH",
-                "pipeline_mode": pipeline_mode,
-            },
-        )
+                "case_id": case_id,
+                "job_description": jd_text,
+                "master_resume": master_resume,
+                "output_dir": f"agent://tailor/{ctx.user_id}/{run_id}",
+                "max_editor_attempts": _TAILOR_MAX_EDITOR_ATTEMPTS,
+                "role_timeout_seconds": _TAILOR_ROLE_TIMEOUT_SECONDS,
+            }
+            adapter = _default_team_adapter()
+            result = multi_agent_team.run_team(request, adapter, services)
+            budget = adapter.host.budget
+        if not isinstance(result, dict):
+            raise TypeError("resume execution returned a non-object")
+    except Exception:  # noqa: BLE001 -- any crash here is a failed run
+        try:
+            _finish_agent_run(
+                ctx.conn, ctx.user_id, run_id, status="failed", error="AGENT_CRASH"
+            )
+            _record_event(
+                ctx.conn,
+                ctx.user_id,
+                kind="tailor_run_failed",
+                payload={
+                    "run_id": run_id,
+                    "terminal_class": "AGENT_CRASH",
+                    "pipeline_mode": pipeline_mode,
+                },
+            )
+        except Exception:
+            pass
         return {"run_id": run_id, "status": "failed", "error": "AGENT_CRASH"}
 
-    tokens_in = adapter.host.budget.input_tokens
-    tokens_out = adapter.host.budget.output_tokens
+    writer_stats = (
+        _admit_writer_stats(result.get("writer_stats")) if single_writer else None
+    )
+    tokens_in = budget.input_tokens
+    tokens_out = budget.output_tokens
 
-    if result.get("terminal_class") == "PUBLISHED" and result.get("published") is True:
-        draft_text = services.last_published_draft or ""
-        _finish_agent_run(
-            ctx.conn,
-            ctx.user_id,
-            run_id,
-            status="succeeded",
-            result={
-                "draft": draft_text,
-                "authorization_receipt_digest": result.get("authorization_receipt_digest"),
-                "candidate_fit_report_digest": result.get("candidate_fit_report_digest"),
-            },
-            tokens_in=tokens_in,
-            tokens_out=tokens_out,
-        )
-        _record_event(
-            ctx.conn,
-            ctx.user_id,
-            kind="tailor_run_succeeded",
-            payload={
+    draft_text = (
+        result.get("final_draft")
+        if single_writer
+        else services.last_published_draft
+    )
+    if (
+        result.get("terminal_class") == "PUBLISHED"
+        and result.get("published") is True
+        and isinstance(draft_text, str)
+        and bool(draft_text)
+    ):
+        try:
+            _finish_agent_run(
+                ctx.conn,
+                ctx.user_id,
+                run_id,
+                status="succeeded",
+                result={
+                    "draft": draft_text,
+                    "authorization_receipt": result.get(
+                        "authorization_receipt"
+                    ),
+                    "authorization_receipt_digest": result.get(
+                        "authorization_receipt_digest"
+                    ),
+                    "candidate_fit_report_digest": result.get(
+                        "candidate_fit_report_digest"
+                    ),
+                },
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+            )
+            _record_event(
+                ctx.conn,
+                ctx.user_id,
+                kind="tailor_run_succeeded",
+                payload={
+                    "run_id": run_id,
+                    "terminal_class": result["terminal_class"],
+                    "pipeline_mode": pipeline_mode,
+                },
+            )
+        except Exception:
+            try:
+                _finish_agent_run(
+                    ctx.conn,
+                    ctx.user_id,
+                    run_id,
+                    status="failed",
+                    error="FAILED:PUBLICATION_ATOMICITY",
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                )
+            except Exception:
+                pass
+            return {
                 "run_id": run_id,
-                "terminal_class": result["terminal_class"],
-                "pipeline_mode": pipeline_mode,
-            },
-        )
+                "status": "failed",
+                "error": "FAILED:PUBLICATION_ATOMICITY",
+                "candidate_fit_report": result.get("candidate_fit_report"),
+                "candidate_fit_judge_report": result.get(
+                    "candidate_fit_judge_report"
+                ),
+            }
         return {
             "run_id": run_id,
             "status": "succeeded",
@@ -1014,32 +1099,46 @@ def run_resume_team(
         }
 
     terminal_class = result.get("terminal_class") or "FAILED:UNKNOWN"
-    _finish_agent_run(
-        ctx.conn,
-        ctx.user_id,
-        run_id,
-        status="failed",
-        error=terminal_class,
-        tokens_in=tokens_in,
-        tokens_out=tokens_out,
-    )
-    _record_event(
-        ctx.conn,
-        ctx.user_id,
-        kind="tailor_run_failed",
-        payload={
-            "run_id": run_id,
-            "terminal_class": terminal_class,
-            "pipeline_mode": pipeline_mode,
-        },
-    )
-    return {
+    if terminal_class == "PUBLISHED":
+        terminal_class = "FAILED:PUBLICATION_VERIFICATION"
+    try:
+        _finish_agent_run(
+            ctx.conn,
+            ctx.user_id,
+            run_id,
+            status="failed",
+            error=terminal_class,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+        )
+    except Exception:
+        return {"run_id": run_id, "status": "failed", "error": "AGENT_CRASH"}
+    failed_event = {
+        "run_id": run_id,
+        "terminal_class": terminal_class,
+        "pipeline_mode": pipeline_mode,
+    }
+    if writer_stats is not None:
+        failed_event["writer_stats"] = writer_stats
+    try:
+        _record_event(
+            ctx.conn,
+            ctx.user_id,
+            kind="tailor_run_failed",
+            payload=failed_event,
+        )
+    except Exception:
+        pass
+    failed_result = {
         "run_id": run_id,
         "status": "failed",
         "error": terminal_class,
         "candidate_fit_report": result.get("candidate_fit_report"),
         "candidate_fit_judge_report": result.get("candidate_fit_judge_report"),
     }
+    if writer_stats is not None:
+        failed_result["writer_stats"] = writer_stats
+    return failed_result
 
 
 # =============================================================================

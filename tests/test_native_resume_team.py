@@ -324,6 +324,37 @@ def test_hosted_writer_contract_keeps_detailed_human_voice_gates():
         assert required_rule in contract
 
 
+def test_hosted_writer_contract_explains_the_no_semantic_review_subset():
+    from agent.host_anthropic import _ROLE_CONTRACTS
+    from claim_provenance_audit import claim_supported_without_semantic_review
+
+    contract = " ".join(_ROLE_CONTRACTS["writer"].split())
+
+    for required_rule in (
+        "same visible token stream",
+        "Never insert, delete, reorder, or substitute",
+        "Wrote / Authored / Drafted",
+        "Never add, remove, or change a figure",
+        "Insert zero additional",
+        "Never add a polarity or scope-reversing token",
+        "Return [] rather than a plausible paraphrase",
+        '"source_span_text": "• Reviewed safety reports under ICH guidance."',
+        '"replacement_text": "• Checked safety reports under ICH guidance."',
+        "plausible acronym expansion",
+    ):
+        assert required_rule in contract
+
+    source = "• Wrote SOPs for safety review and clinical operations."
+    fake_expansion = (
+        "• Wrote secured outstanding prizes (SOPs) for safety review "
+        "and clinical operations."
+    )
+    assert claim_supported_without_semantic_review(fake_expansion, source) is False
+    assert claim_supported_without_semantic_review(
+        "• Checked safety reports.", "• Reviewed safety reports."
+    ) is True
+
+
 def test_hosted_writer_contract_keeps_required_resume_structure():
     from agent.host_anthropic import _ROLE_CONTRACTS
 

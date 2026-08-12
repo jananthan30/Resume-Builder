@@ -74,9 +74,9 @@ print(f"Models loaded in {_elapsed:.1f}s")
 
 # ─── Agent tool registry (cloud-hostable; imports cleanly with no cloud/
 # package present and no vendor SDK installed -- see agent/tools.py's own
-# module docstring). /rewrite selects the registry's web-only single-writer
-# mode; async tailoring keeps the default four-role mode. Both enter the same
-# audited coordinator and mandatory authorization/publication gates.
+# module docstring). /rewrite selects the registry's direct one-Writer
+# service; async tailoring keeps the default four-role coordinator. Both use
+# the same deterministic policies and trusted publication boundary.
 # /cover-letter also dispatches through the registry. ───
 # ─── Async run bookkeeping for POST /agent/tailor + /agent/cover-letter
 # (Task 10; see agent/runner.py's own module docstring). Imports cleanly
@@ -2168,10 +2168,10 @@ def _safe_agent_scores(ctx: "agent_tools.ToolContext", resume_text: str, jd_text
 @app.post("/rewrite")
 def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
     """
-    Tailor the caller's resume through the shared audited coordinator in its
-    web-only single-writer mode: one hosted Writer, deterministic Researcher
-    and Auditor handoffs, no Editor, and the same three authoritative votes,
-    receipt, and readback gates as the default four-role mode. Return the
+    Tailor the caller's resume through the direct web rewrite service: one
+    hosted Writer followed by deterministic replacement compilation, the three
+    authoritative audits, an atomic commit, and verified SQL readback. No
+    Researcher/Auditor role envelopes or Editor run on this route. Return the
     legacy REST shape the deployed PWA's Ultra "Rewrite" feature already reads:
     ``{"rewritten_resume": str, "ats_before", "ats_after", "hr_before",
     "hr_after"}`` (scores are null when unavailable, but ``rewritten_resume``
@@ -2259,8 +2259,25 @@ def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
 
             if result.get("status") != "succeeded" or not result.get("draft"):
                 terminal = str(result.get("error") or "UNKNOWN")
+                writer_stats = agent_tools._admit_writer_stats(
+                    result.get("writer_stats")
+                )
+                writer_stats_log = (
+                    json.dumps(
+                        writer_stats,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    if writer_stats is not None
+                    else "none"
+                )
                 logging.getLogger("scorer.rewrite").error(
-                    "rewrite run not published (user=%s terminal=%s)", user_id, terminal
+                    "rewrite run not published "
+                    "(user=%s run=%s terminal=%s writer_stats=%s)",
+                    user_id,
+                    str(result.get("run_id") or "unknown"),
+                    terminal,
+                    writer_stats_log,
                 )
                 # A candidate-fit refusal is judged policy, not an outage:
                 # "try again in a few minutes" would be a lie. A reasoning
@@ -2596,8 +2613,9 @@ def _friendly_agent_error(kind: str, error_code: Optional[str] = None) -> str:
     'HUMAN_VOICE_AUDIT_FAILED' and friends name model and pipeline internals
     that mean nothing to an end user.
 
-    Both the default four-role async path and web-only single-writer route use
-    the shared audited coordinator. ``REJECTED:CANDIDATE_FIT`` is a policy
+    The default async path uses the four-role coordinator; web rewrite uses a
+    direct one-Writer service with the same code-owned gates.
+    ``REJECTED:CANDIDATE_FIT`` is a policy
     refusal, not a transient failure; synchronous ``/rewrite`` reports it as
     409, while queue polling receives the corresponding friendly copy here.
 

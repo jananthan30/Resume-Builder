@@ -288,6 +288,27 @@ def _additive_only(
     return claim_polarity <= source_polarity
 
 
+def claim_supported_without_semantic_review(claim: str, source: str) -> bool:
+    """Admit only mechanically equivalent wording when no semantic Auditor runs.
+
+    ``claim_supported_by_source`` deliberately allows bounded additive wording
+    because the native team follows it with an independent semantic Auditor.
+    A direct one-Writer path has no such reviewer, so its trust boundary is
+    narrower: normalized token streams must be identical. The only lexical
+    difference this permits is the closed first-verb equivalence encoded by
+    ``_token_signature``; no new achievement, scope, or acronym expansion can
+    be smuggled through a mechanically plausible insertion.
+    """
+
+    return (
+        type(claim) is str
+        and bool(claim.strip())
+        and type(source) is str
+        and bool(source.strip())
+        and _token_signature(claim) == _token_signature(source)
+    )
+
+
 def claim_supported_by_source(claim: str, source: str) -> tuple[bool, str]:
     """Conservatively prove one free-text claim against one trusted source span.
 

@@ -42,25 +42,33 @@ This design changes only the hosted web Rewrite mode.
 
 ## Considered approaches
 
-### 1. Hybrid single-writer adapter inside the existing coordinator — selected
+### 1. Direct compiler-style web service — selected
 
-Use deterministic Researcher and Auditor implementations around the existing
-Sonnet 5 Writer. Run them through `multi_agent_team.run_team`, so the existing
-candidate-fit gate, handoff digests, independent authorization votes, publication
-receipt, and durable readback remain authoritative.
+Route synchronous web rewriting through `agent.web_rewrite`. Trusted code derives
+exact job-requirement lines, calls the existing Sonnet 5 Writer once, compiles
+anchored replacements, runs the shared deterministic policies, and commits only
+a verified SQL readback. It does not manufacture Researcher/Auditor identities or
+reuse the native package receipt schema.
 
-This removes model-to-model coordination while retaining the mature safety
-boundary. It is the smallest design that improves reliability without creating a
-second publication protocol.
+This removes synchronous actor ceremony while preserving the safety boundary:
+candidate fit, source anchoring, the strict replacement compiler, all three real
+audits, atomic publication, and durable readback remain authoritative.
 
-### 2. A separate lightweight `/rewrite` implementation — rejected
+### 2. Hybrid single-writer adapter inside the coordinator — superseded
 
-Calling Sonnet directly from `scorer_server.py` would be shorter, but it would
-duplicate candidate-fit, claim evidence, audit, publication, and receipt logic.
-Two authorization paths would drift and make the web route weaker than the rest
-of the product.
+This was the tactical first implementation. It removed model-to-model calls but
+still constructed deterministic Researcher and always-PASS Auditor envelopes only
+to satisfy `multi_agent_team.run_team`. Those packets added identity, digest, and
+receipt complexity without supplying a safety decision; the real audits ran in
+the next deterministic step.
 
-### 3. Keep all roles and loosen the Writer validator — rejected
+### 3. Call Sonnet directly from the FastAPI route — rejected
+
+The route remains a thin HTTP adapter. Model invocation and policy live in a
+separate service so `scorer_server.py` cannot return an unchecked Writer result,
+and the SQL-backed trust boundary remains reusable and testable.
+
+### 4. Keep all roles and loosen the Writer validator — rejected
 
 This would preserve the same Researcher, Auditor, Editor, and repair failure
 surfaces. Loosening whole-draft checks would also trade reliability for weaker
@@ -71,38 +79,29 @@ and salvage only replacements that already pass the strict compiler.
 
 ### Entry point and scope
 
-`rewrite_resume_endpoint` invokes `run_resume_team` with an explicit hosted
-single-writer mode. The default remains the current four-role adapter, so other
-callers do not change implicitly.
+`rewrite_resume_endpoint` still invokes the registered `run_resume_team` tool with
+explicit `pipeline_mode="single_writer"` for HTTP compatibility. Inside the tool,
+that mode dispatches directly to `agent.web_rewrite.run_web_rewrite`; it never
+constructs a `run_team` request. The default mode still uses the four-role adapter
+and coordinator, so native and asynchronous callers do not change.
 
-The mode builds the same eight-key `run_team` request with
-`max_editor_attempts = 0`. The request still uses the exact saved or one-off master
-resume and the normalized job description.
+### Deterministic requirement derivation
 
-### Deterministic Researcher
-
-The composed adapter lives in `agent/adapter.py`, exposes its Writer host for
-existing token accounting, and constructs the Researcher handoff without a model
-call:
+`agent.web_rewrite.derive_requirement_rubric` is a pure function, not a role or
+handoff:
 
 - Work only from complete, unique lines in the normalized job description.
 - Exclude blank lines, separators, and heading-only lines.
-- Classify lines containing mandatory cues such as `required`, `must`,
-  `minimum`, or `need` as hard requirements.
-- Classify preferred cues such as `preferred`, `desired`, `plus`, or
-  `nice to have` as soft requirements.
-- Include remaining substantive posting lines as soft context so the Writer sees
-  the full source without inventing a rubric.
-- Preserve every selected line byte-for-byte and derive offsets and digests with
-  the existing `normalize_native_payload` function.
+- Classify lines containing mandatory cues such as `required`, `must`, or
+  `minimum` as hard requirements.
+- Include remaining substantive posting lines as soft context.
+- Preserve every selected line byte-for-byte in the closed Writer payload.
 - Fail with the existing job-description formatting response only when no unique
-  substantive line can be anchored.
+  substantive line can be selected.
 
-The deterministic Researcher gets a unique `api:` invocation identity such as
-`api:researcher.<run>.0.det` and a normal digest-bound handoff built and checked
-with the existing `build_handoff`, `normalize_native_payload`, and
-`validate_handoff` functions. It does not call Anthropic.
-
+There is no Researcher identity, artifact digest, role timeout, packet validation,
+or model call. The exact normalized JD is already bound into the candidate-fit
+report and final web receipt.
 ### Sonnet 5 Writer
 
 The Writer is the only AI role that can propose resume text:
@@ -118,9 +117,9 @@ The Writer is the only AI role that can propose resume text:
 - Do not ask the model to repair coordinator or semantic-validator failures.
 - Never expose a complete or intermediate model draft.
 
-The composed adapter must not delegate to `AnthropicTeamAdapter.invoke` for the
-Writer because that adapter performs a second model call for coordinator-semantic
-repair—the failure loop this design removes.
+The direct service calls `AnthropicHost` itself. It does not invoke an adapter,
+build a role context, or perform a second semantic-repair call after deterministic
+validation—the failure loop this design removes.
 
 ### Deterministic replacement salvage
 
@@ -134,13 +133,17 @@ mode instead evaluates proposals through the same strict compiler incrementally:
    complete, non-separator line.
 3. Reject no-ops, duplicate anchors, unsafe characters, and multiline
    replacement text.
-4. Sort candidates by their original source offsets.
-5. Add one candidate at a time to the accepted set and compile the complete
+4. Because the web path has no semantic Auditor, require mechanically
+   equivalent wording: only the closed first-verb swaps are admitted. Every
+   insertion, including a plausible acronym expansion, is rejected even though
+   the native-team closure rule can defer additions to its semantic Auditor.
+5. Sort candidates by their original source offsets.
+6. Add one candidate at a time to the accepted set and compile the complete
    accepted set with `_compile_writer_replacements`.
-6. Keep the candidate only if the strict compiler, ownership parser, claim
-   support, Core Competencies rule, evidence normalization, and a deterministic
+7. Keep the candidate only if the strict compiler, ownership parser, claim
+   support, Core Competencies rule, evidence normalization, and deterministic
    canonical-integrity comparison against the master all pass.
-7. Build the final draft once from the accepted source-ordered set.
+8. Build the final draft once from the accepted source-ordered set.
 
 This is fail-closed salvage: invalid proposals are discarded, never relaxed or
 rewritten. The result is the maximal greedy source-ordered subset accepted by all
@@ -148,52 +151,45 @@ gates. Two individually valid but mutually conflicting proposals may cause the
 later proposal to be discarded; the ordering is deterministic and never grants
 extra authority.
 
-If at least one proposal is accepted, the normal Writer handoff continues. If the
-Writer explicitly returns an empty list, the byte-identical master may continue
-through the audits. If it proposes changes but none are safe, the adapter raises a
-narrow typed coordinator signal. `run_team` handles only that signal as the stable
-`REJECTED:NO_SAFE_CHANGES` terminal instead of publishing an unchanged resume or
-claiming a transient outage. No schema-incompatible sentinel payload is used.
+If at least one proposal is accepted, the compiled draft continues. If the Writer
+explicitly returns an empty list, the byte-identical master may continue through
+the audits. If it proposes changes but none are safe, the compiler's narrow typed
+signal becomes the stable `REJECTED:NO_SAFE_CHANGES` terminal instead of
+publishing an unchanged resume or claiming a transient outage.
 
 Only counts and stable rejection categories are logged. Source and replacement
 text never enter logs or events.
 
-### Deterministic audit attestation and no Editor
+### Deterministic authorization and no Editor
 
-The coordinator protocol requires an Auditor packet before it runs the actual
-authorization votes. Evidence and integrity audits can produce document-level
-failures without a unique line location, so the adapter must not fabricate the
-line-bound findings required by a model Auditor's FAIL contract.
+The direct service calls `CloudTrustedServices.audit_draft` once after compiling
+the candidate. That produces three fresh, distinct, same-draft votes from the
+real evidence, human-voice, and canonical-integrity audit engines. The existing
+strict authorization-report validator rechecks their structure and digest
+binding before publication.
 
-Instead, the composed adapter returns a deterministic Auditor protocol
-attestation: `PASS`, no findings, and the exact unchanged Writer draft, using a
-fresh identity such as `api:auditor.<run>.0.det`. Its purpose is only to bind the
-candidate digest and preserve the existing receipt structure. It is not described
-or logged as an independent content audit.
+There is no protocol Auditor and no always-PASS attestation. A failed vote returns
+a stable rejection and cannot trigger another model call. There is likewise no
+Editor branch: the Writer's admitted proposal either passes all three audits or
+the request fails closed.
 
-`max_editor_attempts` is zero, and the adapter refuses an Editor invocation as a
-defense-in-depth assertion. The immediately following three fresh deterministic
-authorization votes are the actual evidence, human-voice, and canonical-integrity
-audit. A failed vote terminates with its stable rejection code and never triggers
-another writing model.
-
-The coordinator then performs its existing fresh, three-vote authorization pass.
-Publication still requires unanimous evidence, human-voice, and canonical
-integrity votes on the exact same draft, followed by receipt commit and verified
-readback.
-
+Publication uses a web-specific receipt containing the exact candidate-fit report,
+three-vote authorization report, input/draft digests, and publication ID. It
+intentionally omits fictional Researcher/Auditor identities. The SQL publisher
+commits the draft and metadata, then `read_publication` must return the exact
+stored object before the service may return `PUBLISHED`.
 ## Data flow
 
 1. Authenticate, check tier, validate JD, and resolve the exact master resume.
 2. Reserve the quota slot and durable run row.
-3. Run candidate-fit preflight and the existing reasoning judge only when the
-   deterministic fit policy rejects. The judge cannot write resume text.
-4. Create a deterministic, evidence-bound Researcher artifact from the JD.
+3. Run candidate-fit preflight and require the canonical v2 policy itself:
+   trustworthy extraction, zero hard knockouts, score at least 70, `passed: true`,
+   and no codes. A reasoning judge cannot override this web gate.
+4. Derive exact requirement lines from the normalized JD in pure code.
 5. Ask the single Sonnet 5 Writer for anchored replacements.
 6. Salvage the safe subset with the strict deterministic compiler.
-7. Bind the draft with the deterministic Auditor protocol attestation, then run
-   the fresh authorization votes.
-8. Commit, verify, and read back the existing publication receipt.
+7. Run the three fresh deterministic authorization votes on the full draft.
+8. Commit the web receipt metadata and verify the exact SQL readback.
 9. Return the unchanged legacy JSON response with the verified draft and scores.
 
 No Writer proposal reaches the user before step 8.
@@ -212,16 +208,12 @@ No Writer proposal reaches the user before step 8.
 
 ## Observability
 
-Existing run and milestone events remain. Add an optional adapter-stats seam that
-`run_team` consumes when present, or record a separate post-run event from
-`agent.tools`. Either route may add these safe fields, which contain no user text:
-
-- `pipeline_mode = single_writer`
-- `writer_proposed_count`
-- `writer_accepted_count`
-- `writer_rejected_count`
-- stable rejection-category counts
-- whether the Researcher and Auditor were deterministic
+Outer `tailor_run_succeeded` / `tailor_run_failed` events remain. The direct
+service emits four meaningful, count/digest-only milestones:
+`rewrite_requirements_ready`, `rewrite_draft_compiled`, `rewrite_authorized`, and
+`rewrite_pre_publish`. Writer diagnostics contain only proposed/accepted/rejected
+counts and allowlisted rejection-category counts. No resume, JD, source span,
+replacement, or provider-response text enters logs or events.
 
 This makes it possible to distinguish provider failure, empty output, salvage,
 audit rejection, and publication failure without logging personal data.

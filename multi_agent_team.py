@@ -372,13 +372,13 @@ def _significant_lines(text: str) -> set[str]:
 
 
 def _candidate_text_format_valid(text: Any) -> bool:
-    """Accept printable text whose only line separator is an ASCII LF.
+    """Accept untrusted text whose only control character is an ASCII LF.
 
     Python's ``splitlines`` treats several control and Unicode characters as
-    line boundaries.  Allowing those in a candidate lets an untrusted role
-    alter the byte-level document layout while downstream line-oriented gates
-    still see apparently unchanged rows.  Horizontal controls and invisible
-    format/surrogate characters are also excluded from publishable drafts.
+    line boundaries.  Allowing those in model-authored text lets an untrusted
+    role alter the byte-level document layout while downstream line-oriented
+    gates still see apparently unchanged rows.  Horizontal controls and
+    invisible format/surrogate characters are therefore excluded here.
     """
 
     if not isinstance(text, str) or not text.strip():
@@ -387,6 +387,33 @@ def _candidate_text_format_valid(text: Any) -> bool:
         character == "\n"
         or unicodedata.category(character) not in {"Cc", "Cf", "Cs", "Zl", "Zp"}
         for character in text
+    )
+
+
+def _candidate_draft_format_valid(master: Any, draft: Any) -> bool:
+    """Allow tabs only on byte-identical lines inherited from the source.
+
+    Uploaded DOCX resumes commonly contain trusted tab stops in title/date or
+    contact lines.  Replacement text still passes the stricter validator above,
+    so a model can never introduce a tab.  At the whole-draft boundary, admit a
+    tab-bearing line only when the immutable master contains it byte-identically
+    at the same line position.  All other controls and invisible separators
+    remain forbidden.
+    """
+
+    if not isinstance(master, str) or not isinstance(draft, str):
+        return False
+    if _candidate_text_format_valid(draft):
+        return True
+    if "\t" not in draft or not _candidate_text_format_valid(
+        draft.replace("\t", "")
+    ):
+        return False
+    master_lines = master.split("\n")
+    return all(
+        index < len(master_lines) and line == master_lines[index]
+        for index, line in enumerate(draft.split("\n"))
+        if "\t" in line
     )
 
 
@@ -895,7 +922,7 @@ def _normalize_claim_evidence(
     master: str,
     evidence: Any,
 ) -> list[dict[str, Any]]:
-    if not _candidate_text_format_valid(draft):
+    if not _candidate_draft_format_valid(master, draft):
         raise ValueError("unsafe draft text format")
     if not isinstance(evidence, list):
         raise ValueError("invalid claim evidence")
@@ -1178,7 +1205,7 @@ def _claim_evidence_valid(
     master: Any,
     evidence: Any,
 ) -> bool:
-    if not _candidate_text_format_valid(draft) or not isinstance(master, str):
+    if not _candidate_draft_format_valid(master, draft):
         return False
     if not isinstance(evidence, list):
         return False
@@ -1383,8 +1410,8 @@ def normalize_native_payload(
 def _valid_payload(role: str, payload: Any, context: dict[str, Any]) -> bool:
     if not isinstance(payload, dict) or set(payload) != _PAYLOAD_KEYS[role]:
         return False
-    if role in {"writer", "editor"} and not _candidate_text_format_valid(
-        payload.get("draft")
+    if role in {"writer", "editor"} and not _candidate_draft_format_valid(
+        context.get("payload", {}).get("master_resume"), payload.get("draft")
     ):
         return False
     if role == "researcher":
@@ -2124,8 +2151,8 @@ def _editor_change_is_scoped(
     if (
         not isinstance(master, str)
         or not isinstance(claim_evidence, list)
-        or not _candidate_text_format_valid(previous)
-        or not _candidate_text_format_valid(edited)
+        or not _candidate_draft_format_valid(master, previous)
+        or not _candidate_draft_format_valid(master, edited)
     ):
         return False
     # Split on the only admitted separator and retain a trailing empty element.

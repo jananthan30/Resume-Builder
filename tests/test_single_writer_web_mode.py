@@ -37,29 +37,33 @@ def _failed_pipeline_result():
     return {"terminal_class": "FAILED:WRITER_SCHEMA"}
 
 
-def test_single_writer_mode_selects_single_adapter_and_disables_editor(monkeypatch):
-    """A `/rewrite`-style mode cannot accidentally invoke the four-role host."""
+def test_single_writer_mode_selects_direct_service_not_team_coordinator(monkeypatch):
+    """The synchronous mode has no role-envelope coordinator boundary."""
     _install_quota_module(monkeypatch)
     budget = SimpleNamespace(input_tokens=0, output_tokens=0)
-    single_adapter = SimpleNamespace(host=SimpleNamespace(budget=budget))
+    host = SimpleNamespace(budget=budget, run_role=lambda *args, **kwargs: None)
     captured = {}
 
-    monkeypatch.setattr(tools, "_default_single_writer_adapter", lambda: single_adapter)
+    monkeypatch.setattr(tools, "_default_writer_host", lambda: host)
     monkeypatch.setattr(
         tools,
         "_default_team_adapter",
-        lambda: pytest.fail("four-role factory used in single-writer mode"),
+        lambda: pytest.fail("four-role factory used in direct web mode"),
     )
     monkeypatch.setattr(tools, "reserve_run_slot", lambda *args, **kwargs: None)
     monkeypatch.setattr(tools, "_finish_agent_run", lambda *args, **kwargs: None)
     monkeypatch.setattr(tools, "_record_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        tools.multi_agent_team,
+        "run_team",
+        lambda *args, **kwargs: pytest.fail("role coordinator used in web mode"),
+    )
 
-    def run_team(request, adapter, services):
-        captured.update(request)
-        assert adapter is single_adapter
+    def run_web_rewrite(**kwargs):
+        captured.update(kwargs)
         return _failed_pipeline_result()
 
-    monkeypatch.setattr(tools.multi_agent_team, "run_team", run_team)
+    monkeypatch.setattr(tools.web_rewrite, "run_web_rewrite", run_web_rewrite)
 
     result = tools.dispatch(
         "run_resume_team",
@@ -70,35 +74,99 @@ def test_single_writer_mode_selects_single_adapter_and_disables_editor(monkeypat
     )
 
     assert result["status"] == "failed"
-    assert captured["max_editor_attempts"] == 0
+    assert captured["host"] is host
+    assert captured["master_resume"] == _RESUME
+    assert captured["job_description"] == _JD
+    assert set(captured) == {
+        "run_id",
+        "case_id",
+        "master_resume",
+        "job_description",
+        "host",
+        "services",
+    }
 
 
-def test_single_writer_public_tool_normalizes_crlf_before_researcher(monkeypatch):
-    """CRLF input with a duplicate line still reaches valid exact anchors."""
+def test_no_safe_failure_retains_count_only_writer_diagnostics(monkeypatch):
+    """A failed compile remains diagnosable without storing applicant text."""
     _install_quota_module(monkeypatch)
-    adapter = tools.SingleWriterTeamAdapter(
-        host=tools.AnthropicHost(client=SimpleNamespace())
+    stats = {
+        "proposed_count": 2,
+        "accepted_count": 0,
+        "rejected_count": 2,
+        "rejection_codes": {"STRICT_COMPILER": 2},
+    }
+    host = SimpleNamespace(
+        budget=SimpleNamespace(input_tokens=17, output_tokens=9),
+        run_role=lambda *args, **kwargs: None,
+    )
+    events = []
+
+    monkeypatch.setattr(tools, "_default_writer_host", lambda: host)
+    monkeypatch.setattr(tools, "reserve_run_slot", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tools, "_finish_agent_run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        tools,
+        "_record_event",
+        lambda conn, user_id, *, kind, payload: events.append((kind, payload)),
+    )
+    monkeypatch.setattr(
+        tools.web_rewrite,
+        "run_web_rewrite",
+        lambda **kwargs: {
+            "terminal_class": "REJECTED:NO_SAFE_CHANGES",
+            "writer_stats": stats,
+        },
+    )
+
+    result = tools.dispatch(
+        "run_resume_team",
+        _tool_context(),
+        jd_text=_JD,
+        resume_text=_RESUME,
+        pipeline_mode="single_writer",
+    )
+
+    assert result == {
+        "run_id": "run-web",
+        "status": "failed",
+        "error": "REJECTED:NO_SAFE_CHANGES",
+        "candidate_fit_report": None,
+        "candidate_fit_judge_report": None,
+        "writer_stats": stats,
+    }
+    failed_payload = next(
+        payload for kind, payload in events if kind == "tailor_run_failed"
+    )
+    assert failed_payload["writer_stats"] == stats
+    serialized = json.dumps(failed_payload)
+    assert _RESUME not in serialized
+    assert _JD not in serialized
+    assert "source_span_text" not in serialized
+    assert "replacement_text" not in serialized
+
+
+def test_single_writer_public_tool_normalizes_crlf_before_direct_service(monkeypatch):
+    """CRLF input reaches direct requirement derivation as normalized text."""
+    _install_quota_module(monkeypatch)
+    host = SimpleNamespace(
+        budget=SimpleNamespace(input_tokens=0, output_tokens=0),
+        run_role=lambda *args, **kwargs: None,
     )
     captured = {}
-    monkeypatch.setattr(tools, "_default_single_writer_adapter", lambda: adapter)
+    monkeypatch.setattr(tools, "_default_writer_host", lambda: host)
     monkeypatch.setattr(tools, "reserve_run_slot", lambda *args, **kwargs: None)
     monkeypatch.setattr(tools, "_finish_agent_run", lambda *args, **kwargs: None)
     monkeypatch.setattr(tools, "_record_event", lambda *args, **kwargs: None)
 
-    def run_team(request, selected_adapter, services):
-        captured["job_description"] = request["job_description"]
-        context = tools.multi_agent_team.build_context(
-            run_id=request["run_id"],
-            case_id=request["case_id"],
-            role="researcher",
-            attempt=0,
-            payload={"job_description": request["job_description"]},
+    def run_web_rewrite(**kwargs):
+        captured["job_description"] = kwargs["job_description"]
+        captured["rubric"] = tools.web_rewrite.derive_requirement_rubric(
+            kwargs["job_description"]
         )
-        researcher = selected_adapter.invoke("researcher", context, 30)
-        captured["rubric"] = researcher["payload"]["rubric"]
         return {"terminal_class": "FAILED:SYNTHETIC"}
 
-    monkeypatch.setattr(tools.multi_agent_team, "run_team", run_team)
+    monkeypatch.setattr(tools.web_rewrite, "run_web_rewrite", run_web_rewrite)
     crlf_jd = (
         "Qualifications\r\n"
         "Must hold an MD.\r\n"
@@ -126,7 +194,7 @@ def test_single_writer_public_tool_normalizes_crlf_before_researcher(monkeypatch
 def test_default_resume_tool_keeps_the_four_role_adapter(monkeypatch):
     """Omitting the internal mode remains the established four-role behavior."""
     _install_quota_module(monkeypatch)
-    calls = {"team": 0, "single": 0}
+    calls = {"team": 0, "writer": 0}
     budget = SimpleNamespace(input_tokens=0, output_tokens=0)
     team_adapter = SimpleNamespace(host=SimpleNamespace(budget=budget))
 
@@ -134,12 +202,12 @@ def test_default_resume_tool_keeps_the_four_role_adapter(monkeypatch):
         calls["team"] += 1
         return team_adapter
 
-    def single_factory():
-        calls["single"] += 1
-        return team_adapter
+    def writer_factory():
+        calls["writer"] += 1
+        return SimpleNamespace(budget=budget)
 
     monkeypatch.setattr(tools, "_default_team_adapter", team_factory)
-    monkeypatch.setattr(tools, "_default_single_writer_adapter", single_factory)
+    monkeypatch.setattr(tools, "_default_writer_host", writer_factory)
     monkeypatch.setattr(tools, "reserve_run_slot", lambda *args, **kwargs: None)
     monkeypatch.setattr(tools, "_finish_agent_run", lambda *args, **kwargs: None)
     monkeypatch.setattr(tools, "_record_event", lambda *args, **kwargs: None)
@@ -149,7 +217,7 @@ def test_default_resume_tool_keeps_the_four_role_adapter(monkeypatch):
 
     tools.dispatch("run_resume_team", _tool_context(), jd_text=_JD, resume_text=_RESUME)
 
-    assert calls == {"team": 1, "single": 0}
+    assert calls == {"team": 1, "writer": 0}
 
 
 @pytest.mark.parametrize("mode", ["", "single-writer", "unknown", None])
@@ -169,6 +237,111 @@ def test_invalid_pipeline_mode_is_rejected_before_quota_or_resume_loading(
         tools.dispatch("run_resume_team", _tool_context(), jd_text=_JD, pipeline_mode=mode)
 
     assert quota_checks == []
+
+
+def test_malformed_truthy_audit_flags_fail_closed(monkeypatch):
+    """A string such as ``"false"`` can never be minted into a PASS vote."""
+    services = tools.CloudTrustedServices(
+        conn=object(),
+        user_id=7,
+        run_id="run-audit",
+        case_id="case-audit",
+        master_resume=_RESUME,
+    )
+    monkeypatch.setattr(tools.evidence_audit, "audit_text", lambda draft: {"passed": "false"})
+    monkeypatch.setattr(
+        tools.human_voice_audit,
+        "audit_text",
+        lambda draft, mode: {"passed": "false", "failures": []},
+    )
+    monkeypatch.setattr(
+        tools.resume_integrity_audit,
+        "audit_resume_text",
+        lambda master, draft: {"passed": "false"},
+    )
+
+    report = services.audit_draft(_RESUME)
+
+    assert report["passed"] is False
+    assert [vote["passed"] for vote in report["votes"]] == [False, False, False]
+    assert report["codes"]
+
+
+def test_direct_published_without_verified_draft_is_downgraded(monkeypatch):
+    """A malformed success can never escape as a successful tool result."""
+    _install_quota_module(monkeypatch)
+    host = SimpleNamespace(
+        budget=SimpleNamespace(input_tokens=0, output_tokens=0),
+        run_role=lambda *args, **kwargs: None,
+    )
+    finished = []
+    monkeypatch.setattr(tools, "_default_writer_host", lambda: host)
+    monkeypatch.setattr(tools, "reserve_run_slot", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        tools,
+        "_finish_agent_run",
+        lambda *args, **kwargs: finished.append(kwargs),
+    )
+    monkeypatch.setattr(tools, "_record_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        tools.web_rewrite,
+        "run_web_rewrite",
+        lambda **kwargs: {
+            "terminal_class": "PUBLISHED",
+            "published": True,
+            "final_draft": "",
+        },
+    )
+
+    result = tools.dispatch(
+        "run_resume_team",
+        _tool_context(),
+        jd_text=_JD,
+        resume_text=_RESUME,
+        pipeline_mode="single_writer",
+    )
+
+    assert result["status"] == "failed"
+    assert result["error"] == "FAILED:PUBLICATION_VERIFICATION"
+    assert finished[-1]["status"] == "failed"
+
+
+def test_terminal_update_failure_never_returns_a_draft(monkeypatch):
+    """A verified draft is not returned when durable succeeded state cannot commit."""
+    _install_quota_module(monkeypatch)
+    host = SimpleNamespace(
+        budget=SimpleNamespace(input_tokens=0, output_tokens=0),
+        run_role=lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(tools, "_default_writer_host", lambda: host)
+    monkeypatch.setattr(tools, "reserve_run_slot", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        tools,
+        "_finish_agent_run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(LookupError("missing run")),
+    )
+    monkeypatch.setattr(tools, "_record_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        tools.web_rewrite,
+        "run_web_rewrite",
+        lambda **kwargs: {
+            "terminal_class": "PUBLISHED",
+            "published": True,
+            "final_draft": "Verified draft",
+        },
+    )
+
+    result = tools.dispatch(
+        "run_resume_team",
+        _tool_context(),
+        jd_text=_JD,
+        resume_text=_RESUME,
+        pipeline_mode="single_writer",
+    )
+
+    assert result["status"] == "failed"
+    assert "draft" not in result
+    assert result["error"] == "FAILED:PUBLICATION_ATOMICITY"
 
 
 def _route_setup(monkeypatch, result):
@@ -231,6 +404,41 @@ def test_rewrite_safety_rejections_are_honest_422s(monkeypatch, terminal, expect
     else:
         assert "deterministic safety checks" in detail
         assert "resume was left unchanged" in detail
+
+
+def test_rewrite_no_safe_log_contains_only_admitted_count_diagnostics(
+    monkeypatch, caplog
+):
+    stats = {
+        "proposed_count": 2,
+        "accepted_count": 0,
+        "rejected_count": 2,
+        "rejection_codes": {"STRICT_COMPILER": 2},
+    }
+    _route_setup(
+        monkeypatch,
+        {
+            "run_id": "safe-run-id",
+            "status": "failed",
+            "error": "REJECTED:NO_SAFE_CHANGES",
+            "writer_stats": stats,
+        },
+    )
+
+    with caplog.at_level("ERROR", logger="scorer.rewrite"):
+        with pytest.raises(HTTPException):
+            scorer_server.rewrite_resume_endpoint(
+                scorer_server.ScoreRequest(jd_text=_JD, resume_text=_RESUME),
+                auth={"user_id": 7, "tier": "pro"},
+            )
+
+    assert "run=safe-run-id" in caplog.text
+    assert '"STRICT_COMPILER":2' in caplog.text
+    assert "proposed_count" in caplog.text
+    assert _RESUME not in caplog.text
+    assert _JD not in caplog.text
+    assert "source_span_text" not in caplog.text
+    assert "replacement_text" not in caplog.text
 
 
 def test_friendly_agent_error_keeps_safety_rejections_non_transient():

@@ -75,7 +75,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any
 
 from agent.host_anthropic import AnthropicHost, BudgetExceeded, HostRefusal
@@ -83,7 +82,6 @@ from multi_agent_team import (
     ROLE_ORDER,
     AgentInvocationFailure,
     build_handoff,
-    compile_writer_replacements_salvage,
     normalize_native_payload,
     validate_handoff,
 )
@@ -97,15 +95,6 @@ _log = logging.getLogger(__name__)
 # reply cannot blow the next request's context.
 _MAX_REPLAY_CHARS = 60_000
 _PRIVATE_REJECTION_DETAIL_SEPARATOR = " — "
-_MANDATORY_REQUIREMENT_RE = re.compile(
-    r"\b(?:must|required|minimum|at\s+least|\d+\+?\s+years?|"
-    r"degree|certification|license|mandatory)\b",
-    re.IGNORECASE,
-)
-_JD_HEADING_RE = re.compile(
-    r"^(?:requirements?|qualifications?|responsibilities|about(?:\s+the\s+job)?|benefits)\s*:?$",
-    re.IGNORECASE,
-)
 
 
 def _compact_json(payload: Any) -> str | None:
@@ -125,71 +114,6 @@ def _safe_log_reason(error: Exception) -> str:
     return str(error).partition(_PRIVATE_REJECTION_DETAIL_SEPARATOR)[0]
 
 
-def _context_fields(
-    role: str,
-    context: dict[str, Any],
-) -> tuple[str, str, int, dict[str, Any]]:
-    if (
-        role not in ROLE_ORDER
-        or not isinstance(context, dict)
-        or context.get("role") != role
-    ):
-        raise ValueError("invalid role context")
-    run_id = context.get("run_id")
-    case_id = context.get("case_id")
-    attempt = context.get("attempt")
-    payload = context.get("payload")
-    if (
-        not isinstance(run_id, str)
-        or not run_id
-        or not isinstance(case_id, str)
-        or not case_id
-        or type(attempt) is not int
-        or not isinstance(payload, dict)
-    ):
-        raise ValueError("invalid role context")
-    return run_id, case_id, attempt, payload
-
-
-def _validated_envelope(
-    role: str,
-    context: dict[str, Any],
-    agent_id: str,
-    normalized: dict[str, Any],
-) -> dict[str, Any]:
-    envelope = build_handoff(
-        context=context, role=role, agent_id=agent_id, payload=normalized
-    )
-    if validate_handoff(role, envelope, context).get("valid") is not True:
-        raise AgentInvocationFailure("AGENT_PAYLOAD_SCHEMA")
-    return envelope
-
-
-def _deterministic_researcher_raw(job_description: str) -> dict[str, Any]:
-    if not isinstance(job_description, str):
-        raise AgentInvocationFailure("AGENT_PAYLOAD_SCHEMA")
-    lines = job_description.split("\n")
-    retained = []
-    for line in lines:
-        stripped = line.strip()
-        if (
-            not stripped
-            or re.search(r"[A-Za-z0-9]", line) is None
-            or _JD_HEADING_RE.fullmatch(stripped) is not None
-            or sum(candidate.strip() == stripped for candidate in lines) != 1
-        ):
-            continue
-        retained.append(line)
-    if not retained:
-        raise AgentInvocationFailure("AGENT_PAYLOAD_SCHEMA")
-    hard = [line for line in retained if _MANDATORY_REQUIREMENT_RE.search(line)]
-    soft = [
-        line for line in retained if _MANDATORY_REQUIREMENT_RE.search(line) is None
-    ]
-    return {
-        "rubric": {"hard_requirements": hard, "soft_requirements": soft},
-        "jd_evidence_spans": [{"evidence_text": line} for line in [*hard, *soft]],
-    }
 
 
 class AnthropicTeamAdapter:
@@ -333,66 +257,14 @@ class AnthropicTeamAdapter:
 
 
 class SingleWriterTeamAdapter:
-    """Run only Writer through Anthropic; derive Researcher and Auditor locally."""
+    """Deprecated import shim for the removed synthetic-role adapter.
+
+    Synchronous web rewriting now calls :mod:`agent.web_rewrite` directly.
+    Keeping this symbol avoids an abrupt import-time API break while refusing
+    to resurrect the unsafe Researcher/Auditor envelope simulation.
+    """
 
     def __init__(self, host: AnthropicHost) -> None:
-        if not isinstance(host, AnthropicHost):
-            raise ValueError("host must be an AnthropicHost")
-        self.host = host
-        self._seen_invocations: set[str] = set()
-        self._writer_stats: dict[str, Any] | None = None
-
-    @property
-    def writer_stats(self) -> dict[str, Any] | None:
-        return (
-            json.loads(json.dumps(self._writer_stats))
-            if self._writer_stats
-            else None
+        raise RuntimeError(
+            "SingleWriterTeamAdapter was removed; use agent.web_rewrite.run_web_rewrite"
         )
-
-    def invoke(
-        self,
-        role: str,
-        context: dict[str, Any],
-        timeout_seconds: float,
-    ) -> dict[str, Any]:
-        """Produce one validated role envelope without semantic model repair."""
-
-        run_id, case_id, attempt, payload = _context_fields(role, context)
-        if role == "editor":
-            raise PermissionError("single-writer mode does not permit Editor")
-        if role == "researcher":
-            try:
-                raw = _deterministic_researcher_raw(payload["job_description"])
-                normalized = normalize_native_payload(role, raw, context)
-            except AgentInvocationFailure:
-                raise
-            except Exception:
-                raise AgentInvocationFailure("AGENT_PAYLOAD_SCHEMA") from None
-            agent_id = f"api:researcher.{run_id}.{attempt}.det"
-        elif role == "auditor":
-            raw = {
-                "verdict": "PASS",
-                "findings": [],
-                "audited_draft": payload["writer_draft"],
-            }
-            normalized = normalize_native_payload(role, raw, context)
-            agent_id = f"api:auditor.{run_id}.{attempt}.det"
-        else:
-            try:
-                raw = self.host.run_role(
-                    "writer", payload, case_id=case_id, run_id=run_id
-                )
-            except (HostRefusal, BudgetExceeded) as error:
-                raise ConnectionError("Anthropic Writer unavailable") from error
-            if not isinstance(raw, dict) or set(raw) != {"replacements"}:
-                raise AgentInvocationFailure("AGENT_PAYLOAD_SCHEMA")
-            normalized, self._writer_stats = compile_writer_replacements_salvage(
-                payload["master_resume"], raw["replacements"]
-            )
-            agent_id = f"api:writer.{run_id}.{attempt}"
-        if agent_id in self._seen_invocations:
-            raise LookupError("reused api invocation identity")
-        envelope = _validated_envelope(role, context, agent_id, normalized)
-        self._seen_invocations.add(agent_id)
-        return envelope
