@@ -38,6 +38,7 @@ from candidate_fit_preflight import (
     assess_candidate_fit as _deterministic_candidate_fit_assessment,
 )
 from claim_provenance_audit import claim_supported_by_source
+import resume_integrity_audit
 
 PROTOCOL_VERSION = "resume-team/v2"
 CONTEXT_VERSION = "resume-team-context/v1"
@@ -183,6 +184,14 @@ class AgentInvocationFailure(RuntimeError):
             raise ValueError("unknown agent invocation failure code")
         self.code = code
         super().__init__(code)
+
+
+class NoSafeWriterChanges(RuntimeError):
+    """Writer proposals contained no individually safe replacement."""
+
+    def __init__(self, stats: dict[str, Any]):
+        self.stats = json.loads(_canonical_json(stats))
+        super().__init__("writer proposed no safe source-supported changes")
 
 
 def _canonical_json(value: Any) -> str:
@@ -1026,6 +1035,139 @@ def _compile_writer_replacements(
             draft, master, raw_evidence
         ),
     }
+
+
+def _writer_salvage_rejection_code(
+    item: Any,
+    master: str,
+) -> tuple[str | None, tuple[int, int] | None]:
+    """Classify only malformed replacement items and unusable source anchors."""
+
+    if not isinstance(item, dict) or set(item) != {
+        "source_span_text",
+        "replacement_text",
+    }:
+        return "INVALID_ITEM", None
+    source = item["source_span_text"]
+    replacement = item["replacement_text"]
+    if not isinstance(source, str) or not isinstance(replacement, str):
+        return "INVALID_ITEM", None
+    try:
+        start, end, _ = _unique_span(master, source)
+    except Exception:
+        return "INVALID_ANCHOR", None
+    if not _covers_complete_source_line(master, start, end):
+        return "INVALID_ANCHOR", None
+    return None, (start, end)
+
+
+def compile_writer_replacements_salvage(
+    master: str,
+    replacements: Any,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Keep source-ordered Writer replacements that remain safe in combination."""
+
+    if not isinstance(master, str) or not isinstance(replacements, list):
+        raise ValueError("invalid writer replacements")
+    if not replacements:
+        return _compile_writer_replacements(master, []), {
+            "proposed_count": 0,
+            "accepted_count": 0,
+            "rejected_count": 0,
+            "rejection_codes": {},
+        }
+
+    candidates: list[tuple[int, int, dict[str, str]]] = []
+    rejected: Counter[str] = Counter()
+    for ordinal, item in enumerate(replacements):
+        category, bounds = _writer_salvage_rejection_code(item, master)
+        if category is not None:
+            rejected[category] += 1
+            continue
+        assert bounds is not None
+        assert isinstance(item, dict)
+        start, end = bounds
+        try:
+            _compile_writer_replacements(master, [item])
+        except Exception:
+            raw_draft = master[:start] + item["replacement_text"] + master[end:]
+            integrity = resume_integrity_audit.audit_resume_text(
+                master, raw_draft
+            )
+            rejected[
+                "CANONICAL_INTEGRITY"
+                if integrity.get("passed") is not True
+                else "STRICT_COMPILER"
+            ] += 1
+            continue
+        candidates.append((start, ordinal, item))
+
+    accepted: list[dict[str, str]] = []
+    accepted_starts: set[int] = set()
+    compiled = _compile_writer_replacements(master, [])
+    for start, _, item in sorted(candidates):
+        if start in accepted_starts:
+            rejected["INVALID_ANCHOR"] += 1
+            continue
+        try:
+            proposed = _compile_writer_replacements(master, [*accepted, item])
+        except Exception:
+            rejected["STRICT_COMPILER"] += 1
+            continue
+        integrity = resume_integrity_audit.audit_resume_text(
+            master, proposed["draft"]
+        )
+        if integrity.get("passed") is not True:
+            rejected["CANONICAL_INTEGRITY"] += 1
+            continue
+        accepted.append(item)
+        accepted_starts.add(start)
+        compiled = proposed
+
+    stats = {
+        "proposed_count": len(replacements),
+        "accepted_count": len(accepted),
+        "rejected_count": len(replacements) - len(accepted),
+        "rejection_codes": dict(sorted(rejected.items())),
+    }
+    if not accepted:
+        raise NoSafeWriterChanges(stats)
+    return compiled, stats
+
+
+def _admit_writer_stats(value: Any) -> dict[str, Any] | None:
+    """Return only well-formed, non-sensitive Writer salvage accounting."""
+
+    expected_keys = {
+        "proposed_count",
+        "accepted_count",
+        "rejected_count",
+        "rejection_codes",
+    }
+    if type(value) is not dict or set(value) != expected_keys:
+        return None
+    proposed = value["proposed_count"]
+    accepted = value["accepted_count"]
+    rejected = value["rejected_count"]
+    codes = value["rejection_codes"]
+    if (
+        type(proposed) is not int
+        or type(accepted) is not int
+        or type(rejected) is not int
+        or type(codes) is not dict
+        or min(proposed, accepted, rejected) < 0
+        or proposed != accepted + rejected
+    ):
+        return None
+    if any(
+        not isinstance(code, str)
+        or not code
+        or type(count) is not int
+        or count < 0
+        for code, count in codes.items()
+    ) or sum(codes.values()) != rejected:
+        return None
+    return json.loads(_canonical_json(value))
 
 
 def _claim_evidence_valid(
@@ -2257,6 +2399,10 @@ def run_team(request: dict, adapter: object, services: object) -> dict:
         except PermissionError:
             code = "AUDITOR_SIDE_EFFECT" if role == "auditor" else "AGENT_CRASH"
             return None, fail(f"FAILED:{code}")
+        except NoSafeWriterChanges:
+            if role == "writer":
+                return None, fail("REJECTED:NO_SAFE_CHANGES")
+            return None, fail("FAILED:AGENT_CRASH")
         except AgentInvocationFailure as error:
             code = (
                 _SCHEMA_CODES[role]
@@ -2554,13 +2700,22 @@ def run_team(request: dict, adapter: object, services: object) -> dict:
     draft = writer["payload"].get("draft")
     if not isinstance(draft, str):
         return fail("FAILED:WRITER_SCHEMA")
+    try:
+        writer_stats = _admit_writer_stats(
+            getattr(adapter, "writer_stats", None)
+        )
+    except Exception:
+        writer_stats = None
+    writer_event = {
+        "agent_id": writer["agent_id"],
+        "artifact_digest": writer["artifact_digest"],
+        "draft_digest": _digest(draft),
+    }
+    if writer_stats is not None:
+        writer_event["writer_stats"] = writer_stats
     terminal = event(
         "writer_complete",
-        {
-            "agent_id": writer["agent_id"],
-            "artifact_digest": writer["artifact_digest"],
-            "draft_digest": _digest(draft),
-        },
+        writer_event,
     )
     if terminal:
         return terminal
@@ -2698,6 +2853,7 @@ __all__ = [
     "FINAL_RECEIPT_VERSION",
     "HANDOFF_VERSION",
     "MAX_EDITOR_ATTEMPTS",
+    "NoSafeWriterChanges",
     "PROTOCOL_VERSION",
     "PUBLICATION_VERIFICATION_VERSION",
     "PUBLICATION_VERSION",
@@ -2709,6 +2865,7 @@ __all__ = [
     "build_context",
     "build_handoff",
     "canonical_digest",
+    "compile_writer_replacements_salvage",
     "normalize_native_payload",
     "run_team",
     "validate_candidate_fit_report",

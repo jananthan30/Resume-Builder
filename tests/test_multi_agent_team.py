@@ -33,10 +33,12 @@ from multi_agent_team import (
     SOURCE_ATTESTATION_VERSION,
     VOTE_VERSION,
     AgentInvocationFailure,
+    NoSafeWriterChanges,
     _native_agent_host,
     build_context,
     build_handoff,
     canonical_digest,
+    compile_writer_replacements_salvage,
     normalize_native_payload,
     run_team,
     validate_handoff,
@@ -666,6 +668,128 @@ def writer_context(master: str):
         attempt=0,
         payload={"master_resume": master, "researcher_artifact": {}},
     )
+
+
+SAFE_SOURCE_BULLET = (
+    "• Reviewed DSUR and PBRER reports and assessed safety signals under ICH "
+    "and CIOMS guidance."
+)
+OTHER_SOURCE_BULLET = (
+    "• Reviewed  DSUR and PBRER reports and assessed safety signals under ICH "
+    "and CIOMS guidance."
+)
+SAFE_SUPPORTED_REWRITE = (
+    "• Reviewed DSUR and PBRER reports and assessed safety signals under ICH "
+    "and CIOMS guidance for oncology programs."
+)
+
+
+def master_resume():
+    return """PROFESSIONAL SUMMARY
+Safety scientist with pharmacovigilance experience.
+CORE COMPETENCIES
+• Drug Safety | Signal Detection
+PROFESSIONAL EXPERIENCE
+Senior Safety Scientist | Acme
+Jan 2020 - Present
+• Reviewed DSUR and PBRER reports and assessed safety signals under ICH and CIOMS guidance.
+• Reviewed  DSUR and PBRER reports and assessed safety signals under ICH and CIOMS guidance.
+Safety Scientist | Other
+Jan 2015 - Dec 2019
+• Reviewed safety case reports under ICH guidance.
+EDUCATION
+Doctor of Medicine (M.D.)
+Example Medical School
+"""
+
+
+def test_salvage_keeps_safe_replacement_when_sibling_breaks_ownership():
+    safe = {
+        "source_span_text": SAFE_SOURCE_BULLET,
+        "replacement_text": SAFE_SUPPORTED_REWRITE,
+    }
+    unsafe = {
+        "source_span_text": OTHER_SOURCE_BULLET,
+        "replacement_text": SAFE_SUPPORTED_REWRITE,
+    }
+
+    payload, stats = compile_writer_replacements_salvage(
+        master_resume(), [unsafe, safe]
+    )
+
+    assert SAFE_SUPPORTED_REWRITE in payload["draft"]
+    assert OTHER_SOURCE_BULLET in payload["draft"]
+    assert stats == {
+        "proposed_count": 2,
+        "accepted_count": 1,
+        "rejected_count": 1,
+        "rejection_codes": {"STRICT_COMPILER": 1},
+    }
+
+
+def test_salvage_rejects_protected_fact_change_before_publication():
+    with pytest.raises(NoSafeWriterChanges) as caught:
+        compile_writer_replacements_salvage(
+            master_resume(),
+            [
+                {
+                    "source_span_text": "Senior Safety Scientist | Acme",
+                    "replacement_text": "Director of Safety | Acme",
+                }
+            ],
+        )
+
+    assert caught.value.stats["rejection_codes"] == {"CANONICAL_INTEGRITY": 1}
+
+
+def test_salvage_distinguishes_explicit_empty_list_from_all_rejected():
+    payload, stats = compile_writer_replacements_salvage(master_resume(), [])
+
+    assert payload == {"draft": master_resume(), "claim_evidence": []}
+    assert stats == {
+        "proposed_count": 0,
+        "accepted_count": 0,
+        "rejected_count": 0,
+        "rejection_codes": {},
+    }
+
+    with pytest.raises(NoSafeWriterChanges) as caught:
+        compile_writer_replacements_salvage(master_resume(), [{"bad": "shape"}])
+
+    assert caught.value.stats == {
+        "proposed_count": 1,
+        "accepted_count": 0,
+        "rejected_count": 1,
+        "rejection_codes": {"INVALID_ITEM": 1},
+    }
+
+
+def test_salvage_applies_independent_replacements_in_source_order():
+    first = {
+        "source_span_text": SAFE_SOURCE_BULLET,
+        "replacement_text": SAFE_SUPPORTED_REWRITE,
+    }
+    second = {
+        "source_span_text": "• Reviewed safety case reports under ICH guidance.",
+        "replacement_text": (
+            "• Reviewed safety case reports under ICH guidance for global teams."
+        ),
+    }
+
+    first_payload, first_stats = compile_writer_replacements_salvage(
+        master_resume(), [first, second]
+    )
+    second_payload, second_stats = compile_writer_replacements_salvage(
+        master_resume(), [second, first]
+    )
+
+    assert first_payload == second_payload
+    assert first_stats == second_stats == {
+        "proposed_count": 2,
+        "accepted_count": 2,
+        "rejected_count": 0,
+        "rejection_codes": {},
+    }
 
 
 def test_writer_replacement_is_applied_in_place_without_move_or_duplicate():
@@ -1843,6 +1967,106 @@ def test_writer_payload_failure_uses_writer_terminal_class():
 
     assert result["terminal_class"] == "FAILED:WRITER_SCHEMA"
     assert result["published"] is result["success_reported"] is False
+
+
+def test_no_safe_writer_changes_rejects_only_the_writer_role():
+    class NoSafeWriterAdapter(ScriptedAdapter):
+        def invoke(self, role, context, timeout_seconds):
+            if role == "writer":
+                raise NoSafeWriterChanges(
+                    {
+                        "proposed_count": 1,
+                        "accepted_count": 0,
+                        "rejected_count": 1,
+                        "rejection_codes": {"STRICT_COMPILER": 1},
+                    }
+                )
+            return super().invoke(role, context, timeout_seconds)
+
+    result = run_team(request(), NoSafeWriterAdapter(), Services())
+
+    assert result["terminal_class"] == "REJECTED:NO_SAFE_CHANGES"
+    assert result["published"] is result["success_reported"] is False
+
+
+def test_no_safe_writer_changes_from_non_writer_fails_as_agent_crash():
+    class MisplacedNoSafeAdapter(ScriptedAdapter):
+        def invoke(self, role, context, timeout_seconds):
+            if role == "researcher":
+                raise NoSafeWriterChanges(
+                    {
+                        "proposed_count": 1,
+                        "accepted_count": 0,
+                        "rejected_count": 1,
+                        "rejection_codes": {"STRICT_COMPILER": 1},
+                    }
+                )
+            return super().invoke(role, context, timeout_seconds)
+
+    result = run_team(request(), MisplacedNoSafeAdapter(), Services())
+
+    assert result["terminal_class"] == "FAILED:AGENT_CRASH"
+    assert result["published"] is result["success_reported"] is False
+
+
+def test_writer_complete_exposes_only_valid_adapter_stats():
+    class PayloadServices(Services):
+        def __init__(self):
+            super().__init__()
+            self.event_payloads = []
+
+        def record_event(self, event, payload):
+            self.event_payloads.append((event, payload))
+            super().record_event(event, payload)
+
+    adapter = ScriptedAdapter()
+    adapter.writer_stats = {
+        "proposed_count": 2,
+        "accepted_count": 1,
+        "rejected_count": 1,
+        "rejection_codes": {"STRICT_COMPILER": 1},
+    }
+    services = PayloadServices()
+
+    result = run_team(request(), adapter, services)
+
+    assert result["terminal_class"] == "PUBLISHED"
+    writer_complete = next(
+        payload
+        for event, payload in services.event_payloads
+        if event == "writer_complete"
+    )
+    assert writer_complete["writer_stats"] == adapter.writer_stats
+
+
+def test_writer_complete_omits_malformed_adapter_stats():
+    class PayloadServices(Services):
+        def __init__(self):
+            super().__init__()
+            self.event_payloads = []
+
+        def record_event(self, event, payload):
+            self.event_payloads.append((event, payload))
+            super().record_event(event, payload)
+
+    adapter = ScriptedAdapter()
+    adapter.writer_stats = {
+        "proposed_count": 2,
+        "accepted_count": 1,
+        "rejected_count": 1,
+        "rejection_codes": {"": 1},
+    }
+    services = PayloadServices()
+
+    result = run_team(request(), adapter, services)
+
+    assert result["terminal_class"] == "PUBLISHED"
+    writer_complete = next(
+        payload
+        for event, payload in services.event_payloads
+        if event == "writer_complete"
+    )
+    assert "writer_stats" not in writer_complete
 
 
 @pytest.mark.parametrize(
