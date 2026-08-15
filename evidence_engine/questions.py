@@ -50,6 +50,19 @@ _BOILERPLATE_RE = re.compile(
     r"(?:\s+for\s+this\s+(?:role|position))?\s*$",
     re.I)
 
+# Requirement text does not always arrive as a noun phrase. The extractor may
+# return it already phrased as an action -- "hold a valid RN licence",
+# "possess a PMP certification" -- and wrapping that in "Do you have ..." built
+# "Do you have a hold a valid RN license in Ontario?". Stripping the verb lets
+# the phrasing below pick its own, which is the whole point of this function.
+#
+# Only possession verbs belong here. "maintain" or "obtain" describe a duty of
+# the role rather than something the candidate holds, so removing them would
+# change what is being asked.
+_LEADING_POSSESSION_RE = re.compile(
+    r"^(?:hold|holds|holding|possess|possesses|possessing|have|has|having)\s+",
+    re.I)
+
 _TRAILING_EXPERIENCE_RE = re.compile(r"\s+experience$", re.I)
 _CREDENTIAL_RE = re.compile(
     r"\b(?:degree|licen[sc]e|certification|diploma|doctorate|phd|md|bsc|msc"
@@ -70,6 +83,7 @@ def _phrase(requirement: str) -> str:
     while previous != text:
         previous = text
         text = _BOILERPLATE_RE.sub("", text).strip()
+        text = _LEADING_POSSESSION_RE.sub("", text).strip()
     if not text:
         return "Do you have this?"
 
