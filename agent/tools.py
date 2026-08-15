@@ -251,16 +251,77 @@ def _schema(properties: dict, required: list[str]) -> dict:
 
 
 def score_resume(ctx: ToolContext, resume_text: str, jd_text: str) -> dict:
-    """ATS + HR scores for a resume/JD pair. Wraps ats_scorer + hr_scorer."""
-    ats = ats_scorer.score_resume_text(resume_text, jd_text)
-    hr_result = hr_scorer.calculate_hr_score_from_text(resume_text, jd_text)
-    hr = hr_scorer.result_to_dict(hr_result)
-    return {
-        "ats_score": ats.get("total_score"),
-        "ats": ats,
-        "hr_score": hr.get("overall_score"),
-        "hr": hr,
-    }
+    """Evidence match for a resume/JD pair. Wraps the evidence engine.
+
+    This replaced ATS/HR keyword scoring. A universal ATS score does not exist
+    across recruiting systems, so the answer is now requirement-level: which
+    requirements the resume evidences, with the exact excerpt behind each, and
+    which it does not. Absence of evidence is reported as NO_EVIDENCE_FOUND —
+    never as proof the candidate lacks the qualification.
+
+    The response carries ``open_questions``: the few gaps only the candidate
+    can resolve. Answering authorises a rewrite -- it is never evidence and
+    never moves the score.
+
+    ``legacy_ats_hr`` remains available through the /score/ats and /score/hr
+    endpoints for callers that still depend on the old numbers.
+    """
+    from evidence_engine.api import to_api_response
+    from evidence_engine.audit import ResultCache
+    from evidence_engine.engine import match_texts
+
+    # Cached so a follow-up confirm_gaps on the same pair is a cache hit rather
+    # than a second full match: the questions are only useful if answering them
+    # is cheap.
+    return to_api_response(match_texts(resume_text, jd_text, cache=ResultCache()))
+
+
+def confirm_gaps(
+    ctx: ToolContext, resume_text: str, jd_text: str, answers: list
+) -> dict:
+    """Answer the open questions from ``score_resume`` for this pair.
+
+    ``NO_EVIDENCE_FOUND`` is the engine's most honest output and, alone, a dead
+    end: it says the resume did not demonstrate something, not whether the
+    candidate can. Only the candidate knows, so this is where they say.
+
+    **An answer authorises a rewrite. An answer is never evidence.** "Yes I did
+    that" does not move ``qualification_evidence_score`` and does not change
+    eligibility; it permits the writer to look for and phrase experience the
+    candidate actually has, and the rewritten resume is matched again before
+    anything scores. Without that rule this is self-certification.
+
+    A "no" is the only legitimate route to ``TRUE_QUALIFICATION_GAP`` — the
+    engine may never infer absence from silence.
+
+    Each answer is ``{requirement_id, answer: yes|no|unsure, detail,
+    resume_sha256, job_sha256}``. The two digests come from the ``score_resume``
+    response and bind an answer to one application, so a "yes" given about a
+    different resume or job cannot be replayed here.
+    """
+    from evidence_engine.api import to_api_response
+    from evidence_engine.audit import ResultCache
+    from evidence_engine.engine import match_texts
+    from evidence_engine.models import GapAnswer
+    from evidence_engine.questions import apply_answers
+
+    try:
+        parsed = [GapAnswer(**item) for item in answers]
+    except Exception as exc:
+        return {"error": f"invalid answer: {exc}"}
+
+    result = match_texts(resume_text, jd_text, cache=ResultCache())
+    if result.status != "OK":
+        return {"error": result.error, "status": result.status}
+
+    updated, rejected = apply_answers(result, parsed)
+    result.rewrite_recommendations = updated
+
+    payload = to_api_response(result)
+    # Named so a caller cannot mistake a silently dropped answer for an
+    # accepted one.
+    payload["rejected_answers"] = rejected
+    return payload
 
 
 def candidate_fit(
@@ -909,9 +970,10 @@ def run_resume_team(
 
     ``pipeline_mode="four_role"`` is the default used by direct and async
     tailoring. The web-only ``"single_writer"`` mode bypasses role
-    coordination entirely: it calls one hosted Writer, compiles its anchored
-    replacements, runs the three deterministic votes, and returns only the
-    committed SQL readback. Native and async execution remain unchanged.
+    coordination entirely: it calls one hosted Writer, requires two read-only
+    citation-bound factual reviews for proposed changes, compiles the unanimous
+    anchored subset, runs three code-owned votes, and returns only committed SQL
+    readback. Native and async execution remain unchanged.
 
     ``resume_text``, when a non-empty string, is a ONE-OFF source resume for
     THIS RUN ONLY -- it is used to tailor this draft and is never written to
@@ -972,8 +1034,10 @@ def run_resume_team(
     try:
         if single_writer:
             host = _default_writer_host()
-            if not callable(getattr(host, "run_role", None)) or not hasattr(
-                host, "budget"
+            if (
+                not callable(getattr(host, "run_web_writer", None))
+                or not callable(getattr(host, "review_replacements", None))
+                or not hasattr(host, "budget")
             ):
                 raise TypeError("writer host factory returned an invalid host")
             result = web_rewrite.run_web_rewrite(
@@ -1554,6 +1618,51 @@ TOOLS: dict[str, dict[str, Any]] = {
             ["resume_text", "jd_text"],
         ),
         "fn": score_resume,
+    },
+    "confirm_gaps": {
+        "schema": _schema(
+            {
+                "resume_text": {"type": "string"},
+                "jd_text": {"type": "string"},
+                "answers": {
+                    "type": "array",
+                    "description": (
+                        "Answers to the open_questions from score_resume. Each "
+                        "is {requirement_id, answer: yes|no|unsure, detail, "
+                        "resume_sha256, job_sha256}. Copy both digests from the "
+                        "score_resume response -- they bind an answer to this "
+                        "exact resume and job. An answer authorises a rewrite; "
+                        "it never changes the score."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "requirement_id": {"type": "string"},
+                            "answer": {
+                                "type": "string",
+                                "enum": ["yes", "no", "unsure"],
+                            },
+                            "detail": {
+                                "type": "string",
+                                "description": (
+                                    "The candidate's own words on where they "
+                                    "did this. Quoted back to the writer, never "
+                                    "treated as evidence."
+                                ),
+                            },
+                            "resume_sha256": {"type": "string"},
+                            "job_sha256": {"type": "string"},
+                        },
+                        "required": [
+                            "requirement_id", "answer",
+                            "resume_sha256", "job_sha256",
+                        ],
+                    },
+                },
+            },
+            ["resume_text", "jd_text", "answers"],
+        ),
+        "fn": confirm_gaps,
     },
     "candidate_fit": {
         "schema": _schema(

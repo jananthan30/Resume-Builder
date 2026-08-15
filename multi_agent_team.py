@@ -30,13 +30,11 @@ from typing import Any, Callable
 import resume_integrity_audit
 from candidate_fit_judge import validate_candidate_fit_judge_report
 from candidate_fit_preflight import (
+    ANALYSIS_MODE as CANDIDATE_FIT_ANALYSIS_MODE,
     CANDIDATE_FIT_POLICY_VERSION,
     CANDIDATE_FIT_SCHEMA_VERSION,
     CANDIDATE_FIT_SCORER_VERSION,
     CANDIDATE_FIT_THRESHOLD,
-)
-from candidate_fit_preflight import (
-    assess_candidate_fit as _deterministic_candidate_fit_assessment,
 )
 from claim_provenance_audit import claim_supported_by_source
 
@@ -101,7 +99,13 @@ _PAYLOAD_KEYS = {
 
 _VOTE_NAMES = ("evidence", "human_voice", "canonical_integrity")
 _WRITER_REJECTION_CODES = frozenset(
-    {"INVALID_ITEM", "INVALID_ANCHOR", "STRICT_COMPILER", "CANONICAL_INTEGRITY"}
+    {
+        "INVALID_ITEM",
+        "INVALID_ANCHOR",
+        "SEMANTIC_SUPPORT",
+        "STRICT_COMPILER",
+        "CANONICAL_INTEGRITY",
+    }
 )
 _CANDIDATE_FIT_REPORT_KEYS = {
     "schema_version",
@@ -111,25 +115,27 @@ _CANDIDATE_FIT_REPORT_KEYS = {
     "case_id",
     "as_of_date",
     "threshold",
-    "semantic_mode",
+    "analysis_mode",
     "resume_digest",
     "job_description_digest",
     "score",
     "component_scores",
+    "eligibility",
     "recommendation",
     "hard_knockouts",
+    "unverified_requirements",
     "extraction_trustworthy",
+    "assessment_available",
+    "evidence_bundle",
     "passed",
     "codes",
 }
 _CANDIDATE_FIT_COMPONENT_KEYS = {
-    "experience_match",
-    "skills_match",
-    "title_alignment",
-    "domain_match",
-    "education_match",
-    "certification_match",
-    "seniority_match",
+    "must_have_evidence",
+    "core_responsibilities",
+    "preferred_qualifications",
+    "evidence_quality",
+    "role_similarity",
 }
 _CANDIDATE_FIT_KNOCKOUT_KEYS = {
     "code",
@@ -137,6 +143,11 @@ _CANDIDATE_FIT_KNOCKOUT_KEYS = {
     "requirement",
     "candidate_has",
 }
+_CANDIDATE_FIT_UNVERIFIED_KEYS = {
+    "requirement",
+    "reason",
+}
+_CANDIDATE_FIT_ELIGIBILITY_STATES = {"PASS", "FAIL", "UNVERIFIED"}
 _AUTHORIZATION_REPORT_KEYS = {
     "schema_version",
     "draft_digest",
@@ -921,6 +932,8 @@ def _normalize_claim_evidence(
     draft: str,
     master: str,
     evidence: Any,
+    *,
+    semantic_support_verified: bool = False,
 ) -> list[dict[str, Any]]:
     if not _candidate_draft_format_valid(master, draft):
         raise ValueError("unsafe draft text format")
@@ -964,9 +977,10 @@ def _normalize_claim_evidence(
             or source_text.strip() in draft_line_counts
         ):
             raise ValueError("claim evidence duplicates one source line")
-        supported, code = claim_supported_by_source(claim_line, source_text)
-        if not supported:
-            raise ValueError(code)
+        if not semantic_support_verified:
+            supported, code = claim_supported_by_source(claim_line, source_text)
+            if not supported:
+                raise ValueError(code)
         if not _same_experience_role(
             draft,
             master,
@@ -996,6 +1010,8 @@ def _normalize_claim_evidence(
 def _compile_writer_replacements(
     master: str,
     replacements: Any,
+    *,
+    semantic_support_verified: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(master, str) or not isinstance(replacements, list):
         raise ValueError("invalid writer replacements")
@@ -1062,7 +1078,10 @@ def _compile_writer_replacements(
     return {
         "draft": draft,
         "claim_evidence": _normalize_claim_evidence(
-            draft, master, raw_evidence
+            draft,
+            master,
+            raw_evidence,
+            semantic_support_verified=semantic_support_verified,
         ),
     }
 
@@ -1091,16 +1110,20 @@ def _writer_salvage_rejection_code(
     return None, (start, end)
 
 
-def compile_writer_replacements_salvage(
+def _compile_writer_replacements_salvage(
     master: str,
     replacements: Any,
+    *,
+    semantic_support_verified: bool,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Keep source-ordered Writer replacements that remain safe in combination."""
+    """Keep source-ordered replacements that remain structurally safe."""
 
     if not isinstance(master, str) or not isinstance(replacements, list):
         raise ValueError("invalid writer replacements")
     if not replacements:
-        return _compile_writer_replacements(master, []), {
+        return _compile_writer_replacements(
+            master, [], semantic_support_verified=semantic_support_verified
+        ), {
             "proposed_count": 0,
             "accepted_count": 0,
             "rejected_count": 0,
@@ -1118,7 +1141,11 @@ def compile_writer_replacements_salvage(
         assert isinstance(item, dict)
         start, end = bounds
         try:
-            _compile_writer_replacements(master, [item])
+            _compile_writer_replacements(
+                master,
+                [item],
+                semantic_support_verified=semantic_support_verified,
+            )
         except Exception:
             raw_draft = master[:start] + item["replacement_text"] + master[end:]
             integrity = resume_integrity_audit.audit_resume_text(
@@ -1134,13 +1161,19 @@ def compile_writer_replacements_salvage(
 
     accepted: list[dict[str, str]] = []
     accepted_starts: set[int] = set()
-    compiled = _compile_writer_replacements(master, [])
+    compiled = _compile_writer_replacements(
+        master, [], semantic_support_verified=semantic_support_verified
+    )
     for start, _, item in sorted(candidates):
         if start in accepted_starts:
             rejected["INVALID_ANCHOR"] += 1
             continue
         try:
-            proposed = _compile_writer_replacements(master, [*accepted, item])
+            proposed = _compile_writer_replacements(
+                master,
+                [*accepted, item],
+                semantic_support_verified=semantic_support_verified,
+            )
         except Exception:
             rejected["STRICT_COMPILER"] += 1
             continue
@@ -1163,6 +1196,28 @@ def compile_writer_replacements_salvage(
     if not accepted:
         raise NoSafeWriterChanges(stats)
     return compiled, stats
+
+
+def compile_writer_replacements_salvage(
+    master: str,
+    replacements: Any,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Native-team salvage; additive wording still needs its semantic Auditor."""
+
+    return _compile_writer_replacements_salvage(
+        master, replacements, semantic_support_verified=False
+    )
+
+
+def compile_semantically_reviewed_writer_replacements_salvage(
+    master: str,
+    replacements: Any,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Compile replacements already approved by the web semantic-review gate."""
+
+    return _compile_writer_replacements_salvage(
+        master, replacements, semantic_support_verified=True
+    )
 
 
 def _admit_writer_stats(value: Any) -> dict[str, Any] | None:
@@ -1705,7 +1760,9 @@ def validate_candidate_fit_report(
         or not isinstance(report.get("case_id"), str)
         or not (1 <= len(report["run_id"]) <= 256)
         or not (1 <= len(report["case_id"]) <= 256)
-        or report.get("semantic_mode") != "disabled"
+        or report.get("analysis_mode") != CANDIDATE_FIT_ANALYSIS_MODE
+        or report.get("eligibility") not in _CANDIDATE_FIT_ELIGIBILITY_STATES
+        or type(report.get("assessment_available")) is not bool
         or report.get("resume_digest") != _digest(master_resume)
         or report.get("job_description_digest") != _digest(job_description)
         or type(report.get("threshold")) not in (int, float)
@@ -1762,11 +1819,40 @@ def validate_candidate_fit_report(
             return False, False
         knockout_identities.add(identity)
 
+    unverified = report.get("unverified_requirements")
+    if not isinstance(unverified, list):
+        return False, False
+    for entry in unverified:
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != _CANDIDATE_FIT_UNVERIFIED_KEYS
+            or not all(
+                isinstance(entry.get(key), str) and bool(entry[key])
+                for key in _CANDIDATE_FIT_UNVERIFIED_KEYS
+            )
+        ):
+            return False, False
+
+    # An unavailable assessment cannot also report knockouts or a score; a
+    # report claiming both is internally inconsistent and fails closed.
+    if not isinstance(report.get("evidence_bundle"), dict):
+        return False, False
+    if report["assessment_available"] is False and (
+        hard_knockouts or unverified or float(report["score"]) != 0.0
+        or report["extraction_trustworthy"] is not False
+        or report["evidence_bundle"]
+    ):
+        return False, False
+    if report["assessment_available"] is True and not report["evidence_bundle"]:
+        return False, False
+
     expected_codes: list[str] = []
+    if report["assessment_available"] is False:
+        expected_codes.append("ASSESSMENT_UNAVAILABLE")
     if report["extraction_trustworthy"] is False:
         expected_codes.append("UNTRUSTWORTHY_EXTRACTION")
     if hard_knockouts:
-        expected_codes.append("HARD_KNOCKOUT")
+        expected_codes.append("ELIGIBILITY_FAILED")
     if float(report["score"]) < float(report["threshold"]):
         expected_codes.append("SCORE_BELOW_THRESHOLD")
     passed = not expected_codes
@@ -1787,13 +1873,21 @@ def validate_recomputed_candidate_fit_report(
     master_resume: str,
     job_description: str,
 ) -> tuple[bool, bool]:
-    """Validate a report and require an exact deterministic recomputation.
+    """Validate a report and require its evidence to replay to its numbers.
 
-    Candidate-fit reports are authorization evidence, not trusted inputs.  A
+    Candidate-fit reports are authorization evidence, not trusted inputs. A
     structurally self-consistent report can still invent its score, component
-    values, or knockout findings.  This boundary freezes every assessment
-    input carried by the report and accepts it only when the canonical report
-    exactly matches a fresh code-owned assessment.
+    values, or knockout findings.
+
+    The gate now calls a hosted model, so re-running it cannot produce
+    byte-identical output and the old recomputation check is not available.
+    The equivalent guarantee is replay: the report carries the requirements,
+    evidence spans and judgments it was built from, and this boundary accepts
+    it only when replaying that bundle -- with no model call -- reproduces
+    every reported number exactly. Offsets are re-resolved against the exact
+    master and job text, and the curated relation map is re-applied, so an
+    invented requirement, a fabricated excerpt or an upgraded relationship all
+    fail closed.
     """
 
     valid, passed = validate_candidate_fit_report(
@@ -1805,21 +1899,31 @@ def validate_recomputed_candidate_fit_report(
     )
     if not valid:
         return False, False
+
+    # An unavailable assessment carries no bundle and asserts nothing about
+    # the candidate; it is already a fail-closed rejection.
+    if report["assessment_available"] is False:
+        return (not report["evidence_bundle"]), False
+
     try:
-        recomputed = _deterministic_candidate_fit_assessment(
-            master_resume,
-            job_description,
-            run_id=run_id,
-            case_id=case_id,
-            as_of_date=report["as_of_date"],
-            resume_digest=report["resume_digest"],
-            job_description_digest=report["job_description_digest"],
-            extraction_trustworthy=report["extraction_trustworthy"],
+        from evidence_engine.bundle import replay_bundle
+
+        replayed = replay_bundle(
+            report["evidence_bundle"], master_resume, job_description
         )
-        exact = _canonical_json(report) == _canonical_json(recomputed)
     except Exception:
         return False, False
-    if not exact:
+
+    if (
+        _canonical_json(replayed["component_scores"])
+        != _canonical_json(report["component_scores"])
+        or float(replayed["score"]) != float(report["score"])
+        or replayed["eligibility"] != report["eligibility"]
+        or _canonical_json(replayed["hard_knockouts"])
+        != _canonical_json(report["hard_knockouts"])
+        or _canonical_json(replayed["unverified_requirements"])
+        != _canonical_json(report["unverified_requirements"])
+    ):
         return False, False
     return True, passed
 

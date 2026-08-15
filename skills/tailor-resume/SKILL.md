@@ -1,11 +1,11 @@
 ---
 name: tailor-resume
-description: Tailor a resume to a job description via the native four-role Resume Team, score it against ATS and HR rubrics, create a DOCX, and update the tracker. Use when the user pastes a job description and wants a tailored resume only (no cover letter), targeting 75-85% ATS and 70%+ HR with authentic, human-voice content and strict authenticity gates.
+description: Tailor a resume to a job description via the native four-role Resume Team, evidence-match it against the job's requirements, create a DOCX, and update the tracker. Use when the user pastes a job description and wants a tailored resume only (no cover letter), targeting an evidence match that covers every must-have with authentic, human-voice content and strict authenticity gates.
 ---
 
 # Tailor Resume Only — Native Four-Role Team
 
-Optimize and tailor the resume using concurrent shell and file operations for speed. Target: 75-85% ATS + 70%+ HR with AUTHENTIC content.
+Optimize and tailor the resume using concurrent shell and file operations for speed. Target: Evidence Match ≥ 75% with zero must-haves lacking evidence, using AUTHENTIC content. Evidence Match reports which of the job's requirements the resume actually evidences, quoting the exact excerpt behind each; legacy ATS/HR scores are diagnostic only.
 
 ## Job Description
 
@@ -23,7 +23,7 @@ resume—never a previously tailored resume. Generate one safe `run_id`, one saf
 
 `python candidate_fit_preflight.py --resume <configured-master-resume> --job-description <private-exact-JD.txt> --run-id <run_id> --case-id <case_id> --as-of-date <YYYY-MM-DD> --json`
 
-Require exit `0` and a valid `candidate-fit-policy-v2` report bound to the same
+Require exit `0` and a valid `candidate-fit-policy-v3` report bound to the same
 IDs, date, master SHA-256, and exact-JD SHA-256. Canonically hash it as
 `candidate_fit_report_digest`. Continue only with exact threshold `70.0`, score at
 least 70, trustworthy extraction, zero hard knockouts, `passed: true`, and no
@@ -176,21 +176,114 @@ otherwise alter it.
 
 Once the runtime-published `resume.md` and its receipt are verified, run tailored scoring in a background shell session:
 
-**Background Task C — Combined Tailored Score (ATS + HR):**
+Task C0a — Confirm the gaps only the applicant can resolve (ask BEFORE writing):
+
+**Step 1 — get the questions.** `--interactive` needs a real terminal and exits
+2 here; ask in the conversation instead.
+
+```bash
+python -c "
+import json
+from evidence_engine.audit import ResultCache
+from evidence_engine.engine import match_resume_to_job
+from evidence_engine.questions import build_questions
+jd = open('applications/{folder}/job_description.txt').read()
+r = match_resume_to_job('{configured_master_resume_path}', jd, cache=ResultCache())
+print(json.dumps({'resume_sha256': r.resume_sha256, 'job_sha256': r.job_sha256,
+                  'questions': [q.model_dump() for q in build_questions(r)]}, indent=2))
+"
+```
+
+No questions means no gaps worth interrupting for — skip to Task C1.
+
+**Step 2 — put each question to the applicant and wait.** One at a time, in
+their own words, showing `why_it_matters`. Offer exactly **yes** / **no** /
+**not sure**. On a "yes", ask briefly where they did it.
+
+Never answer on the applicant's behalf and never infer an answer from the
+resume — the resume is precisely what failed to establish it. If they do not
+respond, the gap stays unresolved; silence is not a "no".
+
+**Step 3 — write the answers to a file**, one object per answer, copying both
+digests verbatim from Step 1:
+
+```bash
+cat > "applications/{folder}/gap_answers.json" <<'JSON'
+[
+  {"requirement_id": "R2", "answer": "yes", "detail": "Ran vendor oversight at Acme for 3 years",
+   "resume_sha256": "<from step 1>", "job_sha256": "<from step 1>"}
+]
+JSON
+```
+
+`answer` is `yes`, `no`, or `unsure`. The digests bind an answer to this exact
+resume and job, so a "yes" from another application cannot be replayed here.
+
+**Step 4 — apply them:**
+
+```bash
+python -c "
+import json
+from evidence_engine.audit import ResultCache
+from evidence_engine.engine import match_resume_to_job
+from evidence_engine.models import GapAnswer
+from evidence_engine.questions import apply_answers
+jd = open('applications/{folder}/job_description.txt').read()
+r = match_resume_to_job('{configured_master_resume_path}', jd, cache=ResultCache())
+raw = json.load(open('applications/{folder}/gap_answers.json'))
+updated, rejected = apply_answers(r, [GapAnswer(**a) for a in raw])
+for problem in rejected: print('IGNORED:', problem)
+for rec in updated: print('[' + rec.type.value + '] ' + rec.recommendation)
+"
+```
+
+Any rejected answer is printed — treat it as unanswered, never as accepted.
+
+A "yes" authorises the Writer to surface that experience; it does NOT change
+the score and does NOT create evidence. The rewritten resume is matched again,
+and the new text is what scores. A "no" records a genuine qualification gap,
+which must never be written into the resume.
+
+Run this against the MASTER resume before the team writes anything. Asking
+after a draft exists is too late — the draft already made the choice. Delete
+`gap_answers.json` during cleanup alongside the other transient files.
+
+**Hosted agent runs** call the `confirm_gaps` tool instead of these commands;
+the contract is identical.
+
+**Task C1 — Evidence Match (authoritative):**
+```bash
+python evidence_match.py \
+  --resume "applications/{folder}/resume.md" \
+  --jd "applications/{folder}/job_description.txt" \
+  --json "applications/{folder}/evidence_match.json" \
+  --audit-log audit_log/evidence_match.jsonl \
+  --verify
+```
+Exit 0 means every cited excerpt resolves to exact resume characters. Read
+`qualification_evidence_score`, `eligibility`, and `missing_must_have_ids` from
+the JSON. This is the number that decides acceptance.
+
+**Task C2 — Legacy ATS/HR (diagnostic only, optional):**
 ```
 Run in a background shell session named `tailored-scorer` if available:
 curl -s -X POST http://localhost:8100/score/both -H "Content-Type: application/json" -d "{\"resume_path\": \"applications/{folder}/resume.md\", \"jd_path\": \"applications/{folder}/job_description.txt\"}"
 ```
 **Fallback** (if server not running): Run the CLI scorers as shell commands.
+These numbers go in the comparison table only. Never retry a run to raise them.
 
 ---
 
 ## PHASE 4: ADVISORY SCORE REVIEW (no post-authorization editing)
 
-1. **Collect scores** from the tailored scoring task and record them for reporting.
+1. **Collect the evidence match** and record it for reporting. Accept when
+   `qualification_evidence_score` >= 0.75, `missing_must_have_ids` is empty, and
+   `eligibility` is not FAIL. Report an UNVERIFIED eligibility plainly — it means
+   the resume did not state something the job requires, not that the candidate
+   lacks it.
 2. Scores are advisory. They may decide whether to accept or reject the candidate,
    but they cannot authorize any edit to the saved draft.
-3. If ATS or HR is below target, either accept the fully authorized candidate and
+3. If the evidence match is below target, either accept the fully authorized candidate and
    report the result honestly, or discard it and start a complete native-team run
    with a fresh `run_id`. A retry begins at Researcher and ends with a new Auditor.
 4. Never patch `resume.md`, call Writer or Editor alone, reuse a prior handoff, or
@@ -263,6 +356,10 @@ raw_receipt = Path('{authorization_receipt_path from runtime result}')
 receipt_path = raw_receipt if raw_receipt.is_absolute() else app_dir / raw_receipt
 receipt_digest = '{authorization_receipt_digest from runtime result}'
 verify_final_receipt(resume_path=resume_path, receipt_path=receipt_path, expected_receipt_digest=receipt_digest)
+import json
+from evidence_engine.api import summarize
+from evidence_engine.models import MatchResult
+evidence = summarize(MatchResult(**json.loads((app_dir / 'evidence_match.json').read_text())))
 updated = add_application_authorized(
     company='{Company}',
     job_title='{Job Title}',
@@ -272,6 +369,7 @@ updated = add_application_authorized(
     resume_file='{Name}_Resume_{Company}.docx',
     cover_letter_file='',
     jd_file='job_description.txt',
+    evidence=evidence,
     ats_score={final_ats},
     hr_score={final_hr},
     application_date=None,
@@ -364,11 +462,11 @@ coordinator, a scorer, or an audit to change a saved candidate.
 **Keyword Rules:**
 - Each keyword: **1-2 times MAX** across entire resume
 - Core Competencies = primary keyword location
-- 75% ATS with authentic content > 90% with stuffing
+- A 75% evidence match with authentic content beats a 90% keyword-stuffed draft — stuffing raises keyword counts while lowering evidence quality
 
 ### WRITING COACH — HUMAN VOICE + IMPACT (Rules 0–16)
 
-Full skill: the writing-coach skill (`skills/writing-coach/SKILL.md`). Priority: Authenticity → Human voice → HR → ATS.
+Full skill: the writing-coach skill (`skills/writing-coach/SKILL.md`). Priority: Authenticity → Human voice → HR → evidence coverage.
 
 - **Rule 0:** Human voice gate + `human_voice_audit.py` must pass before DOCX
 - **Rules 1–4:** So-what, front-load, deadwood out, real metrics

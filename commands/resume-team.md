@@ -21,7 +21,7 @@ resume. Generate one safe `run_id`, one safe `case_id`, and one strict ISO calen
 
 `python candidate_fit_preflight.py --resume <configured-master-resume> --job-description <private-exact-JD.txt> --run-id <run_id> --case-id <case_id> --as-of-date <YYYY-MM-DD> --json`
 
-The JSON report must contain exactly the trusted `candidate-fit-policy-v2`
+The JSON report must contain exactly the trusted `candidate-fit-policy-v3`
 assessment bound to those run/case IDs, date, master-resume SHA-256, and exact-JD
 SHA-256. Recompute its canonical JSON SHA-256 as `candidate_fit_report_digest`.
 Continue only on exit `0` and a valid report with `threshold: 70.0`, `score >= 70`,

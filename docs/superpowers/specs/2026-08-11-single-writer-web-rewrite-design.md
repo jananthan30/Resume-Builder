@@ -31,7 +31,7 @@ This design changes only the hosted web Rewrite mode.
 
 ## Non-goals
 
-- Do not weaken source anchoring or claim-support checks.
+- Do not weaken exact source anchoring; replace lexical claim closure with an independent, digest-bound semantic-support decision.
 - Do not let a model write files, publish, audit itself, or update the tracker.
 - Do not create a second unaudited endpoint or return partial model text.
 - Do not change authentication, plan quotas, or the legacy `/rewrite` response
@@ -45,14 +45,14 @@ This design changes only the hosted web Rewrite mode.
 ### 1. Direct compiler-style web service — selected
 
 Route synchronous web rewriting through `agent.web_rewrite`. Trusted code derives
-exact job-requirement lines, calls the existing Sonnet 5 Writer once, compiles
-anchored replacements, runs the shared deterministic policies, and commits only
-a verified SQL readback. It does not manufacture Researcher/Auditor identities or
-reuse the native package receipt schema.
+exact job-requirement lines, calls the Sonnet 5 Writer once, sends proposed changes
+to two read-only Sonnet 5 factual-review lenses, compiles only unanimously supported
+anchored replacements, runs shared deterministic policies, and commits only verified
+SQL readback. It does not manufacture role envelopes or reuse the native receipt.
 
 This removes synchronous actor ceremony while preserving the safety boundary:
-candidate fit, source anchoring, the strict replacement compiler, all three real
-audits, atomic publication, and durable readback remain authoritative.
+candidate fit, exact source anchoring, independent semantic support, structural
+compilation, all three code-owned audits, atomic publication, and durable readback.
 
 ### 2. Hybrid single-writer adapter inside the coordinator — superseded
 
@@ -102,63 +102,57 @@ handoff:
 There is no Researcher identity, artifact digest, role timeout, packet validation,
 or model call. The exact normalized JD is already bound into the candidate-fit
 report and final web receipt.
-### Sonnet 5 Writer
+### Sonnet 5 Writer and factual reviewer
 
-The Writer is the only AI role that can propose resume text:
+The Writer is the only AI role allowed to propose resume text. Its contract is
+short: use only facts stated in the full master resume, treat the JD only as
+relevance guidance, return exact source-anchored single-line replacements, freely
+paraphrase supported meaning, and never invent or strengthen facts. It aims for
+three to five useful changes and returns an empty list only when no truthful
+improvement exists.
 
-- Use the existing `AnthropicHost`, which is pinned and fail-closed to
-  `claude-sonnet-5`.
-- Keep adaptive thinking disabled for the bounded JSON response.
-- Accept only the existing model-facing contract:
-  `{"replacements": [{"source_span_text": ..., "replacement_text": ...}]}`.
-- Invoke `AnthropicHost.run_role("writer", ...)` once as one logical role call.
-  The host may perform its existing syntax-only JSON repair when the provider
-  returns malformed JSON.
-- Do not ask the model to repair coordinator or semantic-validator failures.
-- Never expose a complete or intermediate model draft.
+`AnthropicHost` remains pinned to `claude-sonnet-5`, disables adaptive thinking,
+and retains syntax-only JSON repair. The service never asks the Writer to repair a
+policy rejection and never returns intermediate model text.
 
-The direct service calls `AnthropicHost` itself. It does not invoke an adapter,
-build a role context, or perform a second semantic-repair call after deterministic
-validation—the failure loop this design removes.
+For non-empty proposals, two read-only Sonnet 5 calls use structurally distinct
+claim-entailment and skeptical-recruiter lenses. They receive only the full master
+and proposed pairs—never the JD—so requirements cannot become candidate evidence.
+Both must independently PASS every admitted change. Each PASS cites exact, complete
+master lines; code verifies citation existence and same-role locality. Reports echo
+fresh invocation IDs and bind run, case, source digest, ordered proposal-set digest,
+per-pair digests, and distinct raw-review digests. Reviewer text is never published.
+Malformed, stale, replayed,
+missing, reordered, contradictory, or non-unanimous decisions fail closed.
 
-### Deterministic replacement salvage
+### Anchored semantic salvage
 
-The current compiler rejects the entire batch when any combined replacement
-breaks ownership, structure, evidence, or claim-support rules. The single-writer
-mode instead evaluates proposals through the same strict compiler incrementally:
+1. Validate exact item keys and value types.
+2. Require each source to be one unique, complete master line; reject duplicate
+   anchors, no-ops, deletion, unsafe characters, and multiline text. Preserve exact
+   bullet prefixes, require substantive replacement bodies, and forbid content-to-heading
+   reclassification under the real audit parser. Freeze all headings plus role, employer,
+   date, education, publication, certification, and membership rows byte-for-byte before
+   model review.
+3. Bind every pair and ordered set to the exact run, case, and source digest, then
+   request both independent factual reviews with fresh invocation IDs.
+4. Validate exact evidence citations and discard every pair not unanimously marked
+   supported with `code: PASS`.
+5. Compile supported pairs in source order while retaining ownership, role locality,
+   Core Competencies, document format, and canonical-integrity checks.
+6. Run the complete draft through evidence, human-voice, and canonical-integrity
+   audits before publication.
 
-1. Validate the top-level contract and each replacement item's exact keys and
-   value types.
-2. Resolve every source against the immutable master and require one unique,
-   complete, non-separator line.
-3. Reject no-ops, duplicate anchors, unsafe characters, and multiline
-   replacement text.
-4. Because the web path has no semantic Auditor, require mechanically
-   equivalent wording: only the closed first-verb swaps are admitted. Every
-   insertion, including a plausible acronym expansion, is rejected even though
-   the native-team closure rule can defer additions to its semantic Auditor.
-5. Sort candidates by their original source offsets.
-6. Add one candidate at a time to the accepted set and compile the complete
-   accepted set with `_compile_writer_replacements`.
-7. Keep the candidate only if the strict compiler, ownership parser, claim
-   support, Core Competencies rule, evidence normalization, and deterministic
-   canonical-integrity comparison against the master all pass.
-8. Build the final draft once from the accepted source-ordered set.
+The old visible-token identity, zero-insertion rule, opener allowlist, insertion
+budget, and polarity lexicon are removed from the web path. Truthful paraphrase,
+reordering, shortening, and standard acronym use are now allowed. Native-team
+compilation remains unchanged and continues to use its existing semantic Auditor.
 
-This is fail-closed salvage: invalid proposals are discarded, never relaxed or
-rewritten. The result is the maximal greedy source-ordered subset accepted by all
-gates. Two individually valid but mutually conflicting proposals may cause the
-later proposal to be discarded; the ordering is deterministic and never grants
-extra authority.
-
-If at least one proposal is accepted, the compiled draft continues. If the Writer
-explicitly returns an empty list, the byte-identical master may continue through
-the audits. If it proposes changes but none are safe, the compiler's narrow typed
-signal becomes the stable `REJECTED:NO_SAFE_CHANGES` terminal instead of
-publishing an unchanged resume or claiming a transient outage.
-
-Only counts and stable rejection categories are logged. Source and replacement
-text never enter logs or events.
+If at least one proposal survives, the compiled draft continues. An explicit empty
+Writer list may still publish the unchanged master for API compatibility. If the
+Writer proposes changes but none receive semantic and structural authorization,
+the run returns `REJECTED:NO_SAFE_CHANGES`. Only counts, codes, and digests enter
+logs or events.
 
 ### Deterministic authorization and no Editor
 
@@ -174,7 +168,8 @@ Editor branch: the Writer's admitted proposal either passes all three audits or
 the request fails closed.
 
 Publication uses a web-specific receipt containing the exact candidate-fit report,
-three-vote authorization report, input/draft digests, and publication ID. It
+digest-bound semantic review, three-vote authorization report, input/draft digests,
+and publication ID. It
 intentionally omits fictional Researcher/Auditor identities. The SQL publisher
 commits the draft and metadata, then `read_publication` must return the exact
 stored object before the service may return `PUBLISHED`.
@@ -187,12 +182,13 @@ stored object before the service may return `PUBLISHED`.
    and no codes. A reasoning judge cannot override this web gate.
 4. Derive exact requirement lines from the normalized JD in pure code.
 5. Ask the single Sonnet 5 Writer for anchored replacements.
-6. Salvage the safe subset with the strict deterministic compiler.
-7. Run the three fresh deterministic authorization votes on the full draft.
-8. Commit the web receipt metadata and verify the exact SQL readback.
-9. Return the unchanged legacy JSON response with the verified draft and scores.
+6. Run two independent, citation-bound factual reviews for every non-empty proposal.
+7. Structurally compile the supported subset.
+8. Run the three fresh code-owned authorization votes on the full draft.
+9. Commit the web receipt metadata and verify the exact SQL readback.
+10. Return the unchanged legacy JSON response with the verified draft and scores.
 
-No Writer proposal reaches the user before step 8.
+No Writer proposal reaches the user before step 9.
 
 ## Error behavior
 

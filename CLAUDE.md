@@ -1,17 +1,26 @@
 # Resume Builder - Project Context
 
 ## Overview
-AI-powered resume and cover letter generator that tailors applications to specific job descriptions with **native role separation** and dual-scoring optimization:
+AI-powered resume and cover letter generator that tailors applications to specific job descriptions with **native role separation** and evidence-based matching:
 - **Authenticity**: Never invent facts; resumes must be interview-true
 - **Human Voice**: Brevity, burstiness, plain language — hard gate via `human_voice_audit.py`
-- **ATS Score**: Keyword matching for Applicant Tracking Systems (75-85% target)
-- **HR Score**: Human recruiter evaluation simulation (70%+ target)
+- **Evidence Match**: Requirement-to-evidence matching via `evidence_match.py` (75%+ target,
+  zero must-haves lacking evidence). This **replaced ATS/HR scoring** as the authoritative
+  measure. No universal ATS score exists across recruiting systems, so the product answers
+  "which of this job's requirements does the resume evidence, and with what excerpt"
+- **Legacy ATS/HR**: `ats_scorer.py` / `hr_scorer.py` remain for continuity and the
+  comparison table. Diagnostic only — never present them as the result
 - **Candidate Fit**: The configured master must score at least 50 (the default
   bar; `candidate_fit_preflight.CANDIDATE_FIT_THRESHOLD`) with zero hard
   knockouts against the exact JD before any resume development
 - **Safety**: Researcher, Writer, Auditor, and Editor have distinct least-authority contracts; finalization is ordered
 
-**Editorial priority (never invert):** Authenticity → Human voice → HR impact → ATS match. 75% ATS with human prose beats 90% stuffed AI prose.
+**Editorial priority (never invert):** Authenticity → Human voice → HR impact → evidence coverage. A 75% evidence match with human prose beats a 90% keyword-stuffed draft — stuffing raises keyword counts while lowering evidence quality.
+
+**Absence is never failure.** A requirement with no supporting resume span is
+`NO_EVIDENCE_FOUND`, and a hard gate with nothing behind it is `UNVERIFIED`. Neither
+means the candidate lacks the qualification, and neither may be reported as if it did.
+Only explicit contradictory evidence (an expired licence, say) produces `FAIL`.
 
 ## Quick Start
 
@@ -33,24 +42,51 @@ AI-powered resume and cover letter generator that tailors applications to specif
 /job-fit [paste job description]
 ```
 
-### Option 2: Scorers (Standalone)
+### Option 2: Evidence Match (standalone, authoritative)
 ```bash
-# ATS Scorer - Keyword matching
-python ats_scorer.py --score resume.pdf job_description.txt --json
-python ats_scorer.py --web
+# Which requirements does this resume actually evidence?
+python evidence_match.py --resume resume.docx --jd job_description.txt --verify
 
-# HR Scorer - Recruiter simulation
-python hr_scorer.py --score resume.pdf job_description.txt --json
-python hr_scorer.py --score resume.pdf jd.txt --web
+# Machine-readable, with an append-only audit record
+python evidence_match.py --resume resume.docx --jd jd.txt \
+    --json match.json --audit-log audit_log/evidence_match.jsonl
+
+# Recompute a stored result from its recorded judgments — no LLM call
+python evidence_match.py --replay match.json
 ```
+
+`--verify` re-checks that every displayed excerpt maps back to exact resume
+characters and exits non-zero if any does not.
+
+### Option 3: Legacy scorers (diagnostic only)
+```bash
+python ats_scorer.py --score resume.pdf job_description.txt --json
+python hr_scorer.py --score resume.pdf job_description.txt --json
+```
+Retained for the comparison table and existing integrations. These numbers do
+not correspond to any real recruiting system's behaviour.
 
 ## Project Structure
 ```
 Resume Builder/
 ├── {master_resume from config.json}        # Master resume (DOCX, PDF, or Markdown)
 ├── SUPPLEMENTAL_EXPERIENCE.md              # Selective-use experience entries (NOT in master resume)
-├── ats_scorer.py                           # ATS scoring engine (keyword matching)
-├── hr_scorer.py                            # HR scoring engine (recruiter simulation)
+├── evidence_match.py                       # Evidence match CLI (authoritative scoring)
+├── evidence_engine/                        # Requirement-to-evidence engine
+│   ├── engine.py                           # Pipeline: parse → extract → retrieve → judge → score
+│   ├── api.py                              # The one public response shape
+│   ├── audit.py                            # Audit records, caching, deterministic replay
+│   ├── bias.py                             # Protected-attribute screening
+│   ├── models.py                           # Pydantic schemas
+│   ├── policy.py                           # Versioned scoring policy loader
+│   ├── evidence/                           # Judge, prompts, relation map, provenance
+│   ├── requirements/                       # Atomic requirement extraction
+│   ├── retrieval/                          # BM25 + dense + rank fusion
+│   ├── scoring/                            # Deterministic scorers (no LLM numbers)
+│   └── config/                             # scoring_v0_1.json, relationships_v0_1.json
+├── benchmarks/evidence/                    # Ablation harness A–F + launch gates
+├── ats_scorer.py                           # LEGACY ATS scoring engine (diagnostic only)
+├── hr_scorer.py                            # LEGACY HR scoring engine (diagnostic only)
 ├── evidence_audit.py                       # Core Competencies must-trace checker
 ├── human_voice_audit.py                    # Human-voice / anti-AI-prose hard gate
 ├── data/ai_tells.json                      # Shared banned AI lexicon
@@ -90,7 +126,77 @@ Resume Builder/
         └── writing-coach.md               # Human Voice + Impact skill (Rules 0-16)
 ```
 
-## Dual Scoring System (v2.0 Enhanced)
+## Evidence Matching (authoritative)
+
+The engine answers one question: **how strongly does this resume provide
+verifiable evidence that this candidate satisfies this specific job?**
+
+```
+JOB DESCRIPTION ──► Atomic requirements ──┬──► Eligibility gates
+                                          └──► Weighted criteria
+                                                     │
+RESUME ──► Evidence spans ──► Retrieval ──► LLM judge ──► Deterministic scorer
+                                                     │
+                          ┌──────────────────────────┴──────────────────────────┐
+                          ▼                          ▼                          ▼
+                    Eligibility        Qualification Evidence Fit      Evidence Quality
+                  PASS/FAIL/UNVERIFIED           0-100%                    0-100%
+```
+
+**Three outputs, never multiplied together.** A candidate can be UNVERIFIED on
+eligibility while scoring 91% on evidence — that means the resume omitted a
+work-authorization statement, not that they are ineligible.
+
+**The LLM classifies; code calculates.** The judge returns discrete
+relationships and quality dimensions. Python computes every number, so scores
+are reproducible, weight changes need no LLM call, prompt drift cannot silently
+redefine weights, and keyword stuffing cannot manipulate a model-generated
+scalar.
+
+| Relationship | Example | Max credit |
+|---|---|---|
+| EXACT_EXPLICIT | Python ↔ Python | 1.00 |
+| EQUIVALENT_SYNONYM | protocol authoring ↔ protocol development | 0.95 |
+| ABBREVIATION_EQUIVALENT | EDC ↔ electronic data capture | 0.95 |
+| CHILD_SUPPORTS_PARENT | PyTorch → deep-learning framework | 0.90 |
+| ADJACENT_TRANSFERABLE | TensorFlow → PyTorch ecosystem | 0.60 |
+| CONTEXTUAL_IMPLICATION | IND section → regulatory submissions | 0.50 |
+| UNSUPPORTED_INFERENCE | Python → TensorFlow | 0.00 |
+| CONTRADICTORY | "licence expired" vs "active licence required" | 0.00 |
+
+Direction is enforced in code, not just prompted: a specific child supports a
+broad parent, never the reverse. `evidence_engine/config/relationships_v0_1.json`
+is authoritative for the three high-credit relationships; claims it does not
+support are downgraded rather than silently accepted.
+
+**Auditability.** Every result stores both input hashes, all seven version
+strings, the requirements, the evidence spans, the raw judgments, and the
+evaluation month. `python evidence_match.py --replay <result.json>` recomputes
+the score from the stored judgments with no LLM call and reports any drift.
+Changing any version yields a new cache identity, so a stored score is never
+silently reused under different rules.
+
+**Protected attributes never enter the feature space.** `evidence_engine/bias.py`
+screens extracted requirements for age, sex, race, religion, disability, genetic
+information, veteran status and photographs, plus bias-prone proxies (graduation
+year, ZIP code, school and employer prestige, employment gaps). Screened lines
+are recorded in `excluded_requirements` with their source text, carry zero
+weight, and are surfaced as warnings. Work authorization, location, travel,
+licences, certifications and degrees are legitimate criteria and are never
+screened.
+
+**Benchmark.** `python -m benchmarks.evidence.runner [--with-llm]` runs
+ablations A–F (keyword overlap, BM25, embedding, hybrid, hybrid+judge, full
+engine) and checks the launch gates. Read `pair-acc` and `inversions` before
+NDCG — NDCG saturates on short candidate lists and hides the exact failure the
+engine exists to prevent.
+
+---
+
+## Legacy Scoring System (diagnostic only)
+
+Retained for the comparison table and existing API integrations. Do not present
+these as the result.
 
 ### ATS Scorer (Semantic + Keyword Matching)
 Advanced resume-to-job-description analysis with seven weighted components:
@@ -218,14 +324,15 @@ CERTIFICATIONS & LICENSURE
 ## Workflow (Native Four-Role Resume Team)
 
 ```
-PHASE 0: CANDIDATE FIT ────────── Deterministic scan; LLM judge decides refusals
+PHASE 0: CANDIDATE FIT ────────── Evidence match; FAIL refuses with the excerpt
 PHASE 1: RESEARCHER ────────────── JD-only rubric and evidence spans
 PHASE 2: WRITER ───────────────── Master-resume source-anchored replacements
 PHASE 3: AUDITOR ──────────────── Independent PASS/FAIL; no editing authority
 PHASE 4: EDITOR LOOP ──────────── Named findings only; max 2; fresh audit each time
 PHASE 5: THREE VOTES ──────────── Evidence + human voice + canonical integrity
 PHASE 6: DRAFT PUBLICATION ────── Atomic resume.md receipt + digest readback
-PHASE 7: ORDERED FINALIZATION ─── Resume DOCX → cover DOCX → tracker → cleanup
+PHASE 7: EVIDENCE MATCH ───────── evidence_match.py --verify against the exact JD
+PHASE 8: ORDERED FINALIZATION ─── Resume DOCX → cover DOCX → tracker → cleanup
 ```
 
 **Safe concurrency:**
@@ -244,35 +351,46 @@ specific inherited profile, model, or Ultra setting. Codex may receive
 explicitly requests those pins; Claude must not receive Codex-only flags.
 
 0. **Candidate fit** runs `candidate_fit_preflight.py` against only the configured
-   master resume and exact JD before any output or role invocation. It requires a
-   canonical, digest-bound `candidate-fit-policy-v2` report with score at least
-   the default bar (50; `CANDIDATE_FIT_THRESHOLD`), trustworthy extraction,
-   zero hard knockouts, `passed: true`, and no codes.
-   The deterministic verdict is advisory on rejection: when it does not pass,
-   the runtime consults the reasoning judge (`candidate_fit_judge.py`,
-   `candidate-fit-judge/v1`) as the final refusal authority. A judge verdict
-   counts only after `validate_candidate_fit_judge_report` digest-binds it to
-   the exact run/resume/JD and verifies every cited requirement verbatim
-   against the posting; judge PROCEED opens the gate (the receipt then carries
-   both reports), judge DECLINE — or any judge failure: no key, transport
-   error, invalid citation — leaves the deterministic rejection standing as
-   `REJECTED:CANDIDATE_FIT`. Unavailable, malformed, stale, or mismatched
-   deterministic analysis is `FAILED:CANDIDATE_FIT_PREFLIGHT` and is never
-   judge-recoverable.
-   Policy v2 calibration: tool knockouts ground only in requirements sections
-   (duties prose never disqualifies), doctorates named in requirement ladders
-   are alternative routes, and knockouts degrade the score with an informative
-   cap (1 → 55, 2 → 45, 3+ → 35). For stretch-zone results (clean floor,
-   score below 70) the coordinator may run `candidate_fit_review.py`: two
-   distinct native reviewers with code-verified citations must both return
-   PROCEED (`candidate-fit-review/v1`). Review certification authorizes
-   coordinator-built manual packages only; the hardened runtime still requires
-   the deterministic pass.
-   After any rejection the user may record a manual override
-   (`candidate_fit_override.py`, `candidate-fit-override/v1`, decision
-   `PROCEED_MANUAL`): an explicit, digest-bound record of the exact reports
-   overruled, authorizing only the manual package path — never the runtime,
-   receipts, authorized wrappers, or tracker.
+   master resume and exact JD before any output or role invocation. It runs the
+   **evidence engine** — the same requirement-to-evidence matcher used for
+   scoring — and requires a canonical, digest-bound `candidate-fit-policy-v3`
+   report with score at least the default bar (50; `CANDIDATE_FIT_THRESHOLD`),
+   trustworthy extraction, `passed: true`, and no codes.
+
+   Three eligibility outcomes drive the decision, and the last two are the
+   point:
+
+   - **FAIL** — explicit contradictory evidence on a mandatory requirement (an
+     expired licence, or a stated minimum the candidate's whole career cannot
+     reach). Refuses, **citing the exact resume line** that caused it.
+   - **UNVERIFIED** — the resume simply does not mention it. **Proceeds with a
+     warning.** Absence of evidence is not proof of absence, and a candidate
+     holding an unlisted licence must not be refused.
+   - **PASS** — explicitly evidenced.
+
+   **The gate calls a hosted model on every run.** It was previously offline.
+   When the model cannot be reached it fails closed with
+   `ASSESSMENT_UNAVAILABLE`, deliberately distinct from a fit rejection —
+   "we could not assess you" must never be reported as "you do not qualify".
+
+   **How the report proves it was not forged.** It used to re-run itself and
+   demand byte-identical output; a model-backed gate cannot do that. Instead
+   the report carries an `evidence_bundle` — the requirements, the cited resume
+   spans and the judgments — and `validate_recomputed_candidate_fit_report`
+   accepts it only when replaying that bundle, **with no model call**,
+   reproduces every reported number. Offsets are re-resolved against the exact
+   master and JD text, the curated relation map is re-applied, and the
+   deterministic contradiction floor re-fires, so an invented requirement, a
+   fabricated excerpt, an upgraded relationship and a flipped contradiction all
+   fail closed. See `evidence_engine/bundle.py`.
+
+   A failing gate is `REJECTED:CANDIDATE_FIT`; unavailable, malformed, stale,
+   or mismatched analysis is `FAILED:CANDIDATE_FIT_PREFLIGHT`. Neither is
+   recoverable by retrying the roles. After a
+   rejection the user may still record a manual override
+   (`candidate_fit_override.py`), authorizing only the manual package path —
+   never the runtime, receipts, authorized wrappers, or tracker.
+
 1. **Researcher** receives only the JD and returns a requirement rubric whose hard-then-soft strings exactly equal the uniquely anchored evidence strings one-for-one and in order.
 2. **Writer** receives only the master resume and validated rubric, and proposes source-anchored replacements rather than a complete draft; the coordinator resolves the immutable master, applies replacements in source order, and derives evidence bookkeeping. It cannot authorize or publish.
 3. **Auditor** independently checks the exact draft; it cannot edit.
@@ -401,6 +519,8 @@ If none of the above, REMOVE the item from Core Competencies. Listing a skill wi
 python evidence_audit.py applications/{Company - JobTitle}/resume.md
 python human_voice_audit.py applications/{Company - JobTitle}/resume.md
 python human_voice_audit.py applications/{Company - JobTitle}/cover_letter.md --mode cover_letter
+python evidence_match.py --resume applications/{Company - JobTitle}/resume.md \
+    --jd applications/{Company - JobTitle}/job_description.txt --verify
 ```
 Exit code 0 = passed. Exit code 1 = fix failures before generating DOCX.
 
@@ -415,8 +535,10 @@ Exit code 0 = passed. Exit code 1 = fix failures before generating DOCX.
 ## Notes for Claude
 - Master resume: Read from `config.json` → `master_resume_path` (or glob for `*MASTER*RESUME*.md`, `*MASTER*RESUME*.docx`, `*MASTER*RESUME*.pdf`). For `.docx` files, use the `extract_text` MCP tool (Claude cannot read binary DOCX directly).
 - Output folder format: `applications/{Company} - {JobTitle}/`
-- ATS target: 75-85% before creating DOCX (authenticity + human voice over raw score)
-- HR target: 70%+ before creating DOCX
+- Evidence target before DOCX: `qualification_evidence_score` >= 0.75, an empty
+  `missing_must_have_ids`, and `eligibility` that is not FAIL
+- Report gaps as "no evidence found in the resume", never as "you lack this"
+- Legacy ATS/HR numbers are for the comparison table only — never retry a run to raise them
 - Human voice audit must pass (exit 0) before DOCX — same severity as evidence audit
 - Delete transient .md files only after authorized DOCX creation, a literal-`True` tracker update, and artifact verification; never delete the durable receipt
 - Use `docx_generator.py` for ATS-compliant formatting
@@ -425,7 +547,7 @@ Exit code 0 = passed. Exit code 1 = fix failures before generating DOCX.
 - **NEVER CHANGE JOB TITLES** - Job titles and company names must remain EXACTLY as they appear in the master resume. This is an ethical requirement. Only reframe bullet points with relevant keywords.
 - **NEVER CHANGE PUBLICATIONS** - Publication titles and citations stay exactly as-is
 - Never invent experience - only reframe existing content
-- **Auto-update tracker** only after both verified DOCX files using `tracker_utils.add_application_authorized()` with the captured sidecar path/digest; require a literal `True` return
+- **Auto-update tracker** only after both verified DOCX files using `tracker_utils.add_application_authorized()` with the captured sidecar path/digest and the `evidence=` summary; require a literal `True` return
 
 ## Job Application Tracker
 
@@ -454,6 +576,11 @@ The `Job_Application_Tracker.xlsx` is automatically updated whenever a resume is
 | **Rejection Reason** | no_response / auto_reject / screen_reject / interview_reject / offer_declined / withdrawn |
 | **Days To Response** | Auto-computed (Response date − Application Date) |
 | **Interview Stages Reached** | 0=applied, 1=phone screen, 2=hiring mgr, 3=panel, 4=onsite, 5=offer |
+| **Evidence Match** | Qualification Evidence Fit at apply time — the meaningful score |
+| **Eligibility** | PASS / FAIL / UNVERIFIED from the hard gates |
+| **Requirements Evidenced** | "5/8" — strongly evidenced over total requirements |
+| **Must-Haves Missing** | Count of must-haves with no evidence found |
+| **Evidence Policy Version** | Which scoring policy produced the numbers |
 
 Strategic columns let the system *learn* which categories of role actually convert. Without these, the tracker is bookkeeping; with these, you can answer "what's my response rate on AD-tier vs Sr Specialist?"
 
@@ -474,8 +601,9 @@ updated = add_application_authorized(
     expected_receipt_digest="<authorization_receipt_digest from runtime result>",
     resume_file="resume.docx",
     cover_letter_file="cover_letter.docx",
-    ats_score=83.0,
-    hr_score=71.6,
+    evidence=evidence_summary,        # evidence_engine.api.summarize() output
+    ats_score=83.0,                   # legacy, diagnostic only
+    hr_score=71.6,                    # legacy, diagnostic only
     target_tier="Sr Specialist",     # IC / Sr / Manager / AD / Director
     fit_label="MEETS",                # from job_fit_scorer
     hard_reqs_missed=0,

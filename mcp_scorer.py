@@ -1,13 +1,14 @@
 """
 AI Resume Tuner — MCP Server
 
-Score, analyze, and optimize resumes against job descriptions using
-dual ATS + HR scoring with optional LLM-augmented analysis.
+Match resumes against job descriptions requirement by requirement, with the
+exact evidence behind every conclusion.
 
 Tools:
-    score_resume      — Full ATS + HR analysis in one call
-    score_ats         — ATS keyword/semantic scoring only
-    score_hr          — HR recruiter simulation only
+    evidence_match    — Requirement-level evidence matching (recommended)
+    score_resume      — Legacy ATS + HR analysis in one call
+    score_ats         — Legacy ATS keyword/semantic scoring only
+    score_hr          — Legacy HR recruiter simulation only
     score_with_llm    — LLM-augmented scoring (requires ANTHROPIC_API_KEY)
     rewrite_resume    — Deprecated migration guard; native Resume Team required
     explain_score     — Actionable improvement suggestions
@@ -144,10 +145,53 @@ def _usage_limit_message(result: dict) -> str:
 
 
 @mcp.tool()
-def score_resume(resume_text: str, jd_text: str) -> dict:
-    """Score a resume against a job description using both ATS and HR analysis.
+def evidence_match(resume_text: str, jd_text: str) -> dict:
+    """Match a resume against a job description requirement by requirement.
 
-    This is the recommended tool for full resume evaluation. It runs:
+    This is the recommended tool for resume evaluation. Instead of a keyword
+    percentage, it returns which of the job's requirements the resume actually
+    evidences, quoting the exact excerpt behind each conclusion.
+
+    Three results stay separate and must not be combined into one number:
+      - eligibility: PASS, FAIL, or UNVERIFIED for explicit hard requirements.
+        A missing licence is UNVERIFIED, not FAIL — absence of evidence is
+        never proof the candidate lacks the qualification.
+      - qualification_evidence_score: how strongly the resume supports the
+        role's requirements.
+      - evidence_quality: how explicit and traceable that evidence is.
+
+    Args:
+        resume_text: Full text of the resume.
+        jd_text: Full text of the job description.
+
+    Returns:
+        A headline sentence, the three scores, per-requirement evidence with
+        exact excerpts and character offsets, gaps, and rewrite suggestions
+        that never ask the candidate to claim something untrue.
+    """
+    cloud_result = _try_cloud("/api/match", resume_text, jd_text)
+    if _is_usage_limit(cloud_result):
+        return {"error": "free_tier_limit_reached",
+                "message": _usage_limit_message(cloud_result)}
+    if cloud_result and "qualification_evidence_score" in cloud_result:
+        return cloud_result
+
+    try:
+        from evidence_engine.api import to_api_response
+        from evidence_engine.engine import match_texts
+    except ImportError:
+        return {"error": "evidence_engine_unavailable",
+                "message": "Install the full package to run matching locally."}
+    return to_api_response(match_texts(resume_text, jd_text))
+
+
+@mcp.tool()
+def score_resume(resume_text: str, jd_text: str) -> dict:
+    """Legacy ATS + HR keyword scoring. Prefer evidence_match.
+
+    Retained for existing workflows. These numbers do not correspond to any
+    real recruiting system's behaviour — no universal ATS score exists. It
+    runs:
     1. ATS scoring — keyword matching, semantic similarity, phrase matching,
        industry term recognition, and format risk assessment.
     2. HR scoring — recruiter simulation evaluating experience fit, skills match,

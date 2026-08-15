@@ -1,0 +1,435 @@
+{
+  "name": "evidence-seed",
+  "version": "1.1.0",
+  "description": "Seed benchmark for wiring validation and adversarial regression. Each job pairs genuinely strong evidence against transferable, participation-only and keyword-stuffed resumes, so a system that counts terms ranks differently from one that weighs evidence. This is NOT the 50-job, 200-500-pair expert-labelled benchmark the specification calls for before launch claims; labels here are authored from the spec's own adversarial cases rather than by independent reviewers. v1.1 adds a specificity job: two resumes identical in seniority, domain and phrasing that differ only in trial phase, so a system that cannot tell Phase I from Phase III is measurably penalised.",
+  "jobs": [
+    {
+      "job_id": "JOB-CLIN-001",
+      "text": "Senior Clinical Scientist\nCompany: Northfield Therapeutics\nLocation: Boston, MA\n\nExperience authoring clinical protocols is required.\nThe role leads clinical data review across ongoing studies.\nOncology clinical development experience is preferred.\nA doctoral degree is required.\n",
+      "domain": "clinical_development",
+      "gold_requirements": [
+        {
+          "normalized_text": "clinical protocol authoring",
+          "importance": "MUST_HAVE"
+        },
+        {
+          "normalized_text": "clinical data review",
+          "importance": "CORE"
+        },
+        {
+          "normalized_text": "oncology clinical development",
+          "importance": "PREFERRED"
+        },
+        {
+          "normalized_text": "doctoral degree",
+          "importance": "HARD_GATE",
+          "hard_gate": true
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-ML-001",
+      "text": "Machine Learning Engineer\nCompany: Latchkey Systems\nRemote\n\nProduction experience with a deep-learning framework is required.\nThe role owns model training pipelines end to end.\nExperience with PyTorch is preferred.\n",
+      "domain": "technology",
+      "gold_requirements": [
+        {
+          "normalized_text": "deep-learning framework experience",
+          "importance": "MUST_HAVE"
+        },
+        {
+          "normalized_text": "model training pipelines",
+          "importance": "CORE"
+        },
+        {
+          "normalized_text": "PyTorch experience",
+          "importance": "PREFERRED"
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-RN-001",
+      "text": "Registered Nurse, Infusion Clinic\nCompany: Cedar Valley Health\nLocation: Denver, CO\n\nAn active RN license is required.\nThe role administers infusion therapy and monitors patient response.\nTwo years of oncology nursing experience is preferred.\n",
+      "domain": "regulated_healthcare",
+      "gold_requirements": [
+        {
+          "normalized_text": "active RN license",
+          "importance": "HARD_GATE",
+          "hard_gate": true
+        },
+        {
+          "normalized_text": "infusion therapy administration",
+          "importance": "CORE"
+        },
+        {
+          "normalized_text": "oncology nursing experience",
+          "importance": "PREFERRED"
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-PHASE-001",
+      "text": "Clinical Scientist, Early Phase\nCompany: Halden Oncology\nLocation: Cambridge, MA\n\nRequirements:\nPhase I first-in-human dose-escalation experience is required.\nThe role authors clinical protocols for early-phase studies.\nOncology experience is preferred.\n",
+      "domain": "clinical_development",
+      "gold_requirements": [
+        {
+          "normalized_text": "Phase I first-in-human dose-escalation experience",
+          "importance": "MUST_HAVE"
+        },
+        {
+          "normalized_text": "clinical protocol authoring for early-phase studies",
+          "importance": "CORE"
+        },
+        {
+          "normalized_text": "oncology experience",
+          "importance": "PREFERRED"
+        }
+      ]
+    }
+  ],
+  "resumes": [
+    {
+      "resume_id": "RES-C1",
+      "text": "Alice Nguyen\n\nEXPERIENCE\nClinical Research Scientist | Example Biopharma | Jan 2022 - Aug 2025\n- Authored and reviewed Phase II clinical protocols for three randomized oncology studies.\n- Led clinical data review across four concurrent trials.\n- Presented safety findings to the study steering committee.\n\nClinical Trial Associate | Harborview Research | Mar 2018 - Dec 2021\n- Coordinated site start-up for eight investigator sites.\n\nEDUCATION\nPhD Molecular Biology, State University | 2014 - 2018\n"
+    },
+    {
+      "resume_id": "RES-C2",
+      "text": "Ben Okafor\n\nEXPERIENCE\nClinical Scientist | Ridgeline Bio | Feb 2021 - Jul 2025\n- Authored clinical protocols and amendments for immunology studies.\n- Ran clinical data review cycles ahead of database lock.\n\nEDUCATION\nPhD Immunology, Coastal University | 2015 - 2020\n"
+    },
+    {
+      "resume_id": "RES-C3",
+      "text": "Chen Wei\n\nEXPERIENCE\nClinical Trial Manager | Summit Clinical | Jun 2020 - Aug 2025\n- Supported protocol execution across twelve oncology sites.\n- Tracked enrollment and vendor deliverables against timelines.\n\nEDUCATION\nMSc Clinical Research, Lakeside University | 2017 - 2019\n"
+    },
+    {
+      "resume_id": "RES-C4",
+      "text": "Dana Silva\n\nEXPERIENCE\nOperations Associate | Meridian Services | Jan 2021 - Aug 2025\n- clinical protocol clinical protocol clinical protocol clinical protocol oncology oncology\n- clinical data review clinical data review oncology clinical development protocol authoring\n\nEDUCATION\nBA Communications, Riverside College | 2016 - 2020\n"
+    },
+    {
+      "resume_id": "RES-M1",
+      "text": "Elena Petrova\n\nEXPERIENCE\nMachine Learning Engineer | Latchkey Systems | Mar 2022 - Aug 2025\n- Trained and shipped production models in PyTorch serving 40M requests daily.\n- Owned the model training pipeline from ingestion through evaluation.\n\nEDUCATION\nMSc Computer Science, Northern Institute | 2018 - 2020\n"
+    },
+    {
+      "resume_id": "RES-M2",
+      "text": "Farid Haddad\n\nEXPERIENCE\nML Engineer | Beacon Analytics | Jan 2021 - Aug 2025\n- Built deep learning models in TensorFlow for demand forecasting.\n- Automated retraining pipelines on a weekly cadence.\n\nEDUCATION\nBSc Statistics, Central University | 2016 - 2020\n"
+    },
+    {
+      "resume_id": "RES-M3",
+      "text": "Grace Lin\n\nEXPERIENCE\nData Engineer | Tidewater Data | Apr 2020 - Aug 2025\n- Built ETL pipelines in Python with pandas and NumPy.\n- Maintained the analytics warehouse and its SQL transformations.\n\nEDUCATION\nBSc Information Systems, Eastgate University | 2015 - 2019\n"
+    },
+    {
+      "resume_id": "RES-M4",
+      "text": "Hugo Martins\n\nEXPERIENCE\nSupport Specialist | Clearwater Retail | Feb 2021 - Aug 2025\n- PyTorch PyTorch deep learning deep-learning framework PyTorch model training\n- deep learning framework PyTorch training pipelines PyTorch PyTorch\n\nEDUCATION\nBA History, Southbank College | 2016 - 2020\n"
+    },
+    {
+      "resume_id": "RES-N1",
+      "text": "Ingrid Vogel\n\nEXPERIENCE\nRegistered Nurse | Cedar Valley Health | Jan 2021 - Aug 2025\n- Administered infusion therapy for oncology patients across a 20-chair clinic.\n- Monitored patient response and escalated adverse reactions per protocol.\n\nEDUCATION\nBSN Nursing, Front Range University | 2016 - 2020\n\nCERTIFICATIONS\n- Active RN license, State of Colorado, current through 2027\n"
+    },
+    {
+      "resume_id": "RES-N2",
+      "text": "Jonah Reed\n\nEXPERIENCE\nNurse | Prairie Medical Group | Mar 2020 - Aug 2025\n- Administered infusion therapy and monitored patient response during treatment.\n- Trained two junior nurses on infusion safety procedures.\n\nEDUCATION\nBSN Nursing, Prairie State University | 2015 - 2019\n"
+    },
+    {
+      "resume_id": "RES-N3",
+      "text": "Keiko Tanaka\n\nEXPERIENCE\nNurse | Lakeshore Clinic | Jun 2016 - Dec 2021\n- Administered infusion therapy in an outpatient setting.\n\nEDUCATION\nBSN Nursing, Lakeshore University | 2012 - 2016\n\nCERTIFICATIONS\n- RN license expired December 2023 and has not been renewed\n"
+    },
+    {
+      "resume_id": "RES-N4",
+      "text": "Liam Doyle\n\nEXPERIENCE\nStore Manager | Brightway Retail | Jan 2019 - Aug 2025\n- Managed a team of fourteen across two retail locations.\n- Cut shrinkage 18% through weekly inventory audits.\n\nEDUCATION\nBA Business, Gateway College | 2014 - 2018\n"
+    },
+    {
+      "resume_id": "RES-P1",
+      "text": "Priya Raman\n\nEXPERIENCE\nClinical Scientist | Northline Bio | Feb 2021 - Aug 2025\n- Authored clinical protocols for Phase I first-in-human dose-escalation oncology studies.\n- Ran dose-escalation cohort reviews with the safety monitoring committee.\n\nEDUCATION\nPhD Pharmacology, Bay State University | 2015 - 2020\n"
+    },
+    {
+      "resume_id": "RES-P2",
+      "text": "Omar Haddad\n\nEXPERIENCE\nClinical Scientist | Northline Bio | Feb 2021 - Aug 2025\n- Authored clinical protocols for Phase III registrational oncology studies.\n- Ran endpoint adjudication reviews across forty investigator sites.\n\nEDUCATION\nPhD Pharmacology, Bay State University | 2015 - 2020\n"
+    },
+    {
+      "resume_id": "RES-P3",
+      "text": "Tessa Vaughn\n\nEXPERIENCE\nOperations Analyst | Coastal Logistics | Jan 2020 - Aug 2025\n- Tracked freight utilisation and produced weekly capacity reports.\n\nEDUCATION\nBA Economics, Riverside College | 2015 - 2019\n"
+    },
+    {
+      "resume_id": "RES-P4",
+      "text": "Dale Prentiss\n\nEXPERIENCE\nCoordinator | Meridian Services | Jan 2021 - Aug 2025\n- phase i phase i first-in-human first-in-human dose-escalation dose-escalation oncology oncology\n\nEDUCATION\nBA Communications, Riverside College | 2016 - 2020\n"
+    }
+  ],
+  "pairs": [
+    {
+      "job_id": "JOB-CLIN-001",
+      "resume_id": "RES-C1",
+      "label": 4,
+      "gold_eligibility": "PASS",
+      "notes": "Direct protocol authorship, oncology, data review, doctorate.",
+      "gold_evidence": [
+        {
+          "requirement_text": "clinical protocol authoring",
+          "status": "STRONG_EVIDENCE",
+          "relationship": "EXACT_EXPLICIT",
+          "span_texts": [
+            "Authored and reviewed Phase II clinical protocols for three randomized oncology studies."
+          ]
+        },
+        {
+          "requirement_text": "clinical data review",
+          "status": "STRONG_EVIDENCE",
+          "relationship": "EXACT_EXPLICIT",
+          "span_texts": [
+            "Led clinical data review across four concurrent trials."
+          ]
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-CLIN-001",
+      "resume_id": "RES-C2",
+      "label": 3,
+      "gold_eligibility": "PASS",
+      "notes": "Protocol authorship and data review, but immunology not oncology.",
+      "gold_evidence": [
+        {
+          "requirement_text": "clinical protocol authoring",
+          "status": "STRONG_EVIDENCE",
+          "relationship": "EXACT_EXPLICIT",
+          "span_texts": [
+            "Authored clinical protocols and amendments for immunology studies."
+          ]
+        },
+        {
+          "requirement_text": "oncology clinical development",
+          "status": "NO_EVIDENCE_FOUND",
+          "relationship": "NONE",
+          "span_texts": []
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-CLIN-001",
+      "resume_id": "RES-C3",
+      "label": 2,
+      "gold_eligibility": "UNVERIFIED",
+      "notes": "Supported execution, never authored; no doctorate stated.",
+      "gold_evidence": [
+        {
+          "requirement_text": "clinical protocol authoring",
+          "status": "WEAK_EVIDENCE",
+          "relationship": "CONTEXTUAL_IMPLICATION",
+          "span_texts": [
+            "Supported protocol execution across twelve oncology sites."
+          ]
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-CLIN-001",
+      "resume_id": "RES-C4",
+      "label": 0,
+      "gold_eligibility": "UNVERIFIED",
+      "notes": "Keyword stuffing with no claim of having done the work.",
+      "gold_evidence": [
+        {
+          "requirement_text": "clinical protocol authoring",
+          "status": "NO_EVIDENCE_FOUND",
+          "relationship": "NONE",
+          "span_texts": []
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-ML-001",
+      "resume_id": "RES-M1",
+      "label": 4,
+      "notes": "PyTorch in production plus pipeline ownership.",
+      "gold_evidence": [
+        {
+          "requirement_text": "deep-learning framework experience",
+          "status": "STRONG_EVIDENCE",
+          "relationship": "CHILD_SUPPORTS_PARENT",
+          "span_texts": [
+            "Trained and shipped production models in PyTorch serving 40M requests daily."
+          ]
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-ML-001",
+      "resume_id": "RES-M2",
+      "label": 3,
+      "notes": "TensorFlow satisfies the framework requirement; PyTorch only adjacent.",
+      "gold_evidence": [
+        {
+          "requirement_text": "deep-learning framework experience",
+          "status": "STRONG_EVIDENCE",
+          "relationship": "CHILD_SUPPORTS_PARENT",
+          "span_texts": [
+            "Built deep learning models in TensorFlow for demand forecasting."
+          ]
+        },
+        {
+          "requirement_text": "PyTorch experience",
+          "status": "NO_EVIDENCE_FOUND",
+          "relationship": "NONE",
+          "span_texts": []
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-ML-001",
+      "resume_id": "RES-M3",
+      "label": 1,
+      "notes": "Python does not imply a deep-learning framework.",
+      "gold_evidence": [
+        {
+          "requirement_text": "deep-learning framework experience",
+          "status": "NO_EVIDENCE_FOUND",
+          "relationship": "NONE",
+          "span_texts": []
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-ML-001",
+      "resume_id": "RES-M4",
+      "label": 0,
+      "notes": "Keyword stuffing in an unrelated role.",
+      "gold_evidence": [
+        {
+          "requirement_text": "deep-learning framework experience",
+          "status": "NO_EVIDENCE_FOUND",
+          "relationship": "NONE",
+          "span_texts": []
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-RN-001",
+      "resume_id": "RES-N1",
+      "label": 4,
+      "gold_eligibility": "PASS",
+      "notes": "Active licence stated plus oncology infusion experience.",
+      "gold_evidence": [
+        {
+          "requirement_text": "active RN license",
+          "status": "STRONG_EVIDENCE",
+          "relationship": "EXACT_EXPLICIT",
+          "span_texts": [
+            "Active RN license, State of Colorado, current through 2027"
+          ]
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-RN-001",
+      "resume_id": "RES-N2",
+      "label": 2,
+      "gold_eligibility": "UNVERIFIED",
+      "notes": "Relevant work, no licence stated. Absence is not failure.",
+      "gold_evidence": [
+        {
+          "requirement_text": "active RN license",
+          "status": "NO_EVIDENCE_FOUND",
+          "relationship": "NONE",
+          "span_texts": []
+        },
+        {
+          "requirement_text": "infusion therapy administration",
+          "status": "STRONG_EVIDENCE",
+          "relationship": "EXACT_EXPLICIT",
+          "span_texts": [
+            "Administered infusion therapy and monitored patient response during treatment."
+          ]
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-RN-001",
+      "resume_id": "RES-N3",
+      "label": 1,
+      "gold_eligibility": "FAIL",
+      "notes": "Licence explicitly expired: contradictory evidence, so FAIL.",
+      "gold_evidence": [
+        {
+          "requirement_text": "active RN license",
+          "status": "CONTRADICTORY_EVIDENCE",
+          "relationship": "CONTRADICTORY",
+          "span_texts": [
+            "RN license expired December 2023 and has not been renewed"
+          ]
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-RN-001",
+      "resume_id": "RES-N4",
+      "label": 0,
+      "gold_eligibility": "UNVERIFIED",
+      "notes": "Unrelated retail management.",
+      "gold_evidence": [
+        {
+          "requirement_text": "active RN license",
+          "status": "NO_EVIDENCE_FOUND",
+          "relationship": "NONE",
+          "span_texts": []
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-PHASE-001",
+      "resume_id": "RES-P1",
+      "label": 4,
+      "notes": "Phase I first-in-human stated outright; the requirement itself.",
+      "gold_evidence": [
+        {
+          "requirement_text": "Phase I first-in-human dose-escalation experience",
+          "status": "STRONG_EVIDENCE",
+          "relationship": "EXACT_EXPLICIT",
+          "span_texts": [
+            "Authored clinical protocols for Phase I first-in-human dose-escalation oncology studies."
+          ]
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-PHASE-001",
+      "resume_id": "RES-P2",
+      "label": 2,
+      "notes": "Identical seniority, domain and verbs -- only the phase differs. Phase III is adjacent to Phase I, not a substitute for it. This is the pair a keyword matcher cannot separate.",
+      "gold_evidence": [
+        {
+          "requirement_text": "Phase I first-in-human dose-escalation experience",
+          "status": "WEAK_EVIDENCE",
+          "relationship": "ADJACENT_TRANSFERABLE",
+          "span_texts": [
+            "Authored clinical protocols for Phase III registrational oncology studies."
+          ]
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-PHASE-001",
+      "resume_id": "RES-P3",
+      "label": 0,
+      "notes": "Unrelated function.",
+      "gold_evidence": [
+        {
+          "requirement_text": "Phase I first-in-human dose-escalation experience",
+          "status": "NO_EVIDENCE_FOUND",
+          "relationship": "NONE",
+          "span_texts": []
+        }
+      ]
+    },
+    {
+      "job_id": "JOB-PHASE-001",
+      "resume_id": "RES-P4",
+      "label": 0,
+      "notes": "Repeats the exact required phrases with no claim of having done the work.",
+      "gold_evidence": [
+        {
+          "requirement_text": "Phase I first-in-human dose-escalation experience",
+          "status": "NO_EVIDENCE_FOUND",
+          "relationship": "NONE",
+          "span_texts": []
+        }
+      ]
+    }
+  ]
+}

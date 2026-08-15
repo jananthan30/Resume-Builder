@@ -26,8 +26,8 @@ text as the exact JD throughout.
    `python candidate_fit_preflight.py --resume <configured-master-resume> --job-description <private-exact-JD.txt> --run-id <run_id> --case-id <case_id> --as-of-date <YYYY-MM-DD> --json`
 
 4. Parse only the JSON report. Require `schema_version: "1.0.0"`,
-   `policy_version: "candidate-fit-policy-v2"`,
-   `scorer_version: "deterministic-job-fit-v1"`, the exact run/case IDs and date,
+   `policy_version: "candidate-fit-policy-v3"`,
+   `scorer_version: "evidence-match-v1"`, the exact run/case IDs and date,
    exact master/JD SHA-256 digests, exact `threshold: 70.0`, all seven named
    component scores, a boolean `extraction_trustworthy`, `hard_knockouts`,
    `passed`, and ordered `codes`. Recompute the canonical JSON SHA-256 and display
@@ -52,7 +52,7 @@ Display the exact source-bound decision clearly:
 ================================================================
 
   Source: configured master_resume_path
-  Policy: candidate-fit-policy-v2 | Threshold: 70.0
+  Policy: candidate-fit-policy-v3 | Threshold: 70.0
   Master digest: [SHA-256]
   JD digest: [SHA-256]
   Report digest: [candidate_fit_report_digest]
@@ -69,7 +69,7 @@ Display the exact source-bound decision clearly:
   Certification Match:  XX/100
   Seniority Match:      XX/100
 
-  CODES: [none | UNTRUSTWORTHY_EXTRACTION | HARD_KNOCKOUT |
+  CODES: [none | UNTRUSTWORTHY_EXTRACTION | ELIGIBILITY_FAILED |
           SCORE_BELOW_THRESHOLD]
 
   VERDICT:

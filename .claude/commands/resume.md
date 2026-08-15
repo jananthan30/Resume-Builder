@@ -20,7 +20,7 @@ strict ISO `as_of_date`, then run:
 
 `python candidate_fit_preflight.py --resume <configured-master-resume> --job-description <private-exact-JD.txt> --run-id <run_id> --case-id <case_id> --as-of-date <YYYY-MM-DD> --json`
 
-Require exit `0` plus a valid `candidate-fit-policy-v2` report bound to the same
+Require exit `0` plus a valid `candidate-fit-policy-v3` report bound to the same
 IDs, date, master SHA-256, and exact-JD SHA-256. Canonically hash it as
 `candidate_fit_report_digest`. Proceed only when `threshold` is exactly `70.0`,
 `score >= 70`, `extraction_trustworthy` is true, `hard_knockouts` is empty,
@@ -46,7 +46,7 @@ You are the coordinator, not the resume author. The user has provided a job desc
 
 ## GLOBAL CONSTRAINTS (read first, enforce always)
 
-**Editorial priority (never invert):** Authenticity → Human voice → HR impact → ATS match.
+**Editorial priority (never invert):** Authenticity → Human voice → HR impact → evidence coverage.
 
 - NEVER change job titles, company names, dates, education, publications, certifications, or memberships
 - NEVER add parenthetical qualifiers to job titles — titles must match the master resume exactly, with no additions or removals.
@@ -56,8 +56,10 @@ You are the coordinator, not the resume author. The user has provided a job desc
 - NEVER open bullets with AI-cliché verbs (spearheaded, leveraged, orchestrated, championed, …) — use plain strong verbs (Led, Built, Wrote, Cut, Reviewed)
 - Publications & Education: Keep EXACTLY as in master resume — zero modifications
 - DOCX and tracker finalization must use only the receipt-validating authorized wrappers specified in Phase 5; never call lower-level generators or tracker mutations directly
-- Score targets: ATS 75-85%, HR 70%+, **Human Voice audit pass**. If JD contains staffing/benefits boilerplate, ATS ceiling is ~69-73% — accept once all domain weights are maxed. Max 2 complete fresh team retries against a boilerplate ceiling.
-- 75% ATS with human prose beats 90% stuffed AI prose
+- Acceptance targets: **Evidence Match ≥ 75%**, **zero must-haves with NO_EVIDENCE_FOUND**, eligibility not FAIL, **Human Voice audit pass**. Evidence Match is the authoritative measure — it reports which of the job's requirements the resume actually evidences, with the exact excerpt behind each.
+- Legacy ATS/HR scores remain available for continuity but are diagnostic only. No universal ATS score exists across recruiting systems, so never present one as the result or retry a run to chase it.
+- Report gaps as "no evidence found in the resume", never as "the candidate lacks this". Absence of evidence is not proof of absence.
+- A 75% evidence match with human prose beats a 90% keyword-stuffed draft — stuffing raises keyword counts and lowers evidence quality.
 
 ---
 

@@ -1,8 +1,28 @@
-"""Deterministic, fail-closed candidate-fit gate for resume development.
+"""Evidence-based, fail-closed candidate-fit gate for resume development.
 
-This module intentionally does not calculate ATS or HR scores.  Those scores
-describe a document after tailoring; they cannot establish whether the master
-resume demonstrates the job's minimum qualifications.
+This gate answers one question before any tailoring begins: does the master
+resume demonstrate this job's minimum qualifications? It runs the evidence
+engine, so the answer is requirement-level and every refusal cites the exact
+resume excerpt that caused it.
+
+ATS and HR scores are deliberately not used here. They describe a document
+after tailoring and cannot establish whether the underlying resume qualifies.
+
+Three eligibility outcomes drive the decision, and the distinction between the
+last two is the whole point:
+
+    FAIL        explicit contradictory evidence on a mandatory requirement
+                (an expired licence) -> REJECT, citing the excerpt
+    UNVERIFIED  the resume simply does not mention it -> PROCEED with a
+                warning. Absence of evidence is not proof of absence, and a
+                candidate who holds an unlisted licence must not be refused
+    PASS        the requirement is explicitly evidenced -> PROCEED
+
+NETWORK DEPENDENCY (changed 2026-08-14): this gate previously ran fully
+offline with semantics disabled. It now calls a hosted model on every run.
+When that call cannot be made the gate fails closed with
+ASSESSMENT_UNAVAILABLE, which is deliberately distinct from a fit rejection —
+"we could not assess you" must never be reported as "you do not qualify".
 """
 
 from __future__ import annotations
@@ -55,6 +75,17 @@ CANDIDATE_FIT_THRESHOLD = 50.0
 CANDIDATE_FIT_THRESHOLD_MIN = 40.0
 CANDIDATE_FIT_THRESHOLD_MAX = 95.0
 
+# The hosted web rewrite holds a stricter bar than the minimum gate: it edits
+# a resume unattended, so a marginal match is not good enough.
+#
+# NEEDS RECALIBRATION. This value was set against the retired keyword scorer,
+# where 70 sat well above the observed median. Evidence coverage is a
+# different measurement on the same 0-100 range, so the number is carried over
+# on the argument that the web path should stay meaningfully stricter than the
+# 50 gate bar -- not on measured evidence. Recalibrate against a labelled set
+# before treating it as tuned.
+WEB_REWRITE_FIT_FLOOR = 70.0
+
 
 def resolve_threshold(requested: object) -> float:
     """Return the score bar to apply, falling back to the default policy.
@@ -74,10 +105,23 @@ def resolve_threshold(requested: object) -> float:
     if not (CANDIDATE_FIT_THRESHOLD_MIN <= value <= CANDIDATE_FIT_THRESHOLD_MAX):
         return CANDIDATE_FIT_THRESHOLD
     return value
-CANDIDATE_FIT_SCHEMA_VERSION = "1.0.0"
-CANDIDATE_FIT_POLICY_VERSION = "candidate-fit-policy-v2"
-CANDIDATE_FIT_SCORER_VERSION = "deterministic-job-fit-v1"
-SEMANTIC_MODE = "disabled"
+# Bumped together when the analysis underneath changes. A v2 report will not
+# validate against v3 logic, which is intended: historical authorizations are
+# never silently reinterpreted under new rules.
+CANDIDATE_FIT_SCHEMA_VERSION = "2.0.0"
+CANDIDATE_FIT_POLICY_VERSION = "candidate-fit-policy-v3"
+CANDIDATE_FIT_SCORER_VERSION = "evidence-match-v1"
+
+# Replaces the former SEMANTIC_MODE = "disabled". The gate is no longer
+# offline, and the field name should not keep implying that it is.
+ANALYSIS_MODE = "evidence-engine"
+
+# Blocking reasons, in the fixed order they are emitted. ASSESSMENT_UNAVAILABLE
+# is listed first because it describes the tool, not the candidate.
+CODE_ASSESSMENT_UNAVAILABLE = "ASSESSMENT_UNAVAILABLE"
+CODE_UNTRUSTWORTHY_EXTRACTION = "UNTRUSTWORTHY_EXTRACTION"
+CODE_ELIGIBILITY_FAILED = "ELIGIBILITY_FAILED"
+CODE_SCORE_BELOW_THRESHOLD = "SCORE_BELOW_THRESHOLD"
 
 MAX_RESUME_BYTES = 10 * 1024 * 1024
 MAX_JOB_DESCRIPTION_BYTES = 2 * 1024 * 1024
@@ -133,14 +177,15 @@ def _states_parseable_requirements(job_description_text: str) -> bool:
     matches = _REQUIREMENT_STATEMENT_RE.findall(job_description_text)
     return len(matches) >= _MIN_REQUIREMENT_STATEMENTS
 
+# Component scores now come from the evidence engine's own breakdown rather
+# than job_fit_scorer's dimensions. Each is reported 0-100 for continuity with
+# the surrounding report.
 _COMPONENT_KEYS = (
-    "experience_match",
-    "skills_match",
-    "title_alignment",
-    "domain_match",
-    "education_match",
-    "certification_match",
-    "seniority_match",
+    "must_have_evidence",
+    "core_responsibilities",
+    "preferred_qualifications",
+    "evidence_quality",
+    "role_similarity",
 )
 
 # A specialized minimum is credited only when the canonical role title itself
@@ -745,6 +790,79 @@ def _ordered_unique(values: Iterable[str]) -> list[str]:
     return result
 
 
+def _month_index_for(frozen_date: date) -> int:
+    """Month index the evidence engine should treat as 'now'.
+
+    Bound to the report's as_of_date rather than the wall clock, so recency
+    decay and open-ended role durations reproduce exactly when the receipt is
+    re-verified later.
+    """
+    return frozen_date.year * 12 + (frozen_date.month - 1)
+
+
+def _evidence_trustworthy(
+    resume_text: str, job_description_text: str, result: Any
+) -> bool:
+    """Whether the inputs were understood well enough to judge fit.
+
+    Requires a readable resume, a posting that actually states requirements,
+    and at least one extracted requirement to test against. A posting nobody
+    can parse is an unknown, not a rejection of the candidate.
+    """
+    from evidence_engine.models import ParseQuality
+
+    if result.parse_quality == ParseQuality.LOW:
+        return False
+    if not _states_parseable_requirements(job_description_text):
+        return False
+    return bool(result.requirements)
+
+
+def _failed_gate_knockouts(result: Any) -> list[dict[str, str]]:
+    """Hard knockouts from gates with explicit contradictory evidence.
+
+    Only FAIL becomes a knockout. An UNVERIFIED gate means the resume did not
+    mention the requirement, which is not a fact about the candidate and must
+    never block tailoring.
+    """
+    spans = {s.evidence_span_id: s for s in result.evidence_spans}
+    matches = {m.requirement_id: m for m in result.matches}
+    knockouts: list[dict[str, str]] = []
+    for gate in result.eligibility.gates:
+        if gate.status.value != "FAIL":
+            continue
+        match = matches.get(gate.requirement_id)
+        excerpt = ""
+        if match is not None:
+            for span_id in match.evidence_span_ids:
+                span = spans.get(span_id)
+                if span is not None:
+                    excerpt = " ".join(span.text.split())
+                    break
+        knockouts.append({
+            "code": "ELIGIBILITY_CONTRADICTED",
+            "category": gate.requirement_id,
+            "requirement": gate.requirement or gate.requirement_id,
+            # The excerpt is the whole point of an evidence-based refusal: the
+            # applicant can see exactly which line disqualified them.
+            "candidate_has": excerpt or gate.reason or "contradictory evidence",
+        })
+    return knockouts
+
+
+def _unverified_requirements(result: Any) -> list[dict[str, str]]:
+    """Non-blocking warnings for gates the resume simply did not address."""
+    return [
+        {
+            "requirement": gate.requirement or gate.requirement_id,
+            "reason": "No evidence found in the resume. This is not a finding "
+                      "that the candidate lacks the qualification.",
+        }
+        for gate in result.eligibility.gates
+        if gate.status.value == "UNVERIFIED"
+    ]
+
+
 def assess_candidate_fit(
     resume_text: str,
     job_description_text: str,
@@ -755,6 +873,7 @@ def assess_candidate_fit(
     resume_digest: str | None = None,
     job_description_digest: str | None = None,
     extraction_trustworthy: bool = True,
+    llm: Any = None,
 ) -> dict[str, Any]:
     """Assess unmodified master-resume fit against a job description.
 
@@ -768,8 +887,9 @@ def assess_candidate_fit(
     resolve_threshold(...). The provable standard therefore stays fixed while
     the advice adapts to the person asking.
 
-    Semantic scoring, embedding caches, network access, and mutable profile
-    caches remain disabled.
+    ``llm`` is injectable so tests can drive the gate deterministically. In
+    production it defaults to the hosted client, and a failure to reach it is
+    reported as ASSESSMENT_UNAVAILABLE rather than as a fit rejection.
     """
     if not isinstance(resume_text, str) or not isinstance(job_description_text, str):
         raise ValueError("resume_text and job_description_text must be strings")
@@ -783,116 +903,68 @@ def assess_candidate_fit(
 
     component_scores = {key: 0.0 for key in _COMPONENT_KEYS}
     hard_knockouts: list[dict[str, str]] = []
+    unverified: list[dict[str, str]] = []
+    eligibility = "UNVERIFIED"
     score = 0.0
     structural_trust = False
+    assessment_available = False
 
+    evidence_bundle: dict[str, Any] = {}
     try:
-        # Lazy import keeps importing this gate itself free of scorer/model
-        # initialization. The invoked path explicitly disables all semantics.
-        from job_fit_scorer import (
-            DEGREE_RANK,
-            _split_required_vs_preferred,
-            build_candidate_profile,
-            check_knockouts,
-            extract_requirements,
-            score_fit_dimensions,
-        )
+        # Lazy import keeps importing this gate free of model initialization.
+        from evidence_engine.bundle import build_bundle, replay_bundle
+        from evidence_engine.engine import match_texts
 
-        required_text, preferred_text = _split_required_vs_preferred(
-            job_description_text
-        )
-        generic_ladder = _extract_generic_degree_experience_ladder(required_text)
-        extraction_text = job_description_text
-        if generic_ladder.detected:
-            extraction_text = "\n".join(
-                part
-                for part in (generic_ladder.remaining_text, preferred_text)
-                if part
-            )
-        requirements = extract_requirements(extraction_text, semantic_enabled=False)
-        if generic_ladder.detected:
-            requirements.extraction_trustworthy = bool(
-                requirements.extraction_trustworthy
-                and generic_ladder.trustworthy
-            )
-        if generic_ladder.trustworthy and generic_ladder.paths:
-            requirements.degree_experience_paths = [
-                {"degree": degree, "years": years}
-                for degree, years in generic_ladder.paths
-            ]
-            requirements.degree_experience_type = "total"
-            route_degrees = [degree for degree, _ in generic_ladder.paths]
-            requirements.required_degree = max(
-                route_degrees,
-                key=lambda degree: DEGREE_RANK.get(degree, 0),
-            )
-            requirements.acceptable_degrees = route_degrees
-            requirements.min_years_total = 0.0
-            requirements.min_years_specific = {}
-            requirements.extraction_confidence = min(
-                100.0, requirements.extraction_confidence + 15.0
-            )
-        profile = build_candidate_profile(
-            resume_text, as_of_date=frozen_date, use_cache=False
-        )
-        _apply_conservative_experience(profile, frozen_date)
-        if requirements.degree_experience_type == "total":
-            profile.years_by_type["total"] = profile.base.total_years_experience
-        structural_trust = _text_structure_is_trustworthy(
-            resume_text, job_description_text, profile, requirements
-        )
-        knockout_result = check_knockouts(profile, requirements)
-        dimensions = score_fit_dimensions(
-            profile,
-            requirements,
+        result = match_texts(
             resume_text,
             job_description_text,
-            semantic_enabled=False,
+            llm=llm,
+            now_index=_month_index_for(frozen_date),
         )
-        dimension_dict = dimensions.to_dict()
-        component_scores = {
-            key: round(float(dimension_dict[key]), 1) for key in _COMPONENT_KEYS
-        }
-        score = round(float(dimensions.weighted_score()), 1)
-
-        for knockout in knockout_result.knockouts:
-            if knockout.severity != "hard":
-                continue
-            hard_knockouts.append(
-                {
-                    "code": _knockout_code(knockout.category),
-                    "category": knockout.category,
-                    "requirement": knockout.requirement,
-                    "candidate_has": knockout.candidate_has,
-                }
+        if result.status == "OK":
+            # Every reported number is derived by replaying the bundle, so a
+            # report is replayable by construction rather than by hope. The
+            # validator later calls this same function on the same bundle.
+            evidence_bundle = build_bundle(result)
+            replayed = replay_bundle(
+                evidence_bundle, resume_text, job_description_text
             )
-        if hard_knockouts:
-            # Informative degradation: each hard knockout lowers the ceiling
-            # (1 -> 55, 2 -> 45, 3+ -> 35) instead of flattening every
-            # rejection to 35, so the report keeps signaling component
-            # strength beneath the knockout.
-            cap = max(35.0, 65.0 - 10.0 * len(hard_knockouts))
-            score = min(score, cap)
+            assessment_available = True
+            component_scores = replayed["component_scores"]
+            score = replayed["score"]
+            eligibility = replayed["eligibility"]
+            hard_knockouts = replayed["hard_knockouts"]
+            unverified = replayed["unverified_requirements"]
+            structural_trust = _evidence_trustworthy(
+                resume_text, job_description_text, result
+            )
     except Exception:
-        # Parsing/scoring ambiguity is a policy rejection, never a permissive
-        # fallback. Details are deliberately not serialized into the stable
-        # authorization surface.
-        structural_trust = False
+        # An unreachable or malfunctioning engine is an unknown, never a
+        # permissive fallback. Details are deliberately not serialized into
+        # the stable authorization surface.
+        assessment_available = False
+
+    if not assessment_available:
         component_scores = {key: 0.0 for key in _COMPONENT_KEYS}
         hard_knockouts = []
+        unverified = []
+        eligibility = "UNVERIFIED"
         score = 0.0
+        structural_trust = False
+        evidence_bundle = {}
 
     trustworthy = bool(extraction_trustworthy) and structural_trust
-    passed = trustworthy and not hard_knockouts and score >= CANDIDATE_FIT_THRESHOLD
     codes = _ordered_unique(
         code
         for condition, code in (
-            (not trustworthy, "UNTRUSTWORTHY_EXTRACTION"),
-            (bool(hard_knockouts), "HARD_KNOCKOUT"),
-            (score < CANDIDATE_FIT_THRESHOLD, "SCORE_BELOW_THRESHOLD"),
+            (not assessment_available, CODE_ASSESSMENT_UNAVAILABLE),
+            (not trustworthy, CODE_UNTRUSTWORTHY_EXTRACTION),
+            (bool(hard_knockouts), CODE_ELIGIBILITY_FAILED),
+            (score < CANDIDATE_FIT_THRESHOLD, CODE_SCORE_BELOW_THRESHOLD),
         )
         if condition
     )
+    passed = not codes
 
     return {
         "schema_version": CANDIDATE_FIT_SCHEMA_VERSION,
@@ -902,14 +974,18 @@ def assess_candidate_fit(
         "case_id": case_id,
         "as_of_date": frozen_date.isoformat(),
         "threshold": CANDIDATE_FIT_THRESHOLD,
-        "semantic_mode": SEMANTIC_MODE,
+        "analysis_mode": ANALYSIS_MODE,
         "resume_digest": bound_resume_digest,
         "job_description_digest": bound_jd_digest,
         "score": score,
         "component_scores": component_scores,
+        "eligibility": eligibility,
         "recommendation": "PROCEED" if passed else "REJECT",
         "hard_knockouts": hard_knockouts,
+        "unverified_requirements": unverified,
         "extraction_trustworthy": trustworthy,
+        "assessment_available": assessment_available,
+        "evidence_bundle": evidence_bundle,
         "passed": passed,
         "codes": codes,
     }

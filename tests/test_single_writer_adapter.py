@@ -8,8 +8,24 @@ from types import SimpleNamespace
 import pytest
 
 import agent.web_rewrite as web_rewrite
+import human_voice_audit
 from agent.host_anthropic import AnthropicHost
-from candidate_fit_preflight import assess_candidate_fit
+from candidate_fit_preflight import (
+    assess_candidate_fit as _real_assess_candidate_fit,
+)
+from evidence_engine.testing import DeterministicJudge as _DeterministicJudge
+
+
+def assess_candidate_fit(*args, **kwargs):
+    """Run the fit gate offline with the package's deterministic judge.
+
+    The gate calls a hosted model in production and fails closed without one.
+    Tests inject the rule-based judge so pipeline wiring stays testable
+    without an API key; production never falls back this way.
+    """
+    kwargs.setdefault("llm", _DeterministicJudge())
+    return _real_assess_candidate_fit(*args, **kwargs)
+
 from multi_agent_team import (
     AUTHORIZATION_VERSION,
     PUBLICATION_VERSION,
@@ -63,6 +79,50 @@ _RUN_ID = "run-single-writer"
 _CASE_ID = "case-single-writer"
 
 
+def make_semantic_response(
+    replacements: list[dict[str, str]],
+    supported: list[bool] | None = None,
+):
+    flags = supported if supported is not None else [True] * len(replacements)
+
+    def response(call: dict) -> SimpleNamespace:
+        payload = json.loads(call["messages"][0]["content"])
+        assert [item["source_span_text"] for item in payload["proposals"]] == [
+            item["source_span_text"] for item in replacements
+        ]
+        return make_response(
+            {
+                key: payload[key]
+                for key in (
+                    "run_id",
+                    "case_id",
+                    "source_digest",
+                    "proposal_set_digest",
+                    "lens",
+                    "invocation_id",
+                )
+            }
+            | {
+                "schema_version": web_rewrite.SEMANTIC_REVIEW_VERSION,
+                "decisions": [
+                    {
+                        "proposal_id": proposal["proposal_id"],
+                        "supported": allowed,
+                        "code": "PASS" if allowed else "UNSUPPORTED_CLAIM",
+                        "evidence_lines": [item["source_span_text"]]
+                        if allowed
+                        else [],
+                    }
+                    for item, proposal, allowed in zip(
+                        replacements, payload["proposals"], flags
+                    )
+                ],
+            }
+        )
+
+    return response
+
+
 class _Messages:
     def __init__(self, responses):
         self._responses = list(responses)
@@ -70,7 +130,8 @@ class _Messages:
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
-        return self._responses.pop(0)
+        response = self._responses.pop(0)
+        return response(kwargs) if callable(response) else response
 
 
 class FakeClient:
@@ -361,21 +422,299 @@ def test_writer_salvages_safe_subset_without_a_second_model_call():
     services = Services()
 
     result, client = run(
-        [make_response({"replacements": [unsafe, safe]})], services
+        [
+            make_response({"replacements": [unsafe, safe]}),
+            make_semantic_response([safe], [True]),
+            make_semantic_response([safe], [True]),
+        ],
+        services,
     )
 
     assert result["terminal_class"] == "PUBLISHED"
     assert services.published[0][0].count(_SAFE_REWRITE) == 1
-    assert len(client.calls) == 1
+    assert len(client.calls) == 3
     assert result["writer_stats"] == {
         "proposed_count": 2,
         "accepted_count": 1,
         "rejected_count": 1,
-        "rejection_codes": {"STRICT_COMPILER": 1},
+        "rejection_codes": {"INVALID_ANCHOR": 1},
     }
 
 
-def test_additive_fabrication_is_rejected_without_a_semantic_auditor():
+
+def test_truthful_paraphrase_is_accepted_after_independent_semantic_review():
+    paraphrase = {
+        "source_span_text": _SAFE_SOURCE,
+        "replacement_text": (
+            "• Assessed safety signals and reviewed DSUR and PBRER reports "
+            "under CIOMS and ICH guidance."
+        ),
+    }
+    services = Services()
+
+    result, client = run(
+        [
+            make_response({"replacements": [paraphrase]}),
+            make_semantic_response([paraphrase], [True]),
+            make_semantic_response([paraphrase], [True]),
+        ],
+        services,
+    )
+
+    assert result["terminal_class"] == "PUBLISHED"
+    assert paraphrase["replacement_text"] in result["final_draft"]
+    assert len(client.calls) == 3
+    assert "Freely rewrite, shorten, reorder, clarify" in client.calls[0]["system"]
+    assert all(
+        "independent skeptical factual reviewer" in call["system"]
+        for call in client.calls[1:]
+    )
+    receipt = result["authorization_receipt"]
+    assert receipt["semantic_review"]["passed_count"] == 1
+    assert receipt["semantic_review_digest"] == canonical_digest(
+        receipt["semantic_review"]
+    )
+    attestations = receipt["semantic_review"]["attestations"]
+    assert len({item["lens"] for item in attestations}) == 2
+    assert len({item["invocation_id"] for item in attestations}) == 2
+    assert len({item["review_digest"] for item in attestations}) == 2
+    assert all(
+        item["decisions"][0]["evidence_line_digests"]
+        == [canonical_digest(_SAFE_SOURCE)]
+        for item in attestations
+    )
+
+
+
+def test_both_distinct_review_lenses_must_pass():
+    paraphrase = {
+        "source_span_text": _SAFE_SOURCE,
+        "replacement_text": "• Reviewed oncology safety reports under ICH guidance.",
+    }
+    services = Services()
+
+    result, client = run(
+        [
+            make_response({"replacements": [paraphrase]}),
+            make_semantic_response([paraphrase], [True]),
+            make_semantic_response([paraphrase], [False]),
+        ],
+        services,
+    )
+
+    assert result["terminal_class"] == "REJECTED:NO_SAFE_CHANGES"
+    assert result["writer_stats"]["rejection_codes"] == {
+        "SEMANTIC_SUPPORT": 1
+    }
+    assert len(client.calls) == 3
+    first_payload = json.loads(client.calls[1]["messages"][0]["content"])
+    second_payload = json.loads(client.calls[2]["messages"][0]["content"])
+    assert {first_payload["lens"], second_payload["lens"]} == {
+        "claim_entailment",
+        "skeptical_recruiter",
+    }
+    assert first_payload["invocation_id"] != second_payload["invocation_id"]
+    assert "job_description" not in first_payload
+    assert "job_description" not in second_payload
+    assert services.published == []
+
+def test_malformed_semantic_review_fails_closed():
+    paraphrase = {
+        "source_span_text": _SAFE_SOURCE,
+        "replacement_text": "• Reviewed oncology safety reports.",
+    }
+    services = Services()
+
+    result, client = run(
+        [
+            make_response({"replacements": [paraphrase]}),
+            make_response({"decisions": [{"supported": True, "code": "PASS"}]}),
+        ],
+        services,
+    )
+
+    assert result["terminal_class"] == "FAILED:SEMANTIC_REVIEW_SCHEMA"
+    assert services.published == []
+    assert len(client.calls) == 2
+
+
+
+
+def test_semantic_review_cannot_replay_across_source_or_run():
+    paraphrase = {
+        "source_span_text": _SAFE_SOURCE,
+        "replacement_text": "• Reviewed oncology safety reports under ICH guidance.",
+    }
+
+    def stale_response(call):
+        payload = json.loads(call["messages"][0]["content"])
+        return make_response(
+            {
+                "schema_version": web_rewrite.SEMANTIC_REVIEW_VERSION,
+                "run_id": "different-run",
+                "case_id": payload["case_id"],
+                "source_digest": "0" * 64,
+                "proposal_set_digest": payload["proposal_set_digest"],
+                "lens": payload["lens"],
+                "invocation_id": payload["invocation_id"],
+                "decisions": [
+                    {
+                        "proposal_id": payload["proposals"][0]["proposal_id"],
+                        "supported": True,
+                        "code": "PASS",
+                        "evidence_lines": [_SAFE_SOURCE],
+                    }
+                ],
+            }
+        )
+
+    result, client = run(
+        [make_response({"replacements": [paraphrase]}), stale_response]
+    )
+
+    assert result["terminal_class"] == "FAILED:SEMANTIC_REVIEW_SCHEMA"
+    assert len(client.calls) == 2
+
+@pytest.mark.parametrize("bad_code", [[], {}, ["PASS"]])
+def test_unhashable_semantic_code_returns_stable_schema_failure(bad_code):
+    paraphrase = {
+        "source_span_text": _SAFE_SOURCE,
+        "replacement_text": "• Reviewed oncology safety reports under ICH guidance.",
+    }
+
+    def malformed_response(call):
+        payload = json.loads(call["messages"][0]["content"])
+        return make_response(
+            {
+                key: payload[key]
+                for key in (
+                    "run_id",
+                    "case_id",
+                    "source_digest",
+                    "proposal_set_digest",
+                    "lens",
+                    "invocation_id",
+                )
+            }
+            | {
+                "schema_version": web_rewrite.SEMANTIC_REVIEW_VERSION,
+                "decisions": [
+                    {
+                        "proposal_id": payload["proposals"][0]["proposal_id"],
+                        "supported": True,
+                        "code": bad_code,
+                        "evidence_lines": [_SAFE_SOURCE],
+                    }
+                ],
+            }
+        )
+
+    result, client = run(
+        [
+            make_response({"replacements": [paraphrase]}),
+            malformed_response,
+        ]
+    )
+
+    assert result["terminal_class"] == "FAILED:SEMANTIC_REVIEW_SCHEMA"
+    assert len(client.calls) == 2
+
+def test_semantic_review_decisions_are_digest_bound_and_exact_boolean():
+    first = {
+        "source_span_text": _SAFE_SOURCE,
+        "replacement_text": "• Reviewed oncology safety reports under ICH guidance.",
+    }
+    second_source = (
+        "• Led medical review of ICSRs, expectedness and causality assessments, "
+        "and aggregate safety reports for oncology trials."
+    )
+    second = {
+        "source_span_text": second_source,
+        "replacement_text": "• Reviewed oncology ICSRs and aggregate safety reports.",
+    }
+    forged = {
+        "decisions": [
+            {
+                "proposal_id": "b" * 64,
+                "supported": "true",
+                "code": "PASS",
+            },
+            {
+                "proposal_id": "a" * 64,
+                "supported": True,
+                "code": "PASS",
+            },
+        ]
+    }
+
+    result, client = run(
+        [make_response({"replacements": [first, second]}), make_response(forged)]
+    )
+
+    assert result["terminal_class"] == "FAILED:SEMANTIC_REVIEW_SCHEMA"
+    assert len(client.calls) == 2
+
+
+def test_semantic_pass_citation_cannot_cross_experience_roles():
+    second_role = """
+SAFETY SCIENTIST | Other Biotech | Boston, MA
+Jan 2010 - Dec 2017
+• Used Oracle Argus for case processing.
+"""
+    resume = _TRACED_RESUME.replace(
+        "EDUCATION\n", second_role + "EDUCATION\n"
+    )
+    paraphrase = {
+        "source_span_text": _SAFE_SOURCE,
+        "replacement_text": "• Reviewed safety reports using Oracle Argus.",
+    }
+
+    def cross_role_response(call):
+        payload = json.loads(call["messages"][0]["content"])
+        return make_response(
+            {
+                key: payload[key]
+                for key in (
+                    "run_id",
+                    "case_id",
+                    "source_digest",
+                    "proposal_set_digest",
+                    "lens",
+                    "invocation_id",
+                )
+            }
+            | {
+                "schema_version": web_rewrite.SEMANTIC_REVIEW_VERSION,
+                "decisions": [
+                    {
+                        "proposal_id": payload["proposals"][0]["proposal_id"],
+                        "supported": True,
+                        "code": "PASS",
+                        "evidence_lines": [
+                            "• Used Oracle Argus for case processing."
+                        ],
+                    }
+                ],
+            }
+        )
+
+    services = Services()
+    client = FakeClient(
+        [make_response({"replacements": [paraphrase]}), cross_role_response]
+    )
+    result = web_rewrite.run_web_rewrite(
+        run_id=_RUN_ID,
+        case_id=_CASE_ID,
+        master_resume=resume,
+        job_description=_PASSING_JD,
+        host=AnthropicHost(client=client),
+        services=services,
+    )
+
+    assert result["terminal_class"] == "FAILED:SEMANTIC_REVIEW_SCHEMA"
+    assert services.published == []
+
+def test_additive_fabrication_is_rejected_by_semantic_review():
     fabricated = {
         "source_span_text": _SAFE_SOURCE,
         "replacement_text": (
@@ -384,19 +723,24 @@ def test_additive_fabrication_is_rejected_without_a_semantic_auditor():
     }
     services = Services()
 
-    result, client = run([make_response({"replacements": [fabricated]})], services)
+    result, client = run(
+        [
+            make_response({"replacements": [fabricated]}),
+            make_semantic_response([fabricated], [False]),
+            make_semantic_response([fabricated], [False]),
+        ],
+        services,
+    )
 
     assert result["terminal_class"] == "REJECTED:NO_SAFE_CHANGES"
     assert result["writer_stats"] == {
         "proposed_count": 1,
         "accepted_count": 0,
         "rejected_count": 1,
-        "rejection_codes": {"STRICT_COMPILER": 1},
+        "rejection_codes": {"SEMANTIC_SUPPORT": 1},
     }
     assert services.published == []
-    assert len(client.calls) == 1
-
-
+    assert len(client.calls) == 3
 
 
 def test_fake_acronym_expansion_is_rejected_by_direct_service():
@@ -407,18 +751,15 @@ def test_fake_acronym_expansion_is_rejected_by_direct_service():
     )
     resume = _TRACED_RESUME.replace(_SAFE_SOURCE, source)
     services = Services()
+    proposal = {
+        "source_span_text": source,
+        "replacement_text": replacement,
+    }
     client = FakeClient(
         [
-            make_response(
-                {
-                    "replacements": [
-                        {
-                            "source_span_text": source,
-                            "replacement_text": replacement,
-                        }
-                    ]
-                }
-            )
+            make_response({"replacements": [proposal]}),
+            make_semantic_response([proposal], [False]),
+            make_semantic_response([proposal], [False]),
         ]
     )
 
@@ -432,8 +773,168 @@ def test_fake_acronym_expansion_is_rejected_by_direct_service():
     )
 
     assert result["terminal_class"] == "REJECTED:NO_SAFE_CHANGES"
+    assert result["writer_stats"]["rejection_codes"] == {"SEMANTIC_SUPPORT": 1}
+    assert services.published == []
+    assert len(client.calls) == 3
+
+
+
+
+
+def test_summary_content_cannot_be_reclassified_as_unknown_heading():
+    import human_voice_audit
+
+    source = "Drug safety physician with eight years in pharmacovigilance."
+    replacement = "ROBUST DRUG SAFETY PHYSICIAN"
+    bypass_draft = _TRACED_RESUME.replace(source, replacement)
+    voice_report = human_voice_audit.audit_text(bypass_draft, mode="resume")
+    assert voice_report["passed"] is True
+    assert voice_report["stats"]["summary_words"] == 0
+
+    proposal = {
+        "source_span_text": source,
+        "replacement_text": replacement,
+    }
+    services = Services()
+    result, client = run(
+        [make_response({"replacements": [proposal]})], services
+    )
+
+    assert result["terminal_class"] == "REJECTED:NO_SAFE_CHANGES"
+    assert result["writer_stats"]["rejection_codes"] == {
+        "STRICT_COMPILER": 1
+    }
+    assert len(client.calls) == 1
     assert services.published == []
 
+def test_experience_bullet_cannot_be_reclassified_to_evade_voice_audit():
+    import human_voice_audit
+
+    replacement = (
+        "Leveraged robust review of DSUR and PBRER reports and assessed "
+        "safety signals under ICH and CIOMS guidance."
+    )
+    bypass_draft = _TRACED_RESUME.replace(_SAFE_SOURCE, replacement)
+    assert human_voice_audit.audit_text(bypass_draft, mode="resume")["passed"] is True
+
+    proposal = {
+        "source_span_text": _SAFE_SOURCE,
+        "replacement_text": replacement,
+    }
+    services = Services()
+    result, client = run(
+        [make_response({"replacements": [proposal]})], services
+    )
+
+    assert result["terminal_class"] == "REJECTED:NO_SAFE_CHANGES"
+    assert result["writer_stats"]["rejection_codes"] == {
+        "STRICT_COMPILER": 1
+    }
+    assert len(client.calls) == 1
+    assert services.published == []
+
+
+
+@pytest.mark.parametrize("replacement", ["...", "!!!", "---"])
+def test_any_replacement_must_retain_substantive_ascii_content(replacement):
+    source = "Drug safety physician with eight years in pharmacovigilance."
+    proposal = {
+        "source_span_text": source,
+        "replacement_text": replacement,
+    }
+    services = Services()
+
+    result, client = run(
+        [make_response({"replacements": [proposal]})], services
+    )
+
+    assert result["terminal_class"] == "REJECTED:NO_SAFE_CHANGES"
+    assert result["writer_stats"]["rejection_codes"] == {
+        "STRICT_COMPILER": 1
+    }
+    assert len(client.calls) == 1
+    assert services.published == []
+
+
+@pytest.mark.parametrize("marker", ["+ ", "1. "])
+def test_web_rejects_bullet_markers_ignored_by_real_audits(marker):
+    source_body = _SAFE_SOURCE.removeprefix("• ")
+    source = marker + source_body
+    replacement = marker + "Leveraged robust " + source_body[0].lower() + source_body[1:]
+    custom_resume = _TRACED_RESUME.replace(_SAFE_SOURCE, source)
+    assert human_voice_audit.audit_text(custom_resume, mode="resume")[
+        "bullet_count"
+    ] == 1  # Only the ordinary experience bullet; this source is skipped.
+    proposal = {
+        "source_span_text": source,
+        "replacement_text": replacement,
+    }
+    services = Services()
+    client = FakeClient([make_response({"replacements": [proposal]})])
+
+    result = web_rewrite.run_web_rewrite(
+        run_id=_RUN_ID,
+        case_id=_CASE_ID,
+        master_resume=custom_resume,
+        job_description=_PASSING_JD,
+        host=AnthropicHost(client=client),
+        services=services,
+    )
+
+    assert result["terminal_class"] == "REJECTED:NO_SAFE_CHANGES"
+    assert result["writer_stats"]["rejection_codes"] == {
+        "INVALID_ANCHOR": 1
+    }
+    assert len(client.calls) == 1
+    assert services.published == []
+
+@pytest.mark.parametrize("replacement", ["• -", "• ---", "• ...", "• !!!"])
+def test_bullet_replacement_must_retain_substantive_body(replacement):
+    proposal = {
+        "source_span_text": _SAFE_SOURCE,
+        "replacement_text": replacement,
+    }
+    services = Services()
+
+    result, client = run(
+        [make_response({"replacements": [proposal]})], services
+    )
+
+    assert result["terminal_class"] == "REJECTED:NO_SAFE_CHANGES"
+    assert result["writer_stats"]["rejection_codes"] == {
+        "STRICT_COMPILER": 1
+    }
+    assert len(client.calls) == 1
+    assert services.published == []
+
+@pytest.mark.parametrize(
+    ("source", "replacement"),
+    [
+        (
+            "DIRECTOR, DRUG SAFETY PHYSICIAN | Acme Biotech | Boston, MA",
+            "DIRECTOR, DRUG SAFETY PHYSICIAN | Acme Biotech | Boston, MA",
+        ),
+        ("Jan 2018 - Present", "Jan 2018 – Present"),
+        ("Doctor of Medicine (M.D.)", "Doctor of Medicine (M.D．)"),
+    ],
+)
+def test_canonical_identity_lines_are_frozen_before_semantic_review(
+    source, replacement
+):
+    proposal = {
+        "source_span_text": source,
+        "replacement_text": replacement,
+    }
+    services = Services()
+
+    result, client = run(
+        [make_response({"replacements": [proposal]})], services
+    )
+
+    assert result["terminal_class"] == "REJECTED:NO_SAFE_CHANGES"
+    assert result["writer_stats"]["rejection_codes"] == {"INVALID_ANCHOR": 1}
+    assert len(client.calls) == 1
+    assert services.published == []
 
 def test_writer_with_no_safe_proposal_rejects_with_count_only_diagnostics():
     unsafe = {
@@ -444,14 +945,16 @@ def test_writer_with_no_safe_proposal_rejects_with_count_only_diagnostics():
     }
     services = Services()
 
-    result, client = run([make_response({"replacements": [unsafe]})], services)
+    result, client = run(
+        [make_response({"replacements": [unsafe]})], services
+    )
 
     assert result["terminal_class"] == "REJECTED:NO_SAFE_CHANGES"
     assert result["writer_stats"] == {
         "proposed_count": 1,
         "accepted_count": 0,
         "rejected_count": 1,
-        "rejection_codes": {"STRICT_COMPILER": 1},
+        "rejection_codes": {"INVALID_ANCHOR": 1},
     }
     serialized = json.dumps(result["writer_stats"])
     assert _TRACED_RESUME not in serialized
@@ -493,6 +996,35 @@ def test_tampered_publication_readback_fails_closed():
     assert "final_draft" not in result
     assert len(client.calls) == 1
 
+
+
+def test_type_tampered_semantic_readback_fails_closed():
+    paraphrase = {
+        "source_span_text": _SAFE_SOURCE,
+        "replacement_text": "• Reviewed oncology safety reports under ICH guidance.",
+    }
+
+    class BooleanTamperedReadbackServices(Services):
+        def read_publication(self, publication_id):
+            stored = super().read_publication(publication_id)
+            stored["metadata"]["semantic_review"]["attestations"][0][
+                "decisions"
+            ][0]["supported"] = 1
+            return stored
+
+    services = BooleanTamperedReadbackServices()
+    result, client = run(
+        [
+            make_response({"replacements": [paraphrase]}),
+            make_semantic_response([paraphrase], [True]),
+            make_semantic_response([paraphrase], [True]),
+        ],
+        services,
+    )
+
+    assert result["terminal_class"] == "FAILED:PUBLICATION_VERIFICATION"
+    assert result["published"] is False
+    assert len(client.calls) == 3
 
 def test_invalid_writer_shape_fails_without_publication():
     services = Services()

@@ -41,7 +41,11 @@ def test_single_writer_mode_selects_direct_service_not_team_coordinator(monkeypa
     """The synchronous mode has no role-envelope coordinator boundary."""
     _install_quota_module(monkeypatch)
     budget = SimpleNamespace(input_tokens=0, output_tokens=0)
-    host = SimpleNamespace(budget=budget, run_role=lambda *args, **kwargs: None)
+    host = SimpleNamespace(
+        budget=budget,
+        run_web_writer=lambda *args, **kwargs: None,
+        review_replacements=lambda *args, **kwargs: None,
+    )
     captured = {}
 
     monkeypatch.setattr(tools, "_default_writer_host", lambda: host)
@@ -98,7 +102,8 @@ def test_no_safe_failure_retains_count_only_writer_diagnostics(monkeypatch):
     }
     host = SimpleNamespace(
         budget=SimpleNamespace(input_tokens=17, output_tokens=9),
-        run_role=lambda *args, **kwargs: None,
+        run_web_writer=lambda *args, **kwargs: None,
+        review_replacements=lambda *args, **kwargs: None,
     )
     events = []
 
@@ -151,7 +156,8 @@ def test_single_writer_public_tool_normalizes_crlf_before_direct_service(monkeyp
     _install_quota_module(monkeypatch)
     host = SimpleNamespace(
         budget=SimpleNamespace(input_tokens=0, output_tokens=0),
-        run_role=lambda *args, **kwargs: None,
+        run_web_writer=lambda *args, **kwargs: None,
+        review_replacements=lambda *args, **kwargs: None,
     )
     captured = {}
     monkeypatch.setattr(tools, "_default_writer_host", lambda: host)
@@ -272,7 +278,8 @@ def test_direct_published_without_verified_draft_is_downgraded(monkeypatch):
     _install_quota_module(monkeypatch)
     host = SimpleNamespace(
         budget=SimpleNamespace(input_tokens=0, output_tokens=0),
-        run_role=lambda *args, **kwargs: None,
+        run_web_writer=lambda *args, **kwargs: None,
+        review_replacements=lambda *args, **kwargs: None,
     )
     finished = []
     monkeypatch.setattr(tools, "_default_writer_host", lambda: host)
@@ -311,7 +318,8 @@ def test_terminal_update_failure_never_returns_a_draft(monkeypatch):
     _install_quota_module(monkeypatch)
     host = SimpleNamespace(
         budget=SimpleNamespace(input_tokens=0, output_tokens=0),
-        run_role=lambda *args, **kwargs: None,
+        run_web_writer=lambda *args, **kwargs: None,
+        review_replacements=lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(tools, "_default_writer_host", lambda: host)
     monkeypatch.setattr(tools, "reserve_run_slot", lambda *args, **kwargs: None)
@@ -348,7 +356,8 @@ def _route_setup(monkeypatch, result):
     monkeypatch.setattr(scorer_server, "CLOUD_AVAILABLE", True)
     monkeypatch.setattr(scorer_server, "_agent_slot", contextlib.nullcontext)
     monkeypatch.setattr(scorer_server, "db_get_conn", lambda *_: SimpleNamespace(close=lambda: None))
-    monkeypatch.setattr(scorer_server, "_safe_agent_scores", lambda *_: (71, 72))
+    monkeypatch.setattr(scorer_server, "_safe_legacy_scores", lambda *_: (71, 72))
+    monkeypatch.setattr(scorer_server, "_safe_evidence_summary", lambda *_: None)
     monkeypatch.setattr(scorer_server.agent_tools, "dispatch", lambda *args, **kwargs: result)
 
 
@@ -369,13 +378,13 @@ def test_rewrite_uses_single_writer_and_keeps_success_response_shape(monkeypatch
     )
 
     assert captured["pipeline_mode"] == "single_writer"
-    assert json.loads(response.body) == {
-        "rewritten_resume": "Tailored resume",
-        "ats_before": 71,
-        "ats_after": 71,
-        "hr_before": 72,
-        "hr_after": 72,
-    }
+    body = json.loads(response.body)
+    # The deployed PWA reads these keys; they must not move or change meaning.
+    assert body["rewritten_resume"] == "Tailored resume"
+    assert (body["ats_before"], body["ats_after"]) == (71, 71)
+    assert (body["hr_before"], body["hr_after"]) == (72, 72)
+    # The evidence match is reported alongside as the authoritative measure.
+    assert "evidence_before" in body and "evidence_after" in body
 
 
 @pytest.mark.parametrize(

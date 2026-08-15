@@ -12,7 +12,7 @@
     "case_id",
     "as_of_date",
     "threshold",
-    "semantic_mode",
+    "analysis_mode",
     "resume_digest",
     "job_description_digest",
     "score",
@@ -21,17 +21,21 @@
     "hard_knockouts",
     "extraction_trustworthy",
     "passed",
-    "codes"
+    "codes",
+    "eligibility",
+    "unverified_requirements",
+    "assessment_available",
+    "evidence_bundle"
   ],
   "properties": {
     "schema_version": {
-      "const": "1.0.0"
+      "const": "2.0.0"
     },
     "policy_version": {
-      "const": "candidate-fit-policy-v2"
+      "const": "candidate-fit-policy-v3"
     },
     "scorer_version": {
-      "const": "deterministic-job-fit-v1"
+      "const": "evidence-match-v1"
     },
     "run_id": {
       "type": "string",
@@ -53,9 +57,6 @@
       "maximum": 95,
       "description": "The score bar this report was decided under. Validated as a shape, not pinned to a value: the policy number belongs in code, and hardcoding it here made the bar impossible to calibrate without a wire-contract change."
     },
-    "semantic_mode": {
-      "const": "disabled"
-    },
     "resume_digest": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
@@ -73,46 +74,34 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "experience_match",
-        "skills_match",
-        "title_alignment",
-        "domain_match",
-        "education_match",
-        "certification_match",
-        "seniority_match"
+        "must_have_evidence",
+        "core_responsibilities",
+        "preferred_qualifications",
+        "evidence_quality",
+        "role_similarity"
       ],
       "properties": {
-        "experience_match": {
+        "must_have_evidence": {
           "type": "number",
           "minimum": 0,
           "maximum": 100
         },
-        "skills_match": {
+        "core_responsibilities": {
           "type": "number",
           "minimum": 0,
           "maximum": 100
         },
-        "title_alignment": {
+        "preferred_qualifications": {
           "type": "number",
           "minimum": 0,
           "maximum": 100
         },
-        "domain_match": {
+        "evidence_quality": {
           "type": "number",
           "minimum": 0,
           "maximum": 100
         },
-        "education_match": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 100
-        },
-        "certification_match": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 100
-        },
-        "seniority_match": {
+        "role_similarity": {
           "type": "number",
           "minimum": 0,
           "maximum": 100
@@ -167,11 +156,54 @@
       "uniqueItems": true,
       "items": {
         "enum": [
+          "ASSESSMENT_UNAVAILABLE",
           "UNTRUSTWORTHY_EXTRACTION",
-          "HARD_KNOCKOUT",
+          "ELIGIBILITY_FAILED",
           "SCORE_BELOW_THRESHOLD"
         ]
       }
+    },
+    "analysis_mode": {
+      "description": "How the assessment was produced. The gate is no longer offline; it runs the evidence engine against a hosted model.",
+      "const": "evidence-engine"
+    },
+    "eligibility": {
+      "description": "Hard-gate outcome. FAIL requires explicit contradictory evidence; a requirement the resume never mentions is UNVERIFIED and must not block tailoring.",
+      "enum": [
+        "PASS",
+        "FAIL",
+        "UNVERIFIED"
+      ]
+    },
+    "unverified_requirements": {
+      "description": "Non-blocking warnings: mandatory requirements the resume did not address. Absence of evidence is never a finding that the candidate lacks the qualification.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requirement",
+          "reason"
+        ],
+        "properties": {
+          "requirement": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "assessment_available": {
+      "description": "False when the evidence engine could not be reached. The gate fails closed, but ASSESSMENT_UNAVAILABLE is deliberately distinct from a fit rejection.",
+      "type": "boolean"
+    },
+    "evidence_bundle": {
+      "description": "Self-contained replayable evidence: the requirements, cited resume spans and judgments this report was derived from. Empty exactly when assessment_available is false. Validators replay this bundle \u2014 with no model call \u2014 and reject the report unless every reported number falls back out of it.",
+      "type": "object"
     }
   },
   "allOf": [

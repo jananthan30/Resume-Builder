@@ -1,7 +1,7 @@
 """Two-reviewer candidate-fit review layer (candidate-fit-review/v1).
 
 Design: agents propose, code disposes. The deterministic preflight
-(candidate-fit-policy-v2) remains the objective floor. When the floor passes
+(candidate-fit-policy-v3) remains the objective floor. When the floor passes
 with zero hard knockouts but the score lands in the stretch zone below the
 fixed 70.0 threshold, two structurally distinct native reviewers — a
 skeptical recruiter lens and a domain hiring-manager lens — judge the

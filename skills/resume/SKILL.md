@@ -23,7 +23,7 @@ strict ISO `as_of_date`, then run:
 
 `python candidate_fit_preflight.py --resume <configured-master-resume> --job-description <private-exact-JD.txt> --run-id <run_id> --case-id <case_id> --as-of-date <YYYY-MM-DD> --json`
 
-Require exit `0` plus a valid `candidate-fit-policy-v2` report bound to the same
+Require exit `0` plus a valid `candidate-fit-policy-v3` report bound to the same
 IDs, date, master SHA-256, and exact-JD SHA-256. Canonically hash it as
 `candidate_fit_report_digest`. Proceed only when `threshold` is exactly `70.0`,
 `score >= 70`, `extraction_trustworthy` is true, `hard_knockouts` is empty,
@@ -49,7 +49,7 @@ You are the coordinator, not the resume author. The user has provided a job desc
 
 ## GLOBAL CONSTRAINTS (read first, enforce always)
 
-**Editorial priority (never invert):** Authenticity → Human voice → HR impact → ATS match.
+**Editorial priority (never invert):** Authenticity → Human voice → HR impact → evidence coverage.
 
 - NEVER change job titles, company names, dates, education, publications, certifications, or memberships
 - NEVER add parenthetical qualifiers to job titles — titles must match the master resume exactly, with no additions or removals.
@@ -59,8 +59,10 @@ You are the coordinator, not the resume author. The user has provided a job desc
 - NEVER open bullets with AI-cliché verbs (spearheaded, leveraged, orchestrated, championed, …) — use plain strong verbs (Led, Built, Wrote, Cut, Reviewed)
 - Publications & Education: Keep EXACTLY as in master resume — zero modifications
 - DOCX and tracker finalization must use only the receipt-validating authorized wrappers specified in Phase 5; never call lower-level generators or tracker mutations directly
-- Score targets: ATS 75-85%, HR 70%+, **Human Voice audit pass**. If JD contains staffing/benefits boilerplate, ATS ceiling is ~69-73% — accept once all domain weights are maxed. Max 2 complete fresh team retries against a boilerplate ceiling.
-- 75% ATS with human prose beats 90% stuffed AI prose
+- Acceptance targets: **Evidence Match ≥ 75%**, **zero must-haves with NO_EVIDENCE_FOUND**, eligibility not FAIL, **Human Voice audit pass**. Evidence Match is the authoritative measure — it reports which of the job's requirements the resume actually evidences, with the exact excerpt behind each.
+- Legacy ATS/HR scores remain available for continuity but are diagnostic only. No universal ATS score exists across recruiting systems, so never present one as the result or retry a run to chase it.
+- Report gaps as "no evidence found in the resume", never as "the candidate lacks this". Absence of evidence is not proof of absence.
+- A 75% evidence match with human prose beats a 90% keyword-stuffed draft — stuffing raises keyword counts and lowers evidence quality.
 
 ---
 
@@ -251,7 +253,96 @@ CRITICAL .md FORMATTING RULE: Do NOT use `**` (markdown bold asterisks) anywhere
 
 Once the runtime-published `resume.md` and its receipt are verified, run tailored scoring and cover-letter writing concurrently where possible:
 
-Background Task C — Combined Tailored Score (ATS + HR + LLM) -> writes to state.json:
+Task C0a — Confirm the gaps only the applicant can resolve (ask BEFORE writing):
+
+**Step 1 — get the questions.** `--interactive` needs a real terminal and exits
+2 here; ask in the conversation instead.
+
+```bash
+python -c "
+import json
+from evidence_engine.audit import ResultCache
+from evidence_engine.engine import match_resume_to_job
+from evidence_engine.questions import build_questions
+jd = open('applications/{folder}/job_description.txt').read()
+r = match_resume_to_job('{configured_master_resume_path}', jd, cache=ResultCache())
+print(json.dumps({'resume_sha256': r.resume_sha256, 'job_sha256': r.job_sha256,
+                  'questions': [q.model_dump() for q in build_questions(r)]}, indent=2))
+"
+```
+
+No questions means no gaps worth interrupting for — skip to Task C1.
+
+**Step 2 — put each question to the applicant and wait.** One at a time, in
+their own words, showing `why_it_matters`. Offer exactly **yes** / **no** /
+**not sure**. On a "yes", ask briefly where they did it.
+
+Never answer on the applicant's behalf and never infer an answer from the
+resume — the resume is precisely what failed to establish it. If they do not
+respond, the gap stays unresolved; silence is not a "no".
+
+**Step 3 — write the answers to a file**, one object per answer, copying both
+digests verbatim from Step 1:
+
+```bash
+cat > "applications/{folder}/gap_answers.json" <<'JSON'
+[
+  {"requirement_id": "R2", "answer": "yes", "detail": "Ran vendor oversight at Acme for 3 years",
+   "resume_sha256": "<from step 1>", "job_sha256": "<from step 1>"}
+]
+JSON
+```
+
+`answer` is `yes`, `no`, or `unsure`. The digests bind an answer to this exact
+resume and job, so a "yes" from another application cannot be replayed here.
+
+**Step 4 — apply them:**
+
+```bash
+python -c "
+import json
+from evidence_engine.audit import ResultCache
+from evidence_engine.engine import match_resume_to_job
+from evidence_engine.models import GapAnswer
+from evidence_engine.questions import apply_answers
+jd = open('applications/{folder}/job_description.txt').read()
+r = match_resume_to_job('{configured_master_resume_path}', jd, cache=ResultCache())
+raw = json.load(open('applications/{folder}/gap_answers.json'))
+updated, rejected = apply_answers(r, [GapAnswer(**a) for a in raw])
+for problem in rejected: print('IGNORED:', problem)
+for rec in updated: print('[' + rec.type.value + '] ' + rec.recommendation)
+"
+```
+
+Any rejected answer is printed — treat it as unanswered, never as accepted.
+
+A "yes" authorises the Writer to surface that experience; it does NOT change
+the score and does NOT create evidence. The rewritten resume is matched again,
+and the new text is what scores. A "no" records a genuine qualification gap,
+which must never be written into the resume.
+
+Run this against the MASTER resume before the team writes anything. Asking
+after a draft exists is too late — the draft already made the choice. Delete
+`gap_answers.json` during cleanup alongside the other transient files.
+
+**Hosted agent runs** call the `confirm_gaps` tool instead of these commands;
+the contract is identical.
+
+Task C0 — Evidence Match (authoritative, run first):
+```bash
+python evidence_match.py \
+  --resume "applications/{folder}/resume.md" \
+  --jd "applications/{folder}/job_description.txt" \
+  --json "applications/{folder}/evidence_match.json" \
+  --audit-log audit_log/evidence_match.jsonl \
+  --verify
+```
+Exit 0 means every cited excerpt resolves to exact resume characters. Read
+`qualification_evidence_score`, `eligibility`, and `missing_must_have_ids` from
+the JSON — this is the number that decides acceptance. The scorers below are
+diagnostic context for the comparison table only.
+
+Background Task C — Combined Tailored Score (ATS + HR + LLM, diagnostic) -> writes to state.json:
 ```
 Run in a background shell session named `tailored-scorer` if available:
 cd "." && python -c "
@@ -344,8 +435,12 @@ Use the COMBINED scores only for reporting and for deciding whether to accept th
 already-authorized draft. Scoring is advisory: it never authorizes a resume change,
 and a low score is not a failed safety vote.
 
-2. If ATS or HR is below target, record the component-level diagnosis without
-changing `resume.md`. The coordinator has only two allowed choices:
+2. Accept when the evidence match reports `qualification_evidence_score` >= 0.75,
+an empty `missing_must_have_ids`, and an `eligibility` that is not FAIL. Report an
+UNVERIFIED eligibility plainly — it means the resume did not state something the
+job requires, not that the candidate lacks it. If the evidence match is below
+target, record the requirement-level diagnosis without changing `resume.md`. The
+coordinator has only two allowed choices:
    - accept the authorized draft and report the advisory score honestly; or
    - discard this candidate and start a complete new native-team run with a fresh
      `run_id`, beginning again at Researcher and ending with a new Auditor verdict.
@@ -457,7 +552,11 @@ raw_receipt = Path('{authorization_receipt_path from runtime result}')
 receipt_path = raw_receipt if raw_receipt.is_absolute() else app_dir / raw_receipt
 receipt_digest = '{authorization_receipt_digest from runtime result}'
 verify_final_receipt(resume_path=resume_path, receipt_path=receipt_path, expected_receipt_digest=receipt_digest)
-updated = add_application_authorized(company='{Company}', job_title='{Job Title}', authorized_resume_path=str(resume_path), receipt_path=str(receipt_path), expected_receipt_digest=receipt_digest, resume_file='{Name}_Resume_{Company}.docx', cover_letter_file='{Name}_Cover_Letter_{Company}.docx', jd_file='job_description.txt', ats_score={final_ats}, hr_score={final_hr}, application_date=None, status='Applied')
+import json
+from evidence_engine.api import summarize
+from evidence_engine.models import MatchResult
+evidence = summarize(MatchResult(**json.loads((app_dir / 'evidence_match.json').read_text())))
+updated = add_application_authorized(company='{Company}', job_title='{Job Title}', authorized_resume_path=str(resume_path), receipt_path=str(receipt_path), expected_receipt_digest=receipt_digest, resume_file='{Name}_Resume_{Company}.docx', cover_letter_file='{Name}_Cover_Letter_{Company}.docx', jd_file='job_description.txt', evidence=evidence, ats_score={final_ats}, hr_score={final_hr}, application_date=None, status='Applied')
 if updated is not True:
     raise TrackerUpdateError('TRACKER_UPDATE_NOT_CONFIRMED')
 update_state(str(app_dir), 'tracker_updated', True)

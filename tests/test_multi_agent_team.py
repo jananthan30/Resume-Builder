@@ -12,8 +12,22 @@ from jsonschema import Draft202012Validator
 
 from candidate_fit_preflight import (
     CANDIDATE_FIT_THRESHOLD,
-    assess_candidate_fit,
+    assess_candidate_fit as _real_assess_candidate_fit,
 )
+
+from evidence_engine.testing import DeterministicJudge as _DeterministicJudge
+
+
+def assess_candidate_fit(*args, **kwargs):
+    """Run the fit gate offline with the package's deterministic judge.
+
+    The gate calls a hosted model in production and fails closed without one.
+    Tests inject the rule-based judge so pipeline wiring stays testable
+    without an API key; production never falls back this way.
+    """
+    kwargs.setdefault("llm", _DeterministicJudge())
+    return _real_assess_candidate_fit(*args, **kwargs)
+
 
 try:
     import tomllib
@@ -38,6 +52,7 @@ from multi_agent_team import (
     build_context,
     build_handoff,
     canonical_digest,
+    compile_semantically_reviewed_writer_replacements_salvage,
     compile_writer_replacements_salvage,
     normalize_native_payload,
     run_team,
@@ -726,6 +741,41 @@ def test_salvage_keeps_safe_replacement_when_sibling_breaks_ownership():
         "rejection_codes": {"STRICT_COMPILER": 1},
     }
 
+
+
+def test_semantically_reviewed_salvage_allows_truthful_reordering():
+    paraphrase = {
+        "source_span_text": SAFE_SOURCE_BULLET,
+        "replacement_text": (
+            "• Assessed safety signals and reviewed DSUR and PBRER reports "
+            "under CIOMS and ICH guidance."
+        ),
+    }
+
+    with pytest.raises(NoSafeWriterChanges):
+        compile_writer_replacements_salvage(master_resume(), [paraphrase])
+
+    payload, stats = compile_semantically_reviewed_writer_replacements_salvage(
+        master_resume(), [paraphrase]
+    )
+
+    assert paraphrase["replacement_text"] in payload["draft"]
+    assert stats["accepted_count"] == 1
+
+
+def test_semantically_reviewed_salvage_still_blocks_canonical_fact_changes():
+    with pytest.raises(NoSafeWriterChanges) as caught:
+        compile_semantically_reviewed_writer_replacements_salvage(
+            master_resume(),
+            [
+                {
+                    "source_span_text": "Senior Safety Scientist | Acme",
+                    "replacement_text": "Director of Safety | Acme",
+                }
+            ],
+        )
+
+    assert caught.value.stats["rejection_codes"] == {"CANONICAL_INTEGRITY": 1}
 
 def test_salvage_rejects_protected_fact_change_before_publication():
     with pytest.raises(NoSafeWriterChanges) as caught:
@@ -1465,18 +1515,18 @@ def test_candidate_fit_high_score_with_hard_knockout_rejects_before_roles():
     assert result["terminal_class"] == "REJECTED:CANDIDATE_FIT"
     assert adapter.calls == []
     assert services.audits == []
-    # v2 informative cap: each hard knockout lowers the ceiling by 10 from
-    # 55 (1 -> 55, 2 -> 45, 3+ -> 35) instead of flattening to 35.
-    knockout_count = len(result["candidate_fit_report"]["hard_knockouts"])
-    assert knockout_count > 0
-    assert result["candidate_fit_report"]["score"] <= max(
-        35.0, 65.0 - 10.0 * knockout_count
-    )
-    assert result["candidate_fit_report"]["hard_knockouts"]
-    assert result["candidate_fit_report"]["codes"] == [
-        "HARD_KNOCKOUT",
-        "SCORE_BELOW_THRESHOLD",
-    ]
+    report = result["candidate_fit_report"]
+    # A stated minimum the candidate's whole career cannot reach is
+    # contradicted by the resume, so it fails eligibility outright. The
+    # evidence score itself is left alone: the spec keeps eligibility and
+    # qualification evidence separate rather than multiplying them.
+    assert report["eligibility"] == "FAIL"
+    assert report["codes"] == ["ELIGIBILITY_FAILED"]
+    knockouts = report["hard_knockouts"]
+    assert len(knockouts) == 1
+    assert knockouts[0]["code"] == "MINIMUM_EXPERIENCE_NOT_MET"
+    # The refusal cites the computed duration, not a bare verdict.
+    assert "years of total career experience" in knockouts[0]["candidate_has"]
 
 
 def test_kernel_recomputes_structurally_consistent_forged_candidate_fit_pass():
@@ -1929,12 +1979,23 @@ Example University
 def test_editor_cannot_delete_the_only_bullet_from_a_single_role():
     source_bullets = """• Led medical review of ICSRs, expectedness and causality assessments, and aggregate safety reports for oncology trials.
 • Reviewed DSUR and PBRER reports and assessed safety signals under ICH and CIOMS guidance."""
-    master = PASSING_RESUME.replace(source_bullets, "• Checked draft")
-    empty_role = master.replace("• Checked draft\n", "")
+    master = PASSING_RESUME.replace(source_bullets, "• Checked draft documents")
+    empty_role = master.replace("• Checked draft documents\n", "")
     adapter = ScriptedAdapter(draft=master, edited=empty_role)
     services = Services(deterministic_fail_token="")
 
-    result = run_team(request(master_resume=master), adapter, services)
+    # The one-bullet master is deliberately threadbare, so it needs a job
+    # description it can actually evidence: the fit gate now scores real
+    # evidence and would otherwise reject at Phase 0, before the editor this
+    # test exists to exercise is ever invoked.
+    thin_jd = (
+        "Draft Checker\n"
+        "Qualifications\n"
+        "Experience checking draft documents is required.\n"
+    )
+    result = run_team(
+        request(master_resume=master, job_description=thin_jd), adapter, services
+    )
 
     assert result["terminal_class"] == "FAILED:EDITOR_SCHEMA"
     assert adapter.calls == ["researcher", "writer", "auditor", "editor"]

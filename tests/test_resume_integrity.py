@@ -239,7 +239,7 @@ def test_candidate_fit_preflight_precedes_every_resume_workflow_boundary():
         command = (root / "commands" / f"{name}.md").read_text(encoding="utf-8")
         fit_gate = command.find("python candidate_fit_preflight.py --resume")
         assert fit_gate >= 0, name
-        assert "candidate-fit-policy-v2" in command
+        assert "candidate-fit-policy-v3" in command
         assert "threshold" in command and "70.0" in command
         assert "REJECTED:CANDIDATE_FIT" in command
         assert "FAILED:CANDIDATE_FIT_PREFLIGHT" in command
@@ -281,7 +281,7 @@ def test_candidate_fit_contract_is_documented_by_all_runtime_surfaces():
 
     for path in surface_paths:
         content = path.read_text(encoding="utf-8")
-        assert "candidate-fit-policy-v2" in content, path.name
+        assert "candidate-fit-policy-v3" in content, path.name
         assert "REJECTED:CANDIDATE_FIT" in content, path.name
         assert "FAILED:CANDIDATE_FIT_PREFLIGHT" in content, path.name
         assert "candidate_fit_report" in content, path.name

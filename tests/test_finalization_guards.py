@@ -9,7 +9,22 @@ from docx import Document
 
 import docx_generator
 import tracker_utils
-from candidate_fit_preflight import assess_candidate_fit
+from candidate_fit_preflight import (
+    assess_candidate_fit as _real_assess_candidate_fit,
+)
+from evidence_engine.testing import DeterministicJudge as _DeterministicJudge
+
+
+def assess_candidate_fit(*args, **kwargs):
+    """Run the fit gate offline with the package's deterministic judge.
+
+    The gate calls a hosted model in production and fails closed without one.
+    Tests inject the rule-based judge so pipeline wiring stays testable
+    without an API key; production never falls back this way.
+    """
+    kwargs.setdefault("llm", _DeterministicJudge())
+    return _real_assess_candidate_fit(*args, **kwargs)
+
 from final_receipt_verifier import (
     FinalReceiptVerificationError,
     canonical_digest,

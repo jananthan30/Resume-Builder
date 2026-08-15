@@ -20,7 +20,7 @@ resume—never a previously tailored resume. Generate one safe `run_id`, one saf
 
 `python candidate_fit_preflight.py --resume <configured-master-resume> --job-description <private-exact-JD.txt> --run-id <run_id> --case-id <case_id> --as-of-date <YYYY-MM-DD> --json`
 
-Require exit `0` and a valid `candidate-fit-policy-v2` report bound to the same
+Require exit `0` and a valid `candidate-fit-policy-v3` report bound to the same
 IDs, date, master SHA-256, and exact-JD SHA-256. Canonically hash it as
 `candidate_fit_report_digest`. Continue only with exact threshold `70.0`, score at
 least 70, trustworthy extraction, zero hard knockouts, `passed: true`, and no
@@ -186,7 +186,7 @@ curl -s -X POST http://localhost:8100/score/both -H "Content-Type: application/j
 1. **Collect scores** from the tailored scoring task and record them for reporting.
 2. Scores are advisory. They may decide whether to accept or reject the candidate,
    but they cannot authorize any edit to the saved draft.
-3. If ATS or HR is below target, either accept the fully authorized candidate and
+3. If the evidence match is below target, either accept the fully authorized candidate and
    report the result honestly, or discard it and start a complete native-team run
    with a fresh `run_id`. A retry begins at Researcher and ends with a new Auditor.
 4. Never patch `resume.md`, call Writer or Editor alone, reuse a prior handoff, or
@@ -360,7 +360,7 @@ coordinator, a scorer, or an audit to change a saved candidate.
 **Keyword Rules:**
 - Each keyword: **1-2 times MAX** across entire resume
 - Core Competencies = primary keyword location
-- 75% ATS with authentic content > 90% with stuffing
+- A 75% evidence match with authentic content beats a 90% keyword-stuffed draft — stuffing raises keyword counts while lowering evidence quality
 
 ### WRITING COACH — HUMAN VOICE + IMPACT (Rules 0–16)
 

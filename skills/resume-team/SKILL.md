@@ -15,7 +15,7 @@ description: Run the capability-isolated native Researcher, Writer, Auditor, and
 
    `python candidate_fit_preflight.py --resume <CONFIGURED_MASTER> --job-description <PRIVATE_EXACT_JD.txt> --run-id <RUN_ID> --case-id <CASE_ID> --as-of-date <YYYY-MM-DD> --json`
 
-   Continue only on exit `0` and a valid digest-bound `candidate-fit-policy-v2`
+   Continue only on exit `0` and a valid digest-bound `candidate-fit-policy-v3`
    report with threshold `70.0`, score at least `70`, trustworthy extraction, zero
    hard knockouts, `passed: true`, and no codes. Canonically hash the exact report
    as `candidate_fit_report_digest`. Exit `1`, any score below 70 (including

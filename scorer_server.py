@@ -1200,9 +1200,113 @@ def jd_extract(req: JdExtractRequest, api_key: str = Depends(verify_api_key_with
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/match")
+def evidence_match(req: ScoreRequest, api_key: str = Depends(verify_api_key_with_usage)):
+    """Evidence match a resume against a job description.
+
+    This is the scoring endpoint. It answers "which of this job's requirements
+    does this resume actually evidence, and with what excerpt" rather than
+    producing a keyword percentage, because no universal ATS score exists
+    across recruiting systems.
+
+    Three outputs stay separate by design and must not be multiplied together:
+
+    * ``eligibility`` — PASS, FAIL or UNVERIFIED for explicit hard gates.
+      Absence of evidence is UNVERIFIED, never FAIL.
+    * ``qualification_evidence_score`` — how strongly the resume supports the
+      role's requirements.
+    * ``evidence_quality`` — how explicit and traceable that evidence is.
+
+    ``/score/ats`` and ``/score/hr`` remain available for existing integrations.
+    """
+    req = _maybe_autofill_resume(req, api_key)
+    resume_text, jd_text, _file_path = resolve_inputs(req)
+    _log_score_usage(api_key, "/api/match")
+
+    from evidence_engine.api import to_api_response
+    from evidence_engine.audit import ResultCache
+    from evidence_engine.engine import match_texts
+
+    # Content-addressed: a policy, prompt or model change is a miss, so a
+    # stored score is never silently reused under different rules.
+    try:
+        result = match_texts(resume_text, jd_text, cache=ResultCache())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    payload = to_api_response(result)
+    if result.status != "OK":
+        # The engine fails closed rather than returning a guessed score.
+        raise HTTPException(status_code=502, detail=payload["error"])
+    return JSONResponse(content=payload)
+
+
+class ConfirmGapsRequest(ScoreRequest):
+    """A match request plus the candidate's answers to its open questions."""
+    answers: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "Answers to the open_questions returned by /api/match. Each is "
+            "{requirement_id, answer: yes|no|unsure, detail, resume_sha256, "
+            "job_sha256}. The two digests bind an answer to one application."
+        ),
+    )
+
+
+@app.post("/api/match/confirm")
+def evidence_match_confirm(
+    req: ConfirmGapsRequest, api_key: str = Depends(verify_api_key_with_usage)
+):
+    """Resolve the gaps only the candidate can answer.
+
+    An answer authorises a rewrite; it is never evidence. Saying "yes I have
+    that" does not move `qualification_evidence_score` -- it permits the
+    writer to surface experience the candidate actually has, and the
+    rewritten resume is matched again before anything scores.
+
+    Answers carry the resume and job digests they were given about, so a "yes"
+    from one application cannot be replayed against another.
+    """
+    req = _maybe_autofill_resume(req, api_key)
+    resume_text, jd_text, _file_path = resolve_inputs(req)
+    _log_score_usage(api_key, "/api/match/confirm")
+
+    from evidence_engine.api import to_api_response
+    from evidence_engine.audit import ResultCache
+    from evidence_engine.engine import match_texts
+    from evidence_engine.models import GapAnswer
+    from evidence_engine.questions import apply_answers
+
+    try:
+        answers = [GapAnswer(**item) for item in req.answers]
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid answer: {exc}")
+
+    try:
+        result = match_texts(resume_text, jd_text, cache=ResultCache())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    if result.status != "OK":
+        raise HTTPException(status_code=502, detail=result.error)
+
+    updated, rejected = apply_answers(result, answers)
+    result.rewrite_recommendations = updated
+
+    payload = to_api_response(result)
+    payload["rejected_answers"] = rejected
+    return JSONResponse(content=payload)
+
+
 @app.post("/score/ats")
 def score_ats(req: ScoreRequest, api_key: str = Depends(verify_api_key_with_usage)):
-    """ATS score a resume against a job description. Accepts text, base64 files, or file paths."""
+    """Legacy keyword ATS score. Superseded by POST /api/match.
+
+    Retained for existing integrations. A keyword percentage does not
+    correspond to any real recruiting system's behaviour; prefer the evidence
+    match, which cites the exact resume excerpt behind every conclusion.
+
+    Accepts text, base64 files, or file paths.
+    """
     req = _maybe_autofill_resume(req, api_key)
     resume_text, jd_text, file_path = resolve_inputs(req)
     _log_score_usage(api_key, "/score/ats")
@@ -1233,7 +1337,10 @@ def score_ats(req: ScoreRequest, api_key: str = Depends(verify_api_key_with_usag
 
 @app.post("/score/hr")
 def score_hr(req: ScoreRequest, api_key: str = Depends(verify_api_key_with_usage)):
-    """HR score a resume against a job description. Accepts text, base64 files, or file paths."""
+    """Legacy recruiter-simulation score. Superseded by POST /api/match.
+
+    Retained for existing integrations. Accepts text, base64 files, or paths.
+    """
     req = _maybe_autofill_resume(req, api_key)
     resume_text, jd_text, file_path = resolve_inputs(req)
     _log_score_usage(api_key, "/score/hr")
@@ -2153,16 +2260,34 @@ def _friendly_tier_required_detail(feature: str) -> str:
     return f"{feature} requires a Pro ($12/month) or Ultra ($29/month) subscription."
 
 
-def _safe_agent_scores(ctx: "agent_tools.ToolContext", resume_text: str, jd_text: str):
-    """Best-effort ATS/HR score for a piece of resume text. Never raises --
-    a scoring hiccup must not take down an otherwise-successful rewrite."""
+def _safe_legacy_scores(resume_text: str, jd_text: str):
+    """Best-effort legacy ATS/HR score for a piece of resume text.
+
+    Calls the keyword scorers directly rather than through the ``score_resume``
+    tool, which now returns an evidence match. These two numbers exist only to
+    keep the deployed PWA's before/after display working; the evidence summary
+    beside them is the score that actually means something.
+
+    Never raises -- a scoring hiccup must not take down an otherwise-successful
+    rewrite.
+    """
     try:
-        scored = agent_tools.dispatch(
-            "score_resume", ctx, resume_text=resume_text, jd_text=jd_text
-        )
-        return scored.get("ats_score"), scored.get("hr_score")
+        ats = ats_scorer.score_resume_text(resume_text, jd_text)
+        hr = hr_scorer.result_to_dict(
+            hr_scorer.calculate_hr_score_from_text(resume_text, jd_text))
+        return ats.get("total_score"), hr.get("overall_score")
     except Exception:
         return None, None
+
+
+def _safe_evidence_summary(resume_text: str, jd_text: str):
+    """Best-effort evidence match summary. Never raises."""
+    try:
+        from evidence_engine.api import summarize
+        from evidence_engine.engine import match_texts
+        return summarize(match_texts(resume_text, jd_text))
+    except Exception:
+        return None
 
 
 @app.post("/rewrite")
@@ -2378,17 +2503,23 @@ def rewrite_resume_endpoint(req: ScoreRequest, auth=Depends(verify_api_key)):
                 raise HTTPException(status_code=502, detail=_TAILOR_UNAVAILABLE_DETAIL)
 
             draft_text = result["draft"]
-            ats_before, hr_before = _safe_agent_scores(ctx, source_resume_text, jd_text)
-            ats_after, hr_after = _safe_agent_scores(ctx, draft_text, jd_text)
+            ats_before, hr_before = _safe_legacy_scores(source_resume_text, jd_text)
+            ats_after, hr_after = _safe_legacy_scores(draft_text, jd_text)
+            evidence_before = _safe_evidence_summary(source_resume_text, jd_text)
+            evidence_after = _safe_evidence_summary(draft_text, jd_text)
         finally:
             conn.close()
 
     return JSONResponse(content={
         "rewritten_resume": draft_text,
+        # Legacy keyword scores, retained for the deployed PWA display.
         "ats_before": ats_before,
         "ats_after": ats_after,
         "hr_before": hr_before,
         "hr_after": hr_after,
+        # The evidence match is the authoritative measure of the rewrite.
+        "evidence_before": evidence_before,
+        "evidence_after": evidence_after,
     })
 
 

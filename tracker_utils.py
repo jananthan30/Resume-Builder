@@ -40,6 +40,14 @@ TRACKER_COLUMNS = [
     'Rejection Reason',            # taxonomy: no_response / auto_reject / screen_reject / interview_reject / offer_declined / withdrawn
     'Days To Response',            # int — auto-computed from dates
     'Interview Stages Reached',    # int — phone screen=1, hiring mgr=2, panel=3, onsite=4, offer=5
+    # Evidence columns. These replaced ATS/HR as the meaningful record of how
+    # well an application was supported; the keyword columns above are kept so
+    # historical rows stay readable.
+    'Evidence Match',              # % — qualification_evidence_score
+    'Eligibility',                 # PASS / FAIL / UNVERIFIED
+    'Requirements Evidenced',      # "5/8" — strongly evidenced over total
+    'Must-Haves Missing',          # int — must-haves with no evidence found
+    'Evidence Policy Version',     # which scoring policy produced the numbers
 ]
 
 
@@ -68,6 +76,12 @@ def format_excel_worksheet(worksheet, num_rows):
         'R': 20,  # Rejection Reason
         'S': 12,  # Days To Response
         'T': 12,  # Interview Stages Reached
+        # Evidence columns
+        'U': 14,  # Evidence Match
+        'V': 13,  # Eligibility
+        'W': 21,  # Requirements Evidenced
+        'X': 18,  # Must-Haves Missing
+        'Y': 24,  # Evidence Policy Version
     }
 
     for col, width in column_widths.items():
@@ -106,6 +120,35 @@ def _ensure_strategic_columns(df):
     return df[TRACKER_COLUMNS + extra]
 
 
+_BLANK_EVIDENCE_COLUMNS = {
+    'Evidence Match': '',
+    'Eligibility': '',
+    'Requirements Evidenced': '',
+    'Must-Haves Missing': '',
+    'Evidence Policy Version': '',
+}
+
+
+def _evidence_columns(evidence: dict = None) -> dict:
+    """Flatten an evidence summary into tracker columns.
+
+    A failed or absent match leaves the columns blank rather than writing a
+    zero, so an unscored application is never mistaken for a bad one.
+    """
+    if not isinstance(evidence, dict) or evidence.get("status") != "OK":
+        return dict(_BLANK_EVIDENCE_COLUMNS)
+    score = evidence.get("qualification_evidence_score")
+    return {
+        'Evidence Match': f"{score * 100:.1f}%" if score is not None else '',
+        'Eligibility': evidence.get("eligibility", ''),
+        'Requirements Evidenced': (
+            f"{evidence.get('requirements_strong', 0)}/"
+            f"{evidence.get('requirements_total', 0)}"),
+        'Must-Haves Missing': len(evidence.get("missing_must_have_ids") or []),
+        'Evidence Policy Version': evidence.get("scoring_policy_version", ''),
+    }
+
+
 def add_application(
     company: str,
     job_title: str,
@@ -124,6 +167,8 @@ def add_application(
     referral_source: str = "",
     rejection_reason: str = "",
     interview_stages_reached: int = None,
+    # Evidence columns — pass the summarize() dict from an evidence match.
+    evidence: dict = None,
 ):
     """
     Add a new application to the Job Application Tracker.
@@ -147,6 +192,9 @@ def add_application(
             interview_reject / offer_declined / withdrawn
         interview_stages_reached: 0=applied, 1=phone screen, 2=hiring mgr,
             3=panel, 4=onsite, 5=offer
+        evidence: ``evidence_engine.api.summarize()`` output. Records what the
+            resume actually evidenced, which is the column worth learning from
+            — ATS/HR remain only so older rows stay readable.
 
     Returns:
         bool: True if successful, False otherwise
@@ -181,6 +229,7 @@ def add_application(
         'Rejection Reason': rejection_reason,
         'Days To Response': '',  # filled by mark_response()
         'Interview Stages Reached': interview_stages_reached if interview_stages_reached is not None else '',
+        **_evidence_columns(evidence),
     }
 
     temporary_path = None
@@ -292,6 +341,7 @@ def add_application_authorized(
     referral_source: str = "",
     rejection_reason: str = "",
     interview_stages_reached: int = None,
+    evidence: dict = None,
 ) -> bool:
     """Revalidate a native-team receipt immediately before tracker mutation.
 
@@ -326,6 +376,7 @@ def add_application_authorized(
             referral_source=referral_source,
             rejection_reason=rejection_reason,
             interview_stages_reached=interview_stages_reached,
+            evidence=evidence,
         )
     except Exception as exc:
         raise TrackerUpdateError('TRACKER_UPDATE_EXCEPTION') from exc

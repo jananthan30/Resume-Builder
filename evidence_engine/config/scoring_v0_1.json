@@ -1,0 +1,31 @@
+{
+  "version": "evidence-match-v0.1.0",
+  "parser_version": "resume-parser-v0.1.0",
+  "prompt_version": "prompts-v0.1.0",
+  "importance_weights": {"MUST_HAVE": 4.0, "CORE": 2.5, "PREFERRED": 1.0, "OPTIONAL": 0.25},
+  "relationship_values": {
+    "EXACT_EXPLICIT": 1.00, "EQUIVALENT_SYNONYM": 0.95,
+    "ABBREVIATION_EQUIVALENT": 0.95, "CHILD_SUPPORTS_PARENT": 0.90,
+    "ADJACENT_TRANSFERABLE": 0.55, "CONTEXTUAL_IMPLICATION": 0.45
+  },
+  "relationship_ceilings": {
+    "EXACT_EXPLICIT": 1.00, "EQUIVALENT_SYNONYM": 0.95,
+    "ABBREVIATION_EQUIVALENT": 0.95, "CHILD_SUPPORTS_PARENT": 0.90,
+    "ADJACENT_TRANSFERABLE": 0.60, "CONTEXTUAL_IMPLICATION": 0.50
+  },
+  "span_base_weights": {"relationship": 0.50, "specificity": 0.20, "scope": 0.15, "context": 0.10, "temporal": 0.05},
+  "evidence_combine_alphas": [1.0, 0.25, 0.10],
+  "same_role_dedup_ratio": 0.75,
+  "status_thresholds": {"strong": 0.75, "moderate": 0.45, "weak": 0.05},
+  "must_have_caps": {"one_missing": 0.69, "two_or_more_missing": 0.54},
+  "must_have_absent_below": 0.20,
+  "must_have_blend": {"coverage": 0.70, "must_coverage": 0.30},
+  "recency": {"full_within_years": 2, "medium_within_years": 5, "full": 1.0, "medium": 0.9, "old": 0.8,
+              "time_sensitive_types": ["tool", "skill", "regulatory_knowledge", "therapeutic_area"]},
+  "recent_window_years": 5,
+  "judge_review_threshold": 0.5,
+  "role_similarity_weights": {"responsibility": 0.45, "function": 0.25, "seniority": 0.15, "domain": 0.10, "scope": 0.05},
+  "retrieval": {"lexical_top_k": 8, "dense_top_k": 8, "final_top_k": 10, "rrf_k": 60, "dedup_ratio": 0.90},
+  "low_parse_quality_evidence_cap": 0.4,
+  "unverified_citation_confidence_cap": 0.4
+}

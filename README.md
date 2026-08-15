@@ -14,9 +14,9 @@ plugin, or standalone web app.
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-blueviolet)](https://docs.anthropic.com/en/docs/claude-code)
 [![Codex](https://img.shields.io/badge/Codex-Plugin-111111)](https://developers.openai.com/codex/plugins/build)
 
-![Upload a resume, paste a job description, get ATS + recruiter scores with fixes in seconds](assets/resumehq-demo.gif)
+![Upload a resume, paste a job description, get match scores and recruiter-style feedback with fixes in seconds](assets/resumehq-demo.gif)
 
-*Upload a resume → paste the job posting → ATS + recruiter scores with fixes, in under 30 seconds. [Try it free](https://getresumehq.com).*
+*Upload a resume → paste the job posting → keyword-match and recruiter-style heuristic scores with concrete fixes, in under 30 seconds. [Try it free](https://getresumehq.com).*
 
 ---
 
@@ -26,8 +26,8 @@ Most resume tools only score the resume you bring to them. ResumeHQ goes further
 
 | Feature | Jobscan | Rezi | Teal | **ResumeHQ** |
 |---------|---------|------|------|--------------|
-| ATS keyword scoring | ✅ | ✅ | ✅ | ✅ |
-| HR / recruiter simulation | ❌ | ❌ | ❌ | ✅ |
+| Keyword + semantic match scoring | ✅ | ✅ | ✅ | ✅ |
+| Recruiter-style heuristic review | ❌ | ❌ | ❌ | ✅ |
 | Discover matching jobs | ❌ | ❌ | ❌ | ✅ |
 | Score jobs against your resume | ❌ | ❌ | ❌ | ✅ |
 | Auto-tailor resume to JD | ✅ | ✅ | ❌ | ✅ |
@@ -51,8 +51,8 @@ You paste a job description (or search for jobs). The system:
    experience to close the gap is working for you
 3. **Analyzes** passing JDs — extracts keywords, required skills, domain, seniority level
 4. **Tailors** your master resume — rewrites bullets, reorders sections, matches terminology
-5. **Scores** the result with two independent advisory engines (ATS + HR simulation)
-6. **Iterates** automatically until scores hit targets (ATS 75-85%, HR 70%+)
+5. **Scores** the result with two independent advisory heuristics (keyword/semantic match + recruiter-style review)
+6. **Iterates** automatically until the evidence match covers every must-have (75%+ evidence match) — an internal editorial target, not a prediction of any employer's screening
 7. **Generates** production-ready DOCX files (resume + cover letter)
 8. **Tracks** every application in an Excel spreadsheet
 
@@ -162,7 +162,7 @@ human-voice, and canonical-integrity audit helpers; those gates are never skippe
 | `/resume-builder:writing-coach` | Yes — full writing audit | Same |
 | `/resume-builder:find-jobs` | Yes — shows results (no score) | + ATS/HR fit scoring per job |
 | `/resume-builder:setup` | Yes — runs the setup wizard | N/A |
-| MCP scoring tools | No — needs Python | `score_resume`, `score_ats`, `score_hr`, `score_with_llm`, `explain_score`, `extract_text`, `discover_jobs` |
+| MCP scoring tools | No — needs Python | `evidence_match`, `score_resume`, `score_ats`, `score_hr`, `score_with_llm`, `explain_score`, `extract_text`, `discover_jobs` |
 
 ---
 
@@ -172,9 +172,10 @@ After running `/resume-builder:setup`, the MCP scorer auto-starts and provides t
 
 | Tool | What It Does |
 |------|-------------|
-| `score_resume` | Full ATS + HR analysis in one call (recommended) |
-| `score_ats` | ATS keyword + semantic scoring (8 components) |
-| `score_hr` | HR recruiter simulation (6 factors + F-pattern) |
+| `evidence_match` | Requirement-by-requirement evidence matching, with the exact excerpt behind each conclusion (recommended) |
+| `score_resume` | Legacy ATS + HR analysis in one call |
+| `score_ats` | Keyword + semantic match scoring (8 heuristic components) |
+| `score_hr` | Recruiter-style heuristic review (6 factors + F-pattern) |
 | `score_with_llm` | LLM-augmented rubric scoring (requires ANTHROPIC_API_KEY) |
 | `explain_score` | Actionable improvement suggestions with missing keywords |
 | `extract_text` | Extract text from DOCX/PDF/MD/TXT files |
@@ -216,15 +217,128 @@ Rank  Title                        Company        ATS   HR    Salary
 
 ---
 
-## Dual Scoring System
+## Evidence Matching
+
+A universal "ATS score" does not exist. Recruiting systems parse, search,
+filter, evaluate requirements and sometimes rank — using materially different
+mechanisms — so a single percentage cannot describe them all.
+
+This tool answers a question that *is* answerable:
+
+> Your resume provides strong evidence for 17 of 21 important requirements.
+> One must-have has no evidence found. Eligibility is UNVERIFIED.
+
+Every conclusion cites the exact resume excerpt behind it, with character
+offsets you can verify.
+
+```bash
+python evidence_match.py --resume resume.docx --jd job.txt --verify
+```
+
+Three results stay separate and are never multiplied together:
+
+| Output | Meaning |
+|---|---|
+| **Eligibility** | PASS / FAIL / UNVERIFIED on explicit hard requirements |
+| **Qualification Evidence Fit** | How strongly the resume supports the role's requirements |
+| **Evidence Quality** | How explicit and traceable that evidence is |
+
+A missing licence is **UNVERIFIED**, not FAIL — the resume did not establish it,
+which is not proof the candidate lacks it. Only explicit contradictory evidence
+(an expired licence) produces FAIL.
+
+**Why this resists gaming.** The model classifies evidence; Python computes
+every number. Repeating a phrase twenty times collapses to one piece of
+evidence, a parent skill never satisfies a child requirement (Python does not
+imply TensorFlow), and unapproved synonyms are downgraded rather than accepted.
+Scores replay exactly from stored judgments with no LLM call:
+
+```bash
+python evidence_match.py --replay match.json
+```
+
+### Choosing a model
+
+Because the model only classifies and Python computes every number, the model
+is configuration rather than policy — a weaker judge produces measurably wrong
+labels, never quietly drifting scores. Set either role with a
+`provider:model` spec; a bare name still means Anthropic.
+
+```bash
+# Careful extraction, cheap judging — the split that trades cost against risk
+export EVIDENCE_EXTRACTOR_MODEL="anthropic:claude-sonnet-5"
+export EVIDENCE_JUDGE_MODEL="deepseek:deepseek-chat"
+
+# Or run entirely on self-hosted weights; nothing leaves the machine
+export EVIDENCE_JUDGE_MODEL="local:qwen3"
+export EVIDENCE_LOCAL_BASE_URL="http://localhost:11434/v1"
+```
+
+Providers: `anthropic`, `xai`, `moonshot`, `deepseek`, `dashscope` (Qwen,
+Singapore), `dashscope-cn` (Qwen, Beijing — cheaper, but candidate data leaves
+the region), `openrouter`, `together`, `fireworks`, `groq`, `local` (vLLM /
+Ollama / llama.cpp). Each reads its own key — `DEEPSEEK_API_KEY`,
+`XAI_API_KEY`, `DASHSCOPE_API_KEY`, and so on. Defaults are unchanged, so an
+existing install keeps behaving exactly as before.
+
+A model that cannot stop reasoning is a poor fit for the judge role whatever
+its sticker price: judging is bounded classification, and reasoning tokens bill
+at the output rate, which is already ~80% of the cost here.
+
+**Using an aggregator? Pin the backend.** One OpenRouter model slug can be
+served by several backends at different quantizations, so two runs can record
+the same `judge_model` and be materially different models — the same failure as
+recording a constant model name, one layer up.
+
+```bash
+export EVIDENCE_JUDGE_MODEL="openrouter:qwen/qwen3.8-max"
+export EVIDENCE_OPENROUTER_PROVIDER="deepinfra"     # disables silent failover
+export EVIDENCE_OPENROUTER_QUANTIZATIONS="fp8"      # optional, recorded too
+```
+
+A pin becomes part of the recorded identity (`qwen/qwen3.8-max@deepinfra/fp8`)
+and therefore part of the cache key. Without one the model id is recorded as
+`…@unpinned`, so a stored score never claims a reproducibility it does not have.
+Aggregators are well suited to comparing candidates; pin before you trust a
+number, and prefer a direct provider key once a model is chosen.
+
+Extraction and judging are configured separately because they carry different
+risk. Extraction must quote the posting verbatim and classify hard gates, and
+runs **once** per match. Judging is bounded classification and runs **once per
+requirement** — roughly ten times the volume, and where the money goes.
+
+**The model is part of the result's identity.** `extractor_model` and
+`judge_model` are written into the audit record and hashed into the cache key,
+so two models never share a cache entry and a cheap-model score can never be
+served as a frontier-model one. Changing either invalidates cached results by
+design.
+
+**Before switching, measure.** Zero adversarial inversions is what makes this
+engine better than keyword matching, so re-run the ablations and compare
+against the current baseline rather than assuming a cheaper model holds:
+
+```bash
+RUN_LIVE_LLM=1 python -m benchmarks.evidence.runner --with-llm
+```
+
+> Routing resumes to a third-party provider sends candidate data outside
+> Anthropic. `pii_redactor` runs before every hosted call regardless of
+> provider, and `local:` keeps everything on your own machine — but the choice
+> of endpoint is a data-handling decision, not just a pricing one.
+
+---
+
+## Legacy Scoring System (diagnostic only)
+
+Retained for the comparison table and existing API integrations.
 
 ### ATS Scorer — 8 Weighted Components
 
-Simulates how Applicant Tracking Systems filter resumes before a human ever sees them.
+Heuristic keyword/semantic match scoring. **It does not simulate any real ATS.** There is no universal ATS algorithm — Workday, Greenhouse, Taleo, and other systems parse, search, filter, and rank differently, and modern products increasingly use requirement-based semantic matching rather than raw keyword counts. Treat this score as an advisory match diagnostic, never as a pass/fail prediction.
 
 | Component | Weight | What It Measures |
 |-----------|--------|------------------|
-| Phrase Match | 25% | Multi-word industry phrases (10.6x callback increase for exact matches) |
+| Phrase Match | 25% | Multi-word industry phrases present in both texts |
 | Keyword Match | 20% | Lemmatized keywords with synonym expansion |
 | Weighted Industry Terms | 15% | Domain-specific terminology with recency decay |
 | Semantic Similarity | 10% | SBERT vector cosine similarity between resume and JD |
@@ -237,18 +351,19 @@ Simulates how Applicant Tracking Systems filter resumes before a human ever sees
 
 ### HR Scorer — 6 Factors + Visual Analysis
 
-Simulates how a human recruiter evaluates a resume in their typical 7-second scan.
+Applies recruiter-inspired heuristics as an advisory review of experience and presentation signals. **It does not predict how any actual recruiter will react** — it is a structured checklist, not a behavioral model.
 
 | Factor | Weight | What It Measures |
 |--------|--------|------------------|
-| Experience Fit | 30% | Years of experience vs. JD requirements, Goldilocks zone |
-| Skills Match | 20% | Demonstrated skills (action verbs) vs. listed skills |
-| Career Trajectory | 20% | Title progression via linear regression slope |
-| Impact Signals | 20% | Metrics density + Bloom's Taxonomy verb power levels |
+| Job Fit | 15-30% | Domain/therapeutic area, experience type, education, role level |
+| Experience Fit | 10-20% | Years of experience vs. JD requirements, Goldilocks zone |
+| Skills Match | 10-30% | Demonstrated skills (action verbs) vs. listed skills |
+| Career Trajectory | 10-15% | Title progression via linear regression slope |
+| Impact Signals | 15-25% | Metrics density + Bloom's Taxonomy verb power levels |
 | Competitive Edge | 10% | Company/university prestige signals |
-| F-Pattern Visual | +/-5pts | Eye-tracking compliance (golden triangle, left-rail alignment) |
+| F-Pattern Visual | +/-5pts | Layout heuristics (golden triangle, left-rail alignment) |
 
-**Risk penalties:** Job hopping (-8 to -15 pts), unexplained gaps (-5 to -15 pts), recent instability.
+Weights adapt to detected seniority (junior / mid / senior / executive / career-pivot); ranges shown. **Risk penalties:** Job hopping (-8 to -15 pts), unexplained gaps (-5 to -15 pts), recent instability.
 
 ### LLM Scorer (Optional)
 
@@ -450,22 +565,26 @@ Set the path to this file in your `config.json` as `master_resume_path`.
 
 ### ATS Score
 
+Heuristic keyword/semantic match diagnostic. It measures textual overlap with one job description — it does **not** predict whether any employer's system will advance your resume.
+
 | Score | Rating | Meaning |
 |-------|--------|---------|
-| 80-100% | Excellent | Top candidate — likely to pass all ATS filters |
-| 65-79% | Good | Strong match — will pass most filters |
-| 50-64% | Fair | Competitive — may need optimization |
-| 35-49% | Low | Below average — significant gaps |
-| 0-34% | Poor | Unlikely to pass automated screening |
+| 80-100% | Excellent | Very high keyword/phrase overlap with this JD |
+| 65-79% | Good | Strong textual match with this JD |
+| 50-64% | Fair | Moderate match — several JD terms missing |
+| 35-49% | Low | Weak textual match — many JD terms missing |
+| 0-34% | Poor | Little keyword overlap with this JD |
 
 ### HR Score
 
+Recruiter-inspired heuristic review. The recommendation labels describe heuristic factor strength only — not any recruiter's actual decision.
+
 | Score | Recommendation | Meaning |
 |-------|---------------|---------|
-| 85%+ | STRONG INTERVIEW | Top candidate |
-| 70-84% | INTERVIEW | Competitive |
-| 55-69% | MAYBE | Marginal — depends on candidate pool |
-| <55% | PASS | Weak match |
+| 85%+ | STRONG INTERVIEW | Strong across heuristic factors |
+| 70-84% | INTERVIEW | Competitive across heuristic factors |
+| 55-69% | MAYBE | Marginal across heuristic factors |
+| <55% | PASS | Weak across heuristic factors |
 
 ---
 
@@ -478,9 +597,10 @@ The scoring API runs locally (`python scorer_server.py --port 8100`) or is hoste
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
 | `/health` | GET | No | Server health and version info |
-| `/score/ats` | POST | Yes | ATS scoring (8 weighted components) |
-| `/score/hr` | POST | Yes | HR recruiter simulation |
-| `/score/both` | POST | Yes | ATS + HR combined in one call (JSON by default, SSE with `Accept: text/event-stream`) |
+| `/api/match` | POST | Yes | **Evidence match — requirement-level results with exact excerpts (recommended)** |
+| `/score/ats` | POST | Yes | Legacy keyword/semantic match scoring (8 weighted components) |
+| `/score/hr` | POST | Yes | Recruiter-style heuristic scoring |
+| `/score/both` | POST | Yes | Legacy ATS + HR combined in one call (JSON by default, SSE with `Accept: text/event-stream`) |
 | `/score/llm` | POST | Yes | LLM scoring via Claude |
 | `/score/combined` | POST | Yes | All 3 blended (70% rules / 30% LLM) |
 | `/score/batch` | POST | Yes | Score multiple resume/JD pairs |
@@ -682,7 +802,7 @@ specific model, profile, or Ultra setting.
 0. Before any role/team invocation or output creation, the coordinator runs
    `candidate_fit_preflight.py` against the exact JD and only the configured
    master resume—never a prior tailored resume. The canonical
-   `candidate-fit-policy-v2` report must clear the fit bar (default 50) with
+   `candidate-fit-policy-v3` report must clear the fit bar (default 50) with
    trustworthy extraction, zero hard knockouts, `passed: true`, and no codes. Scores below the bar
    (including 60–69) or hard knockouts return `REJECTED:CANDIDATE_FIT`;
    unavailable, malformed, stale, or mismatched reports return
@@ -792,8 +912,7 @@ MIT License — see the [LICENSE](LICENSE) file for details.
 ## Acknowledgments
 
 - Built with [Claude Code](https://docs.anthropic.com/en/docs/claude-code) by [Anthropic](https://www.anthropic.com/)
-- ATS scoring research based on real-world Applicant Tracking System behavior
-- HR scoring model informed by eye-tracking research on recruiter behavior
+- Scoring heuristics informed by public research on how recruiting systems parse, search, and rank resumes (see `docs/`)
 - Domain keyword databases curated from thousands of real job descriptions
 - Job search powered by [Adzuna](https://www.adzuna.com/) and [Remotive](https://remotive.com/)
 

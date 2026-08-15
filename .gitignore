@@ -28,6 +28,7 @@ applications/
 # Cache & Build Artifacts
 # ========================
 embed_cache/
+audit_log/
 __pycache__/
 *.pyc
 *.pyo
@@ -136,6 +137,7 @@ tests/*
 !tests/test_finalization_guards.py
 !tests/test_human_voice_audit.py
 !tests/test_evidence_audit.py
+!tests/conftest.py
 !tests/test_docx_generator_optional_summary.py
 !tests/test_host_anthropic_runtime.py
 !tests/fixtures/

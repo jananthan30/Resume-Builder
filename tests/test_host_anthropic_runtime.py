@@ -12,7 +12,12 @@ import pytest
 import candidate_fit_judge
 import llm_scorer
 from agent.adapter import AnthropicTeamAdapter
-from agent.host_anthropic import AnthropicHost, HostRefusal, TokenBudget
+from agent.host_anthropic import (
+    AnthropicHost,
+    BudgetExceeded,
+    HostRefusal,
+    TokenBudget,
+)
 from candidate_fit_judge import JudgeUnavailable, judge_candidate_fit
 from llm_scorer import generate_cover_letter, score_with_llm
 from multi_agent_team import build_context
@@ -108,6 +113,85 @@ def test_default_resume_team_role_calls_sonnet_5(role, payload, reply):
     host.run_role(role, payload, case_id="CASE", run_id="RUN")
 
     assert client.messages.calls[0]["model"] == "claude-sonnet-5"
+
+
+def test_semantic_review_uses_separate_sonnet_call_with_full_source():
+    decision = {
+        "schema_version": "web-semantic-review/v1",
+        "run_id": "RUN",
+        "case_id": "CASE",
+        "source_digest": "b" * 64,
+        "proposal_set_digest": "c" * 64,
+        "lens": "claim_entailment",
+        "invocation_id": "review-1",
+        "decisions": [
+            {
+                "proposal_id": "a" * 64,
+                "supported": True,
+                "code": "PASS",
+                "evidence_lines": ["Source"],
+            }
+        ],
+    }
+    client = _Client([_text_response(decision)])
+    host = AnthropicHost(client=client)
+
+    result = host.review_replacements(
+        master_resume="FULL SYNTHETIC RESUME",
+        proposals=[
+            {
+                "proposal_id": "a" * 64,
+                "source_span_text": "Source",
+                "replacement_text": "Replacement",
+            }
+        ],
+        case_id="CASE",
+        run_id="RUN",
+        source_digest="b" * 64,
+        proposal_set_digest="c" * 64,
+        lens="claim_entailment",
+        invocation_id="review-1",
+    )
+
+    assert result == decision
+    call = client.messages.calls[0]
+    assert call["model"] == "claude-sonnet-5"
+    assert call["thinking"] == {"type": "disabled"}
+    payload = json.loads(call["messages"][0]["content"])
+    assert payload["master_resume"] == "FULL SYNTHETIC RESUME"
+    assert payload["run_id"] == "RUN"
+    assert payload["source_digest"] == "b" * 64
+    assert "job_description" not in payload
+    assert "independent skeptical factual reviewer" in call["system"]
+
+
+def test_semantic_review_refuses_json_repair_after_budget_is_exhausted():
+    malformed = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="not json")],
+        stop_reason="end_turn",
+        usage=SimpleNamespace(input_tokens=100, output_tokens=1),
+    )
+    client = _Client([malformed, _text_response({"decisions": []})])
+    host = AnthropicHost(
+        client=client,
+        budget=TokenBudget(max_input_tokens=100, max_output_tokens=10),
+    )
+
+    with pytest.raises(BudgetExceeded, match="refusing JSON repair"):
+        host.review_replacements(
+            master_resume="FULL SYNTHETIC RESUME",
+            proposals=[],
+            case_id="CASE",
+            run_id="RUN",
+            source_digest="b" * 64,
+            proposal_set_digest="c" * 64,
+            lens="claim_entailment",
+            invocation_id="review-1",
+        )
+
+    assert len(client.messages.calls) == 1
+    assert host.budget.input_tokens == 100
+    assert host.budget.output_tokens == 1
 
 
 def test_host_rejects_non_sonnet_model_override():

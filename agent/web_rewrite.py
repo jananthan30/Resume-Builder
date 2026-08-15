@@ -1,25 +1,36 @@
 """Direct, fail-closed pipeline for synchronous web resume rewrites.
 
-The web route has one untrusted language boundary: ``AnthropicHost.run_role``
-for Writer replacements.  Requirement selection, replacement compilation,
-candidate-fit policy, the three authoritative audits, publication, and durable
-readback are ordinary deterministic service calls.  Native and asynchronous
-Resume Team execution continue to use ``multi_agent_team.run_team``.
+The web route uses one Writer call plus two independent factual-support reviews.
+Requirement selection, structural compilation, candidate-fit policy, the three
+code-owned audits, publication, and durable readback remain deterministic.
+Native and asynchronous Resume Team execution continue to use
+``multi_agent_team.run_team``.
 """
 
 from __future__ import annotations
 
 import re
+import secrets
 from collections import Counter
 from typing import Any
 
+import human_voice_audit
 import multi_agent_team
+from candidate_fit_preflight import WEB_REWRITE_FIT_FLOOR
+import resume_integrity_audit
 from agent.host_anthropic import BudgetExceeded, HostRefusal
-from claim_provenance_audit import claim_supported_without_semantic_review
 
 WEB_REWRITE_RESULT_VERSION = "web-rewrite-result/v1"
 WEB_REWRITE_PUBLICATION_VERSION = "web-rewrite-publication/v1"
 WEB_REWRITE_RECEIPT_VERSION = "web-rewrite-final-receipt/v1"
+SEMANTIC_REVIEW_VERSION = "web-semantic-review/v1"
+_SEMANTIC_REVIEW_CODES = {
+    "PASS",
+    "UNSUPPORTED_CLAIM",
+    "STRONGER_SCOPE",
+    "FABRICATED_METRIC",
+    "CANONICAL_FACT_CHANGED",
+}
 
 _MANDATORY_REQUIREMENT_RE = re.compile(
     r"\b(?:must|required|minimum|at\s+least|\d+\+?\s+years?|"
@@ -131,36 +142,306 @@ def _authorization_summary(report: dict[str, Any]) -> str:
     return "|".join(parts)
 
 
-def _filter_mechanically_supported_replacements(
-    replacements: Any,
-) -> tuple[Any, int]:
-    """Remove wording changes that would require a semantic reviewer.
+def _proposal_id(
+    item: dict[str, str],
+    *,
+    run_id: str,
+    case_id: str,
+    source_digest: str,
+) -> str:
+    """Digest-bind one pair to its exact run, case, and immutable source."""
 
-    Malformed items stay in the list so the shared salvage compiler owns their
-    existing diagnostics. Only well-shaped, non-empty changes that exceed the
-    no-semantic-review closure are removed here and counted as strict compiler
-    rejections.
-    """
+    return multi_agent_team.canonical_digest(
+        {
+            "run_id": run_id,
+            "case_id": case_id,
+            "source_digest": source_digest,
+            "source_span_text": item["source_span_text"],
+            "replacement_text": item["replacement_text"],
+        }
+    )
+
+
+def _experience_role_for_line(
+    master_resume: str, line: str
+) -> dict[str, Any] | None:
+    """Return exact experience-role ownership for one unique complete line."""
+
+    start, end, _ = multi_agent_team._unique_span(master_resume, line)
+    return multi_agent_team._role_at(
+        multi_agent_team._experience_roles(master_resume), start, end
+    )
+
+
+def _role_bullet_prefix(line: str) -> str | None:
+    """Return the exact structural prefix of a recognized experience bullet."""
+
+    matched = re.match(r"^(\s*[•*-]\s+)", line)
+    return matched.group(1) if matched is not None else None
+
+
+def _is_section_heading(line: str) -> bool:
+    """Use the real voice parser plus all canonical section names."""
+
+    canonical_heading = multi_agent_team._section_heading_name(line)
+    return (
+        human_voice_audit._is_section_header(line)
+        or re.match(r"^\s*#{1,6}\s+\S", line) is not None
+        or canonical_heading
+        in (
+            set(resume_integrity_audit.PROTECTED_SECTIONS)
+            | resume_integrity_audit.UNPROTECTED_SECTIONS
+        )
+    )
+
+
+def _anchor_is_web_editable(master_resume: str, source: str) -> bool:
+    """Freeze canonical identity rows and every section heading byte-for-byte."""
+
+    if _is_section_heading(source) or (
+        multi_agent_team._is_role_bullet(source)
+        and _role_bullet_prefix(source) is None
+    ):
+        return False
+    role = _experience_role_for_line(master_resume, source)
+    if role is not None:
+        return _role_bullet_prefix(source) is not None
+
+    current_heading = ""
+    for line in master_resume.split("\n"):
+        heading = multi_agent_team._section_heading_name(line)
+        if (
+            heading in resume_integrity_audit.PROTECTED_SECTIONS
+            or heading in resume_integrity_audit.UNPROTECTED_SECTIONS
+        ):
+            current_heading = heading
+        if line == source:
+            return (
+                heading not in resume_integrity_audit.PROTECTED_SECTIONS
+                and heading not in resume_integrity_audit.UNPROTECTED_SECTIONS
+                and current_heading in resume_integrity_audit.UNPROTECTED_SECTIONS
+            )
+    return False
+
+
+def _review_candidates(
+    replacements: Any,
+    master_resume: str,
+) -> tuple[list[dict[str, str]], Counter[str]]:
+    """Admit only well-shaped, uniquely anchored, non-empty proposals for review."""
 
     if not isinstance(replacements, list):
-        return replacements, 0
-    admitted: list[Any] = []
-    rejected = 0
+        raise ValueError("replacements must be a list")
+    admitted: list[dict[str, str]] = []
+    rejected: Counter[str] = Counter()
+    seen_sources: set[str] = set()
     for item in replacements:
         if (
-            isinstance(item, dict)
-            and set(item) == {"source_span_text", "replacement_text"}
-            and isinstance(item.get("source_span_text"), str)
-            and isinstance(item.get("replacement_text"), str)
-            and item["replacement_text"]
-            and not claim_supported_without_semantic_review(
-                item["replacement_text"], item["source_span_text"]
-            )
+            not isinstance(item, dict)
+            or set(item) != {"source_span_text", "replacement_text"}
+            or not isinstance(item.get("source_span_text"), str)
+            or not isinstance(item.get("replacement_text"), str)
         ):
-            rejected += 1
+            rejected["INVALID_ITEM"] += 1
             continue
+        source = item["source_span_text"]
+        replacement = item["replacement_text"]
+        if (
+            master_resume.count(source) != 1
+            or source in seen_sources
+            or not multi_agent_team._covers_complete_source_line(
+                master_resume,
+                master_resume.find(source),
+                master_resume.find(source) + len(source),
+            )
+            or not _anchor_is_web_editable(master_resume, source)
+        ):
+            rejected["INVALID_ANCHOR"] += 1
+            continue
+        source_prefix = _role_bullet_prefix(source)
+        replacement_prefix = _role_bullet_prefix(replacement)
+        if (
+            not replacement
+            or replacement == source
+            or not replacement.strip()
+            or re.search(r"[A-Za-z0-9]", replacement) is None
+            or "\n" in replacement
+            or "\r" in replacement
+            or source_prefix != replacement_prefix
+            or (
+                source_prefix is not None
+                and not multi_agent_team._is_genuine_role_bullet(replacement)
+            )
+            or _is_section_heading(replacement)
+            or not multi_agent_team._candidate_text_format_valid(replacement)
+        ):
+            rejected["STRICT_COMPILER"] += 1
+            continue
+        seen_sources.add(source)
         admitted.append(item)
     return admitted, rejected
+
+
+def _evidence_line_valid_for_candidate(
+    *,
+    master_resume: str,
+    candidate: dict[str, str],
+    evidence_line: str,
+) -> bool:
+    """Require one exact unique citation, local to an experience role when relevant."""
+
+    try:
+        evidence_start, evidence_end, _ = multi_agent_team._unique_span(
+            master_resume, evidence_line
+        )
+        if not multi_agent_team._covers_complete_source_line(
+            master_resume, evidence_start, evidence_end
+        ):
+            return False
+        source_start, source_end, _ = multi_agent_team._unique_span(
+            master_resume, candidate["source_span_text"]
+        )
+    except Exception:
+        return False
+    roles = multi_agent_team._experience_roles(master_resume)
+    source_role = multi_agent_team._role_at(roles, source_start, source_end)
+    evidence_role = multi_agent_team._role_at(
+        roles, evidence_start, evidence_end
+    )
+    return source_role is None or (
+        evidence_role is not None and evidence_role["key"] == source_role["key"]
+    )
+
+
+def _validate_semantic_review(
+    report: Any,
+    candidates: list[dict[str, str]],
+    *,
+    master_resume: str,
+    run_id: str,
+    case_id: str,
+    source_digest: str,
+    proposal_set_digest: str,
+    lens: str,
+    invocation_id: str,
+) -> dict[str, Any]:
+    """Validate exact bindings, citations, types, and decisions for one lens."""
+
+    expected_ids = [
+        _proposal_id(
+            item,
+            run_id=run_id,
+            case_id=case_id,
+            source_digest=source_digest,
+        )
+        for item in candidates
+    ]
+    if (
+        not isinstance(report, dict)
+        or set(report)
+        != {
+            "schema_version",
+            "run_id",
+            "case_id",
+            "source_digest",
+            "proposal_set_digest",
+            "lens",
+            "invocation_id",
+            "decisions",
+        }
+        or report.get("schema_version") != SEMANTIC_REVIEW_VERSION
+        or report.get("run_id") != run_id
+        or report.get("case_id") != case_id
+        or report.get("source_digest") != source_digest
+        or report.get("proposal_set_digest") != proposal_set_digest
+        or report.get("lens") != lens
+        or report.get("invocation_id") != invocation_id
+    ):
+        raise ValueError("semantic review binding")
+    decisions = report["decisions"]
+    if not isinstance(decisions, list) or len(decisions) != len(candidates):
+        raise ValueError("semantic review count")
+    normalized: list[dict[str, Any]] = []
+    for expected_id, candidate, decision in zip(
+        expected_ids, candidates, decisions
+    ):
+        if (
+            not isinstance(decision, dict)
+            or set(decision)
+            != {"proposal_id", "supported", "code", "evidence_lines"}
+            or decision.get("proposal_id") != expected_id
+            or type(decision.get("supported")) is not bool
+            or type(decision.get("code")) is not str
+            or decision["code"] not in _SEMANTIC_REVIEW_CODES
+            or not isinstance(decision.get("evidence_lines"), list)
+            or not all(
+                type(line) is str and bool(line)
+                for line in decision["evidence_lines"]
+            )
+            or len(decision["evidence_lines"])
+            != len(set(decision["evidence_lines"]))
+            or (decision["supported"] and decision["code"] != "PASS")
+            or (not decision["supported"] and decision["code"] == "PASS")
+            or (decision["supported"] and not decision["evidence_lines"])
+            or any(
+                not _evidence_line_valid_for_candidate(
+                    master_resume=master_resume,
+                    candidate=candidate,
+                    evidence_line=line,
+                )
+                for line in decision["evidence_lines"]
+            )
+        ):
+            raise ValueError("semantic review decision")
+        normalized.append(
+            {
+                "proposal_id": expected_id,
+                "supported": decision["supported"],
+                "code": decision["code"],
+                "evidence_line_digests": [
+                    multi_agent_team.canonical_digest(line)
+                    for line in decision["evidence_lines"]
+                ],
+            }
+        )
+    return {
+        "schema_version": SEMANTIC_REVIEW_VERSION,
+        "run_id": run_id,
+        "case_id": case_id,
+        "source_digest": source_digest,
+        "proposal_set_digest": proposal_set_digest,
+        "lens": lens,
+        "invocation_id": invocation_id,
+        "review_digest": multi_agent_team.canonical_digest(report),
+        "decisions": normalized,
+    }
+
+
+def _unanimously_supported(
+    candidates: list[dict[str, str]],
+    attestations: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    """Return candidates receiving exact PASS from every distinct review lens."""
+
+    if (
+        len(attestations) != 2
+        or len({attestation["lens"] for attestation in attestations}) != 2
+        or len(
+            {attestation["invocation_id"] for attestation in attestations}
+        )
+        != 2
+        or len({attestation["review_digest"] for attestation in attestations})
+        != 2
+    ):
+        raise ValueError("semantic review independence")
+    supported: list[dict[str, str]] = []
+    for index, candidate in enumerate(candidates):
+        if all(
+            attestation["decisions"][index]["supported"] is True
+            for attestation in attestations
+        ):
+            supported.append(candidate)
+    return supported
 
 
 def run_web_rewrite(
@@ -177,7 +458,9 @@ def run_web_rewrite(
     if not all(
         isinstance(value, str) and bool(value)
         for value in (run_id, case_id, master_resume, job_description)
-    ) or not callable(getattr(host, "run_role", None)):
+    ) or not callable(getattr(host, "run_web_writer", None)) or not callable(
+        getattr(host, "review_replacements", None)
+    ):
         return _outcome(run_id, case_id, "FAILED:REQUEST_SCHEMA")
     required_services = (
         "claim_run",
@@ -242,7 +525,7 @@ def run_web_rewrite(
         and candidate_fit_report.get("codes") == []
         and type(score) in (int, float)
         and not isinstance(score, bool)
-        and score >= 70
+        and score >= WEB_REWRITE_FIT_FLOOR
     )
     if not authoritative_fit_passed:
         # Web rewriting requires the canonical deterministic policy itself to
@@ -295,8 +578,7 @@ def run_web_rewrite(
         return fail("FAILED:PREPUBLICATION")
 
     try:
-        raw_writer = host.run_role(
-            "writer",
+        raw_writer = host.run_web_writer(
             {
                 "master_resume": master_resume,
                 "requirement_rubric": requirement_rubric,
@@ -312,61 +594,170 @@ def run_web_rewrite(
         return fail("FAILED:WRITER_SCHEMA")
 
     proposed_replacements = raw_writer["replacements"]
-    filtered_replacements, semantic_rejections = (
-        _filter_mechanically_supported_replacements(proposed_replacements)
-    )
-    if isinstance(proposed_replacements, list) and proposed_replacements and not filtered_replacements:
-        writer_stats = multi_agent_team._admit_writer_stats(
-            {
-                "proposed_count": len(proposed_replacements),
-                "accepted_count": 0,
-                "rejected_count": len(proposed_replacements),
-                "rejection_codes": {
-                    "STRICT_COMPILER": len(proposed_replacements)
-                },
-            }
-        )
-        return fail("REJECTED:NO_SAFE_CHANGES", writer_stats)
-    try:
+    if not isinstance(proposed_replacements, list):
+        return fail("FAILED:WRITER_SCHEMA")
+    if not proposed_replacements:
         compiled, raw_writer_stats = (
-            multi_agent_team.compile_writer_replacements_salvage(
-                master_resume, filtered_replacements
+            multi_agent_team.compile_semantically_reviewed_writer_replacements_salvage(
+                master_resume, []
             )
         )
-    except multi_agent_team.NoSafeWriterChanges as error:
-        raw_stats = dict(error.stats)
-        raw_codes = dict(raw_stats["rejection_codes"])
-        raw_codes["STRICT_COMPILER"] = (
-            raw_codes.get("STRICT_COMPILER", 0) + semantic_rejections
-        )
-        raw_stats.update(
+        semantic_review = {
+            "schema_version": SEMANTIC_REVIEW_VERSION,
+            "run_id": run_id,
+            "case_id": case_id,
+            "source_digest": source_attestation["source_digest"],
+            "proposal_set_digest": multi_agent_team.canonical_digest([]),
+            "review_invocation_ids": [],
+            "passed_count": 0,
+            "rejected_count": 0,
+            "attestations": [],
+        }
+        pre_rejections: Counter[str] = Counter()
+        semantic_rejections = 0
+    else:
+        try:
+            review_candidates, pre_rejections = _review_candidates(
+                proposed_replacements, master_resume
+            )
+        except ValueError:
+            return fail("FAILED:WRITER_SCHEMA")
+        if not review_candidates:
+            writer_stats = multi_agent_team._admit_writer_stats(
+                {
+                    "proposed_count": len(proposed_replacements),
+                    "accepted_count": 0,
+                    "rejected_count": len(proposed_replacements),
+                    "rejection_codes": dict(sorted(pre_rejections.items())),
+                }
+            )
+            return fail("REJECTED:NO_SAFE_CHANGES", writer_stats)
+        source_digest = source_attestation["source_digest"]
+        review_payload = [
             {
-                "proposed_count": len(proposed_replacements),
-                "rejected_count": len(proposed_replacements),
-                "rejection_codes": raw_codes,
+                "proposal_id": _proposal_id(
+                    item,
+                    run_id=run_id,
+                    case_id=case_id,
+                    source_digest=source_digest,
+                ),
+                "source_span_text": item["source_span_text"],
+                "replacement_text": item["replacement_text"],
             }
+            for item in review_candidates
+        ]
+        proposal_set_digest = multi_agent_team.canonical_digest(review_payload)
+        semantic_attestations: list[dict[str, Any]] = []
+        for lens in ("claim_entailment", "skeptical_recruiter"):
+            invocation_id = (
+                f"semantic:{lens}:{run_id}:{secrets.token_hex(16)}"
+            )
+            try:
+                raw_semantic_review = host.review_replacements(
+                    master_resume=master_resume,
+                    proposals=review_payload,
+                    case_id=case_id,
+                    run_id=run_id,
+                    source_digest=source_digest,
+                    proposal_set_digest=proposal_set_digest,
+                    lens=lens,
+                    invocation_id=invocation_id,
+                )
+            except (HostRefusal, BudgetExceeded, ConnectionError, TimeoutError):
+                return fail("FAILED:AGENT_UNAVAILABLE")
+            except Exception:
+                return fail("FAILED:AGENT_CRASH")
+            try:
+                semantic_attestations.append(
+                    _validate_semantic_review(
+                        raw_semantic_review,
+                        review_candidates,
+                        master_resume=master_resume,
+                        run_id=run_id,
+                        case_id=case_id,
+                        source_digest=source_digest,
+                        proposal_set_digest=proposal_set_digest,
+                        lens=lens,
+                        invocation_id=invocation_id,
+                    )
+                )
+            except (TypeError, ValueError):
+                return fail("FAILED:SEMANTIC_REVIEW_SCHEMA")
+        try:
+            supported_replacements = _unanimously_supported(
+                review_candidates, semantic_attestations
+            )
+        except ValueError:
+            return fail("FAILED:SEMANTIC_REVIEW_SCHEMA")
+        semantic_rejections = len(review_candidates) - len(
+            supported_replacements
         )
-        writer_stats = multi_agent_team._admit_writer_stats(raw_stats)
-        return fail("REJECTED:NO_SAFE_CHANGES", writer_stats)
-    except ValueError:
-        return fail("FAILED:WRITER_SCHEMA")
-    except Exception:
-        return fail("FAILED:AGENT_CRASH")
-    raw_codes = dict(raw_writer_stats["rejection_codes"])
-    if semantic_rejections:
-        raw_codes["STRICT_COMPILER"] = (
-            raw_codes.get("STRICT_COMPILER", 0) + semantic_rejections
-        )
-    raw_writer_stats.update(
+        semantic_review = {
+            "schema_version": SEMANTIC_REVIEW_VERSION,
+            "run_id": run_id,
+            "case_id": case_id,
+            "source_digest": source_digest,
+            "proposal_set_digest": proposal_set_digest,
+            "review_invocation_ids": [
+                item["invocation_id"] for item in semantic_attestations
+            ],
+            "passed_count": len(supported_replacements),
+            "rejected_count": semantic_rejections,
+            "attestations": semantic_attestations,
+        }
+        if not supported_replacements:
+            rejection_codes = Counter(pre_rejections)
+            rejection_codes["SEMANTIC_SUPPORT"] += semantic_rejections
+            writer_stats = multi_agent_team._admit_writer_stats(
+                {
+                    "proposed_count": len(proposed_replacements),
+                    "accepted_count": 0,
+                    "rejected_count": len(proposed_replacements),
+                    "rejection_codes": dict(sorted(rejection_codes.items())),
+                }
+            )
+            return fail("REJECTED:NO_SAFE_CHANGES", writer_stats)
+        try:
+            compiled, raw_writer_stats = (
+                multi_agent_team.compile_semantically_reviewed_writer_replacements_salvage(
+                    master_resume, supported_replacements
+                )
+            )
+        except multi_agent_team.NoSafeWriterChanges as error:
+            raw_writer_stats = dict(error.stats)
+            compiled = None
+        except ValueError:
+            return fail("FAILED:WRITER_SCHEMA")
+        except Exception:
+            return fail("FAILED:AGENT_CRASH")
+        if compiled is None:
+            rejection_codes = Counter(pre_rejections)
+            rejection_codes["SEMANTIC_SUPPORT"] += semantic_rejections
+            rejection_codes.update(raw_writer_stats["rejection_codes"])
+            writer_stats = multi_agent_team._admit_writer_stats(
+                {
+                    "proposed_count": len(proposed_replacements),
+                    "accepted_count": 0,
+                    "rejected_count": len(proposed_replacements),
+                    "rejection_codes": dict(sorted(rejection_codes.items())),
+                }
+            )
+            return fail("REJECTED:NO_SAFE_CHANGES", writer_stats)
+
+    rejection_codes = Counter(pre_rejections)
+    rejection_codes["SEMANTIC_SUPPORT"] += semantic_rejections
+    rejection_codes.update(raw_writer_stats["rejection_codes"])
+    if not rejection_codes.get("SEMANTIC_SUPPORT"):
+        rejection_codes.pop("SEMANTIC_SUPPORT", None)
+    accepted_count = raw_writer_stats["accepted_count"]
+    writer_stats = multi_agent_team._admit_writer_stats(
         {
             "proposed_count": len(proposed_replacements),
-            "rejected_count": (
-                len(proposed_replacements) - raw_writer_stats["accepted_count"]
-            ),
-            "rejection_codes": raw_codes,
+            "accepted_count": accepted_count,
+            "rejected_count": len(proposed_replacements) - accepted_count,
+            "rejection_codes": dict(sorted(rejection_codes.items())),
         }
     )
-    writer_stats = multi_agent_team._admit_writer_stats(raw_writer_stats)
     if writer_stats is None:
         return fail("FAILED:WRITER_SCHEMA")
     draft = compiled["draft"]
@@ -431,6 +822,10 @@ def run_web_rewrite(
         "candidate_fit_report_digest": candidate_fit_report_digest,
         "candidate_fit_judge_report": candidate_fit_judge_report,
         "candidate_fit_judge_report_digest": candidate_fit_judge_report_digest,
+        "semantic_review": semantic_review,
+        "semantic_review_digest": multi_agent_team.canonical_digest(
+            semantic_review
+        ),
         "authorization_report": authorization,
         "authorization_digest": authorization_digest,
         "vote_invocation_ids": [
@@ -463,7 +858,15 @@ def run_web_rewrite(
         readback = services.read_publication(publication_id)
     except Exception:
         return fail("FAILED:PUBLICATION_VERIFICATION", writer_stats)
-    if readback != expected_readback:
+    try:
+        readback_matches = (
+            type(readback) is dict
+            and multi_agent_team._canonical_json(readback)
+            == multi_agent_team._canonical_json(expected_readback)
+        )
+    except Exception:
+        readback_matches = False
+    if not readback_matches:
         return fail("FAILED:PUBLICATION_VERIFICATION", writer_stats)
 
     authorization_receipt = {
@@ -477,6 +880,8 @@ def run_web_rewrite(
         "candidate_fit_report_digest": candidate_fit_report_digest,
         "candidate_fit_judge_report": candidate_fit_judge_report,
         "candidate_fit_judge_report_digest": candidate_fit_judge_report_digest,
+        "semantic_review": semantic_review,
+        "semantic_review_digest": metadata["semantic_review_digest"],
         "authorization_report": authorization,
         "authorization_digest": authorization_digest,
         "vote_invocation_ids": metadata["vote_invocation_ids"],
@@ -502,6 +907,7 @@ __all__ = [
     "WEB_REWRITE_PUBLICATION_VERSION",
     "WEB_REWRITE_RECEIPT_VERSION",
     "WEB_REWRITE_RESULT_VERSION",
+    "SEMANTIC_REVIEW_VERSION",
     "derive_requirement_rubric",
     "run_web_rewrite",
 ]

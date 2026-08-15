@@ -6,7 +6,22 @@ from pathlib import Path
 
 import pytest
 
-from candidate_fit_preflight import assess_candidate_fit
+from candidate_fit_preflight import (
+    assess_candidate_fit as _real_assess_candidate_fit,
+)
+from evidence_engine.testing import DeterministicJudge as _DeterministicJudge
+
+
+def assess_candidate_fit(*args, **kwargs):
+    """Run the fit gate offline with the package's deterministic judge.
+
+    The gate calls a hosted model in production and fails closed without one.
+    Tests inject the rule-based judge so pipeline wiring stays testable
+    without an API key; production never falls back this way.
+    """
+    kwargs.setdefault("llm", _DeterministicJudge())
+    return _real_assess_candidate_fit(*args, **kwargs)
+
 from human_voice_audit import audit_text
 from multi_agent_team import (
     AUTHORIZATION_VERSION,
@@ -364,6 +379,48 @@ def test_hosted_writer_contract_keeps_required_resume_structure():
         "non-empty CORE COMPETENCIES",
         "at least one genuine bullet per canonical role",
         "Summary is the only optional section",
+    ):
+        assert required_rule in contract
+
+
+
+def test_web_writer_contract_is_short_and_allows_truthful_paraphrase():
+    from agent.host_anthropic import _WEB_WRITER_SYSTEM
+
+    contract = " ".join(_WEB_WRITER_SYSTEM.split())
+    for required_rule in (
+        "using only facts already stated anywhere in the master resume",
+        "job requirements tell you what matters; they are never evidence",
+        "Freely rewrite, shorten, reorder, clarify",
+        "You do not have to keep the source words or their order",
+        "Never invent or strengthen",
+        "never move facts between employers or roles",
+        "Aim for 3 to 5 useful job-relevant changes",
+        "return [] only when no truthful improvement exists",
+    ):
+        assert required_rule in contract
+    for removed_rule in (
+        "same visible token stream",
+        "Insert zero additional",
+        "max(2, floor(0.60 * source-token-count))",
+    ):
+        assert removed_rule not in contract
+    assert len(contract.split()) <= 280
+
+
+def test_web_semantic_reviewer_is_independent_and_requires_evidence():
+    from agent.host_anthropic import _SEMANTIC_REVIEW_SYSTEM
+
+    contract = " ".join(_SEMANTIC_REVIEW_SYSTEM.split())
+    for required_rule in (
+        "independent skeptical factual reviewer",
+        "master resume as evidence",
+        "every factual implication",
+        "Meaning-preserving paraphrase",
+        "Reject any stronger or new employer",
+        "never transfer facts between employers or roles",
+        "evidence_lines must contain every exact, complete master-resume line",
+        "Echo all request bindings exactly",
     ):
         assert required_rule in contract
 

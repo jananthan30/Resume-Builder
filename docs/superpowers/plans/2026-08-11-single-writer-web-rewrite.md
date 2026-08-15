@@ -4,16 +4,16 @@
 
 **Goal:** Make `POST /rewrite` use one Sonnet 5 Writer with deterministic requirement derivation, strict source-anchored salvage, deterministic authorization, and no AI Editor while preserving publication safety.
 
-**Architecture (final):** Route web-only `pipeline_mode="single_writer"` to `agent.web_rewrite`, a direct compiler-style service. It derives exact requirement lines, calls `AnthropicHost` only for Writer, compiles replacements through the shared strict salvage compiler, validates three real authorization votes, commits a web-specific digest-bound receipt, and verifies exact SQL readback. It does not synthesize Researcher/Auditor envelopes or call `multi_agent_team.run_team`; default `/agent/tailor` and native four-role paths remain unchanged. The composed-adapter tasks below document the superseded tactical implementation that preceded this simplification.
+**Architecture (final):** Route web-only `pipeline_mode="single_writer"` to `agent.web_rewrite`, a direct service. It derives exact requirement lines, calls one Sonnet 5 Writer for freely paraphrased anchored changes, sends non-empty proposals to two read-only Sonnet 5 factual reviewers with distinct lenses and verified exact citations, structurally compiles only unanimous changes, validates three code-owned authorization votes, commits a digest-bound receipt, and verifies type-exact SQL readback. It does not synthesize role envelopes or call `multi_agent_team.run_team`; default `/agent/tailor` and native four-role paths remain unchanged. The composed-adapter tasks below document superseded tactical work.
 
 **Tech Stack:** Python 3.11+, FastAPI, Anthropic Python SDK, SQLite, pytest, existing `multi_agent_team`, `resume_integrity_audit`, `CloudTrustedServices`, and Fly.io.
 
 ## Global Constraints
 
 - The only hosted writing model is exactly `claude-sonnet-5`.
-- No Researcher, protocol Auditor, or Editor exists on the synchronous web path.
+- No Researcher, protocol Auditor envelope, or Editor exists on the synchronous web path; two independent read-only factual-review calls cannot write or repair text.
 - Candidate-fit, quota, source attestation, three deterministic authorization votes, receipt commit, and verified readback remain mandatory. Web candidate fit requires trustworthy extraction, zero hard knockouts, score ≥70, `passed: true`, and no codes; no judge override.
-- Invalid replacement proposals are discarded, never relaxed, rewritten, or exposed; without a semantic Auditor, web changes are limited to the closed first-word opener swaps and all insertions fail closed.
+- The old token-identity, zero-insertion, opener allowlist, and polarity rules are removed. Truthful paraphrase is allowed only after editable-anchor validation, two digest-bound semantic PASS decisions, and verified exact same-role citations; canonical identity rows remain byte-frozen.
 - The saved master resume remains immutable; every accepted change is anchored to one exact unique complete master line.
 - Resumes, JDs, replacement text, provider replies, and exception messages containing them never enter logs or events.
 - The public `/rewrite` success JSON shape remains unchanged.
@@ -24,13 +24,13 @@
 
 ## File map
 
-- `multi_agent_team.py`: typed no-safe-changes signal, strict greedy salvage function, coordinator terminal mapping, and optional safe Writer stats in milestone events.
-- `agent/web_rewrite.py`: direct one-Writer service, candidate-fit parity, deterministic authorization, compact receipt, and exact readback verification.
+- `multi_agent_team.py`: unchanged native salvage plus a web-only structurally strict compiler for already semantically reviewed replacements.
+- `agent/web_rewrite.py`: direct Writer/reviewer service, candidate-fit parity, digest-bound semantic decisions, deterministic authorization, compact receipt, and exact readback verification.
 - `agent/adapter.py`: four-role hosted adapter plus a deprecated import-only `SingleWriterTeamAdapter` shim that fails explicitly; the synthetic execution behavior is removed.
 - `agent/tools.py`: web-only direct-service selection plus quota, token, run, event, and SQL trust-boundary bookkeeping.
 - `scorer_server.py`: request single-writer mode from `/rewrite` and map safety rejections to actionable 422 copy.
 - `tests/test_multi_agent_team.py`: salvage, typed terminal, integrity, ordering, and observability regressions.
-- `tests/test_single_writer_adapter.py`: direct-service routing, one Writer call, audit refusal, compact receipt, and tampered-readback failure.
+- `tests/test_single_writer_adapter.py`: direct-service routing, free paraphrase, fabrication rejection, malformed-review refusal, compact receipt, and tampered-readback failure.
 - `tests/test_team_via_api_host.py`: unchanged legacy hosted four-role parity coverage.
 - `tests/test_agent_tools.py`: default-mode isolation and single-writer run bookkeeping.
 - `tests/test_rewrite_alias.py`: endpoint mode selection, response compatibility, and honest rejection copy.

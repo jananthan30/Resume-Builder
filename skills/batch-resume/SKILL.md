@@ -48,7 +48,7 @@ resume draft, DOCX, or tracker operation for that JD:
 
 `python candidate_fit_preflight.py --resume <configured-master-resume> --job-description <exact-JD-file> --run-id <run_id> --case-id <case_id> --as-of-date <YYYY-MM-DD> --json`
 
-Require exit `0` and a valid `candidate-fit-policy-v2` report bound to that JD,
+Require exit `0` and a valid `candidate-fit-policy-v3` report bound to that JD,
 master, date, and IDs. Canonically hash it as `candidate_fit_report_digest`.
 A passing report has exact threshold `70.0`, score at least 70, trustworthy
 extraction, zero hard knockouts, `passed: true`, and no codes. Exit `1`, any score

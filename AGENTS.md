@@ -37,7 +37,7 @@ configured master resume, and the local deterministic audit helpers.
   output/application directory, resume development, DOCX, or tracker work, run
   `candidate_fit_preflight.py` against the exact JD and only the configured
   `master_resume_path` (never a previous tailored resume). Continue only with a
-  canonical, digest-bound `candidate-fit-policy-v2` report scoring at least 70,
+  canonical, digest-bound `candidate-fit-policy-v3` report scoring at least 70,
   trustworthy extraction, zero hard knockouts, `passed: true`, and no codes. A
   lower score (including 60–69) or hard knockout is
   `REJECTED:CANDIDATE_FIT`; unavailable, malformed, stale, or mismatched analysis
@@ -61,7 +61,7 @@ configured master resume, and the local deterministic audit helpers.
   citations, or reviewer unavailability fail closed. A review-certified pass
   authorizes coordinator-built manual packages only; the hardened
   `native_resume_team.py` runtime still requires the deterministic
-  `candidate-fit-policy-v2` pass (`passed: true`, score ≥ 70) and does not
+  `candidate-fit-policy-v3` pass (`passed: true`, score ≥ 70) and does not
   consume review reports.
 - Manual user override: the final call belongs to the user. After any gate
   rejection (deterministic or review), the user may record a deliberate
