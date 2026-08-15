@@ -13,8 +13,8 @@ from evidence_engine.bias import exclusion_warnings, screen_requirements
 from evidence_engine.evidence.judge import judge_requirement
 from evidence_engine.evidence.relationships import load_relation_map
 from evidence_engine.llm import (
-    AnthropicClient, HOSTED_MODEL, LLMClient, build_client, model_id_for,
-    resolve_model_specs,
+    _MAX_OUTPUT_TOKENS_EXTRACTOR, AnthropicClient, HOSTED_MODEL, LLMClient,
+    build_client, model_id_for, resolve_model_specs,
 )
 from evidence_engine.models import (
     EligibilityResult, EligibilityStatus, EvidenceStatus, MatchResult,
@@ -174,9 +174,13 @@ def match_texts(
 
     if llm is None:
         try:
-            extractor_llm = build_client(extractor_spec)
+            extractor_llm = build_client(
+                extractor_spec, max_output_tokens=_MAX_OUTPUT_TOKENS_EXTRACTOR)
             # One client when both roles share a spec, so the common case does
-            # not open two connections.
+            # not open two connections. The shared client carries the larger
+            # extractor budget, which is safe: max_tokens is a ceiling, and
+            # judging emits one small verdict per requirement regardless. The
+            # reverse would not be safe -- it is what capped extraction.
             judge_llm = (extractor_llm if judge_spec == extractor_spec
                          else build_client(judge_spec))
         except Exception as exc:

@@ -47,7 +47,21 @@ EXTRACTOR_MODEL_ENV = "EVIDENCE_EXTRACTOR_MODEL"
 JUDGE_MODEL_ENV = "EVIDENCE_JUDGE_MODEL"
 
 _REQUEST_TIMEOUT_SECONDS = 120.0
+
+# The two roles need different budgets because only one of them scales with the
+# input. Judging emits a small fixed verdict per requirement no matter how long
+# the posting is. Extraction emits an object per requirement -- id, normalised
+# text, a verbatim source quote, type, importance, hard-gate flag -- so a real
+# job ad, which yields 25-40 atomic requirements, runs to several thousand
+# tokens of JSON.
+#
+# Sharing 4096 between them silently capped extraction: the object was cut
+# mid-write, arrived with no closing brace, and _parse_json could only report
+# "no JSON object in LLM response" -- which reads as a misbehaving model rather
+# than a budget we set too low. Short postings fit and worked, real ones did
+# not, so it looked intermittent.
 _MAX_OUTPUT_TOKENS = 4096
+_MAX_OUTPUT_TOKENS_EXTRACTOR = 16384
 
 # The Anthropic SDK retries transient failures internally. The OpenAI-compatible
 # path has no such layer, so without this a single overloaded response would
@@ -61,6 +75,19 @@ _RETRY_BACKOFF_SECONDS = 1.0
 
 class LLMError(Exception):
     pass
+
+
+class LLMTruncationError(LLMError):
+    """The model hit its output cap before finishing the answer.
+
+    Deliberately distinct from malformed JSON. Re-asking a truncated response
+    produces the same truncation at the same cost, and the honest fix is a
+    larger budget for that role. Raised from the transport layer, which sits
+    outside ``complete_json``'s repair retry, so it never burns a second call.
+
+    It also has to *say* it was truncated: reported as "no JSON object" this
+    looked like a model failure for as long as it took to read the token cap.
+    """
 
 
 class LLMTransportError(LLMError):
@@ -254,6 +281,9 @@ class _HostedClient:
 
     provider: Provider
     model_id: str
+    #: Class-level default so every construction path has a budget, including
+    #: test doubles built with ``__new__``. Instances raise it per role.
+    max_output_tokens: int = _MAX_OUTPUT_TOKENS
 
     def _send(self, system: str, user: str) -> str:  # pragma: no cover - ABC
         raise NotImplementedError
@@ -279,9 +309,11 @@ class _HostedClient:
 class AnthropicClient(_HostedClient):
     """Claude via the official Anthropic SDK."""
 
-    def __init__(self, model: str = HOSTED_MODEL):
+    def __init__(self, model: str = HOSTED_MODEL,
+                 max_output_tokens: int = _MAX_OUTPUT_TOKENS):
         self.provider = PROVIDERS["anthropic"]
         self.model_id = model
+        self.max_output_tokens = max_output_tokens
         _load_env_file()
         import anthropic
         self._client = anthropic.Anthropic()
@@ -292,10 +324,15 @@ class AnthropicClient(_HostedClient):
         # classifies evidence, and every number is recomputed deterministically
         # from those classifications.
         resp = self._client.messages.create(
-            model=self.model_id, max_tokens=_MAX_OUTPUT_TOKENS,
+            model=self.model_id, max_tokens=self.max_output_tokens,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
+        if resp.stop_reason == "max_tokens":
+            raise LLMTruncationError(
+                f"{self.model_id} hit the {self.max_output_tokens}-token output "
+                "cap before finishing; the reply is incomplete"
+            )
         return "".join(b.text for b in resp.content if b.type == "text")
 
 
@@ -309,9 +346,11 @@ class OpenAICompatibleClient(_HostedClient):
     """
 
     def __init__(self, provider: Provider, model: str,
-                 base_url: Optional[str] = None):
+                 base_url: Optional[str] = None,
+                 max_output_tokens: int = _MAX_OUTPUT_TOKENS):
         _load_env_file()
         self.provider = provider
+        self.max_output_tokens = max_output_tokens
         # What goes on the wire, which is not always what gets recorded: an
         # aggregator's recorded identity also names the backend that served it.
         self._wire_model = model
@@ -375,7 +414,7 @@ class OpenAICompatibleClient(_HostedClient):
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "max_tokens": _MAX_OUTPUT_TOKENS,
+            "max_tokens": self.max_output_tokens,
         }
         if self.provider.temperature is not None:
             body["temperature"] = self.provider.temperature
@@ -411,13 +450,21 @@ class OpenAICompatibleClient(_HostedClient):
                 f"{self.provider.name} returned an unexpected shape: {exc}"
             ) from exc
 
+        finish = payload["choices"][0].get("finish_reason")
+        if finish == "length":
+            raise LLMTruncationError(
+                f"{self.provider.name}:{self.model_id} hit the "
+                f"{self.max_output_tokens}-token output cap before finishing; "
+                "the reply is incomplete"
+            )
+
         # Reasoning models put the chain of thought in `reasoning_content` and
         # the answer in `content`. Only the answer is wanted.
         content = message.get("content")
         if not content:
             raise LLMTransportError(
                 f"{self.provider.name} returned no content "
-                f"(finish_reason={payload['choices'][0].get('finish_reason')})"
+                f"(finish_reason={finish})"
             )
         return content
 
@@ -446,16 +493,21 @@ def _openrouter_routing(model: str) -> tuple[Optional[dict], str]:
     return routing, f"{model}@{pin}"
 
 
-def build_client(spec: str = DEFAULT_MODEL_SPEC) -> LLMClient:
+def build_client(spec: str = DEFAULT_MODEL_SPEC,
+                 max_output_tokens: int = _MAX_OUTPUT_TOKENS) -> LLMClient:
     """Construct the client for a ``provider:model`` spec.
+
+    ``max_output_tokens`` is per-role: extraction needs far more headroom than
+    judging because its output grows with the posting. See the constants above.
 
     Raises on an unknown provider or a missing credential, which the engine
     turns into a fail-closed "LLM unavailable" rather than a fit rejection.
     """
     provider, model = parse_model_spec(spec)
     if provider.base_url is None and provider.name == "anthropic":
-        return AnthropicClient(model)
-    return OpenAICompatibleClient(provider, model)
+        return AnthropicClient(model, max_output_tokens=max_output_tokens)
+    return OpenAICompatibleClient(provider, model,
+                                  max_output_tokens=max_output_tokens)
 
 
 def resolve_model_specs() -> tuple[str, str]:
